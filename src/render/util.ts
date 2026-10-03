@@ -1,7 +1,7 @@
 // Shared constants and helpers for the renderer.
 import * as THREE from 'three';
 import type { BoardGeometry, Vec2 } from '../map/types';
-import { PLAYER_COLORS, UNCLAIMED_COLOR } from '../shared/palette';
+import { GOLD as PALETTE_GOLD, PLAYER_COLORS, UNCLAIMED_COLOR, washOf } from '../shared/palette';
 import type { GameState, PlayerId } from '../engine/types';
 
 /** Ink overhaul (docs/INK.md B §3): the world is flat — a painted sheet, no bevel. */
@@ -23,7 +23,15 @@ export const PAPER_DEEP = '#0b1224';
 export const PAPER_FIBRE = '#1b2a48';
 export const INK_COAST = '#e2ddcf';
 export const INK_BORDER = '#c9c3b4';
-export const GOLD = '#c9a961';
+/** The one gold (v4: candle, src/shared/palette.ts GOLD). */
+export const GOLD = PALETTE_GOLD;
+/**
+ * v4 edge ladder (PLAN E2), the Light weight: a territory border is drawn in the paper's deep tone, a crack of
+ * indigo between two washes (the v3 ivory hairline was a second ink colour on land).
+ */
+export const INK_TERR = '#0d1528';
+/** v4 cozy (PLAN §5): the lamp-lit umber the paper warms toward at the frame's margins. */
+export const LAMP_UMBER = '#3a2a1c';
 
 let BW = 100;
 let BH = 49.5;
@@ -119,11 +127,20 @@ export function unclaimedRgb(): RGB {
   return mixRgb(hexToRgb('#18233c'), hexToRgb(UNCLAIMED_COLOR), 0.3);
 }
 
-/** Wash color for an owner: the seat's base, read from the palette at runtime (the muted ink palette). */
+/**
+ * An owner's PIGMENT: the seat's base, full strength (v4 E4: the stones, the attack stroke, anything that is the
+ * seat as an object). Unowned: the unclaimed paper tone.
+ */
 export function tileRgb(state: GameState | null, owner: PlayerId): RGB {
   if (owner < 0 || !state || !state.players[owner]) return unclaimedRgb();
   const p = PLAYER_COLORS[state.players[owner].color];
   return hexToRgb(p.base);
+}
+
+/** An owner's WASH (v4 E4): the seat's tint, lighter and 35 % desaturated, laid on the territories it holds. */
+export function washRgb(state: GameState | null, owner: PlayerId): RGB {
+  if (owner < 0 || !state || !state.players[owner]) return unclaimedRgb();
+  return hexToRgb(washOf(PLAYER_COLORS[state.players[owner].color]));
 }
 
 export function paletteOf(state: GameState | null, owner: PlayerId) {

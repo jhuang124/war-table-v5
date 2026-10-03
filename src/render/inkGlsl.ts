@@ -1,16 +1,39 @@
-// Shared shader code and uniforms for the painted board: washi paper, the ink layer (with its breathing
-// displacement), mist veils, contact shadows of lifted tiles, and the continent re-ink sweep. The ground
-// and every tile top use the same functions, so a coastline stroke reads as one stroke across the seam.
+// Shared shader code and uniforms for the painted board: washi paper, the ink layer (still strokes; the coast's
+// glow breathes and drifts), mist veils, the lamp's warm vignette, contact shadows of lifted tiles, and the
+// continent re-ink sweep. The ground and every tile top use the same functions, so a coastline stroke reads as one
+// stroke across the seam. v4 (_claude/v4/PLAN.md §5, E2–E4, E9, E10): one edge ladder with one brush (brushJit),
+// tints on the land, the cozy lamp, and nothing on the paper moving at rest but the mist, the coast glow and the lamp.
 //
 // All colour math is in display (sRGB) space and written out as is (the materials are unlit and not
 // tone-mapped), so the palette's hexes land on screen exactly.
 import * as THREE from 'three';
 import { CONTINENT_TINTS } from '../shared/palette';
 import type { InkLayer } from './ink';
-import { GOLD, INK_BORDER, INK_COAST, IVORY, PAPER, PAPER_DEEP, PAPER_FIBRE, hexToRgb, unclaimedRgb, type RGB } from './util';
+import { GOLD, INK_BORDER, INK_COAST, INK_TERR, IVORY, LAMP_UMBER, PAPER, PAPER_DEEP, PAPER_FIBRE, hexToRgb, unclaimedRgb, type RGB } from './util';
 
-/** The continent outline (PLAN §2: the heaviest of the three line weights), a cooler silver than the coasts. */
-export const CONT_LINE = '#c8ced8';
+/** The continent outline (v4 E2: the Medium weight, ≈1.4 px at the home view), a cooler silver than the coasts. */
+export const CONT_LINE = '#d3d8e0';
+
+// --- v4 paper constants (one source for the shaders and the CPU-side drift hook) -------------------------
+/**
+ * Mist veils (PLAN §5 "drift you can see"): the lead veil's drift, board units per second of the ambient clock
+ * (v3's pace, kept: 0.65 × 1.1). The board is 100 units wide; at the 1440 home view (≈14.6 px a unit) this is
+ * ≈10 px/s, a cloud's pace. What v3 lacked was an edge to see it by: the veils are a touch crisper and denser now.
+ */
+export const MIST_SPEED = 0.715;
+/**
+ * The coast glow's drift (the ivory bloom under the heavy coast stroke; the stroke itself holds still, E10):
+ * its reach in board units and its two periods, s. Peak speed ≈ 2π · reach / period.
+ */
+export const GLOW_REACH = 0.16;
+export const GLOW_PERIODS: [number, number] = [11.0, 13.7];
+/** The cozy vignette (PLAN §5): how far the frame's margins warm toward LAMP_UMBER, and the margin darkening. */
+export const VIG_WARM = 0.2;
+export const VIG_DARK = 0.07;
+/** E3 / E2: the coast stroke's opacity at rest (Layer 2), its glow, and the territory border's opacity. */
+export const COAST_A = 0.62;
+export const COAST_BLOOM = 0.12;
+export const TERR_A = 0.75;
 /** The continents' paper tints: src/shared/palette.ts CONTINENT_TINTS. */
 export const CONT_TINTS = CONTINENT_TINTS;
 const v3 = (hex: string | RGB) => {
@@ -74,6 +97,11 @@ export interface SharedUniforms {
    * 2 = paper 1 + wash 2 (phones: ≤ 3 map taps), 1 = paper fibre tap + wash 1.
    */
   uTexTaps: { value: number };
+  // --- v4 paper (additive) ----------------------------------------------------------------------------
+  /** The territory border's ink (E2 Light weight): the paper's deep tone. */
+  uTerrInk: { value: THREE.Vector3 };
+  /** The lamp's umber (the cozy vignette warms the margins toward it). */
+  uUmber: { value: THREE.Vector3 };
 }
 
 /** A 1×1 mid-grey (mask channels unset): what the map samplers read before the maps load. */
@@ -132,6 +160,8 @@ export function makeSharedUniforms(ink: InkLayer, boardW: number, boardH: number
     uWashTex: { value: neutralTexture() },
     uTexOn: { value: 0 },
     uTexTaps: { value: 3 },
+    uTerrInk: { value: v3(INK_TERR) },
+    uUmber: { value: v3(LAMP_UMBER) },
   };
   ink.bindShared?.(u);
   return u;
@@ -171,6 +201,8 @@ uniform sampler2D uPaperTex;
 uniform sampler2D uWashTex;
 uniform float uTexOn;
 uniform float uTexTaps;
+uniform vec3 uTerrInk;
+uniform vec3 uUmber;
 
 vec2 bUV(vec2 bp) { return vec2(bp.x / uBoard.x, 1.0 - bp.y / uBoard.y); }
 bool inBoard(vec2 bp) { return bp.x > 0.0 && bp.y > 0.0 && bp.x < uBoard.x && bp.y < uBoard.y; }
@@ -253,57 +285,84 @@ vec3 paperAt(vec2 bp) {
   return paperAt(bp, fib);
 }
 
-// Screen-space vignette, 12 % at the corners.
-float vignette() {
+// The lamp (v4 cozy, PLAN §5 / E10): the frame's margins warm a few points toward umber and dim a little, the
+// centre is untouched; at rest the warmth breathes ±12 % over ~23 s, the slowest thing on screen.
+float vigMask() {
   vec2 q = gl_FragCoord.xy / uRes - 0.5;
   q.x *= uRes.x / max(1.0, uRes.y) * 0.62;
-  return 1.0 - 0.12 * smoothstep(0.22, 0.78, length(q));
+  return smoothstep(0.24, 0.8, length(q));
+}
+vec3 lamp(vec3 c) {
+  float v = vigMask();
+  float warm = ${VIG_WARM.toFixed(3)} * (1.0 + 0.12 * uAmb * sin(uTime * 0.273));
+  c *= 1.0 - ${VIG_DARK.toFixed(3)} * v;
+  return mix(c, uUmber, warm * v);
+}
+// (v3's darkening-only vignette, kept for the marks that are alpha-blended: their ink dims at the margins too)
+float vignette() {
+  return 1.0 - ${VIG_DARK.toFixed(3)} * vigMask();
 }
 
-// The ink layer, sampled through a slow, spatially varying sub-pixel drift (wet ink breathing: up to 0.5 px at
-// the home zoom, 14-16 s periods), its dry-brush opacity breathing ±6 % with its own phase from place to place.
+// One brush (v4 E2): every edge on the paper (coast, continent outline, territory border, sea lane) carries the
+// same pen pressure, a hair drier here and there along it, so the four weights read as one hand.
+float brushJit(vec2 bp) {
+  return 0.84 + 0.16 * smoothstep(0.3, 0.62, nz(bp / 1.3 + 0.61).a);
+}
+// The coast's ink at rest (E3 Layer 2: 30–60 % against its paper; the continent outline is the Layer 1 line) and
+// its glow's strength. A territory's phase glow takes the stroke to full ivory.
+const float COAST_A = ${COAST_A.toFixed(3)};
+const float COAST_BLOOM = ${COAST_BLOOM.toFixed(3)};
+// The territory border (E2 Light weight, the paper's deep tone) at rest.
+const float TERR_A = ${TERR_A.toFixed(3)};
+
+// The ink layer. v4 E10: the strokes themselves hold still (board-game linework does not breathe); the coast's
+// dry-brush opacity still breathes ±6 % with its own phase from place to place (R only: the coast glow).
 vec4 inkAt(vec2 bp) {
-  vec2 uv = bUV(bp);
+  vec4 k = texture2D(uInk, bUV(bp));
   float a = uAmb;
-  vec4 k;
   if (a > 0.001) {
     float t = uTime;
-    vec2 q = bp / 47.0;
-    // two slow sines per axis, phased by a broad noise field: every stretch of coast drifts on its own
-    vec4 ph = nz(q * 0.37 + 0.19) * 6.2831853;
-    vec2 d = vec2(
-      0.6 * sin(t * 0.42 + ph.r * 2.0) + 0.4 * sin(t * 0.395 + ph.g * 3.0),
-      0.6 * sin(t * 0.45 + ph.b * 2.0) + 0.4 * sin(t * 0.405 + ph.a * 3.0)
-    );
-    k = texture2D(uInk, uv + d * a * uWob / uInkSize);
     float br = sin(t * 0.47 + nz(bp / 61.0 + 0.53).g * 12.566) * 0.7 + 0.3 * sin(t * 0.39 + nz(bp / 23.0).r * 12.566);
-    k.rgb *= 1.0 + 0.06 * a * br;
-  } else {
-    k = texture2D(uInk, uv);
+    k.r *= 1.0 + 0.06 * a * br;
   }
   return k;
 }
 
-// The coast stroke, blurred ~0.3 board units (a coarse mip): the wet feather where the ivory ink bled into
-// the wash beside it.
+// The coast glow's drift (PLAN §5 "drift you can see"): two slow sines per axis, phased by a broad noise field,
+// so every stretch of coast drifts on its own. Board units; mirrored on the CPU by inkGlsl.ts glowOffset().
+vec2 glowOffset(vec2 bp) {
+  float t = uTime;
+  vec4 ph = nz(bp / 47.0 * 0.37 + 0.19) * 6.2831853;
+  const float w1 = 6.2831853 / ${GLOW_PERIODS[0].toFixed(2)};
+  const float w2 = 6.2831853 / ${GLOW_PERIODS[1].toFixed(2)};
+  vec2 d = vec2(
+    0.6 * sin(t * w1 + ph.r * 2.0) + 0.4 * sin(t * w2 + ph.g * 3.0),
+    0.6 * sin(t * w1 * 1.07 + ph.b * 2.0) + 0.4 * sin(t * w2 * 1.03 + ph.a * 3.0)
+  );
+  return d * ${GLOW_REACH.toFixed(3)} * uAmb;
+}
+// The coast glow: the same coast stroke, blurred ~0.3 board units (a coarse mip) and drifting slowly; the wet
+// feather where the ivory ink bled into the paper beside it. One brush, so one language (E2).
 float coastSoft(vec2 bp) {
-  return textureLod(uInk, bUV(bp), log2(0.3 * uInkSize.x / uBoard.x)).r;
+  return textureLod(uInk, bUV(bp + glowOffset(bp)), log2(0.3 * uInkSize.x / uBoard.x)).r;
 }
 
 // Mist veils (A1): large fbm veils, 3-5 on the board at a time, drifting east ~0.7 % of the board width
 // a second (the board is 100 units wide) and morphing slowly. x = the veils that keep to the sea (thinner
 // near the coasts), y = the two that cross coasts, so the land breathes too. Peak opacity is 7-8 %.
 vec2 mistAt(vec2 bp) {
-  // ~0.8 % of the board width a second: clearly drifting at couch distance, never hurrying
-  float t = uTime * 0.65;
+  // the lead veil drifts MIST_SPEED units a second (~0.7 % of the board width): clearly drifting at couch
+  // distance, never hurrying (mirrored on the CPU by inkGlsl.ts mistSeaCPU for the drift hook)
+  float t = uTime * ${(MIST_SPEED / 1.1).toFixed(5)};
   vec2 w = vec2(nz(bp / 260.0 + vec2(t * 0.0011, -t * 0.0008)).r, nz(bp / 210.0 + vec2(0.41 - t * 0.0009, 0.17 + t * 0.001)).r) - 0.5;
   float f = nz(bp / 26.0 + vec2(-t * 1.1 / 26.0, 0.33)).g - 0.5;
   float m1 = nz(bp / 170.0 + vec2(-t * 1.1 / 170.0, t * 0.1 / 170.0) + w * 0.3).r + 0.05 * f;
   float m2 = nz(bp / 140.0 + vec2(0.37 - t * 1.0 / 140.0, 0.61 - t * 0.12 / 140.0) - w.yx * 0.26).r + 0.05 * f;
   float m3 = nz(bp / 190.0 + vec2(0.73 - t * 1.15 / 190.0, 0.29 + t * 0.06 / 190.0) + w * 0.24).r + 0.05 * f;
   float m4 = nz(bp / 155.0 + vec2(0.13 - t * 1.05 / 155.0, 0.83 - t * 0.05 / 155.0) - w * 0.2).r + 0.05 * f;
-  float sea = max(smoothstep(0.585, 0.64, m1), smoothstep(0.6, 0.655, m2) * 0.85);
-  float over = max(smoothstep(0.6, 0.655, m3), smoothstep(0.61, 0.665, m4) * 0.8);
+  // (v4: the veils' edges a touch crisper than v3's, 0.04 of the field instead of 0.055, so the drift reads)
+  float sea = max(smoothstep(0.592, 0.632, m1), smoothstep(0.607, 0.647, m2) * 0.85);
+  float over = max(smoothstep(0.607, 0.647, m3), smoothstep(0.617, 0.657, m4) * 0.8);
   // wisps inside the veils
   float wisp = 0.8 + 0.4 * (nz(bp / 11.0 + vec2(-t * 1.1 / 11.0, 0.7)).a);
   return vec2(sea, over) * wisp;
@@ -346,8 +405,8 @@ vec3 continentInk(vec3 c, vec2 bp, float sea) {
   float w = uContW * (1.0 + 0.22 * (nz(bp / 4.3 + 0.17).g - 0.5));
   float a = 1.0 - smoothstep(w - 0.45 * aa, w + 0.45 * aa, d);
   if (a < 0.002) return c;
-  // the pen's pressure: the line is solid, a hair drier here and there
-  a *= 0.86 + 0.14 * smoothstep(0.3, 0.62, nz(bp / 1.3 + 0.61).a);
+  // the pen's pressure: the line is solid, a hair drier here and there (the one brush, E2)
+  a *= brushJit(bp);
   int li = int(kn.b * 255.0 + 0.5);
   vec3 lc = uContLine;
   if (li < 6) {
@@ -359,7 +418,7 @@ vec3 continentInk(vec3 c, vec2 bp, float sea) {
       lc = mix(lc, uContColor[li], sw.w * m);
     }
   }
-  return mix(c, lc, a * 0.95);
+  return mix(c, lc, a);
 }
 
 // Contact shadow of a lifted tile (the only sign of a lift on the flat board): its footprint, offset
@@ -400,13 +459,16 @@ void main() {
     float id = idAt(bp);
     // decorative (non-playable) land: raw paper, a shade lighter
     if (f.a > 0.5 && id < 0.5) c = mix(c, uUnclaimed, 0.55);
-    // the coast's wet edge feathering into the sea
-    c = mix(c, uInkCoast, 0.06 * exp(-seaD / 0.22) * (1.0 - f.a));
+    // the coast glow: the heavy stroke's own bloom bleeding into the sea, drifting slowly (E2: one brush)
+    c = mix(c, uInkCoast, COAST_BLOOM * smoothstep(0.03, 0.55, coastSoft(bp)) * (1.0 - f.a));
     vec4 k = inkAt(bp);
     float glow;
     vec3 cc = coastColor(id, bp, glow);
-    c = mix(c, uInkCoast * 0.96, k.b * 0.55);
-    c = mix(c, cc, clamp(k.r * (1.0 + 0.5 * glow), 0.0, 1.0) * 0.92);
+    float jit = brushJit(bp);
+    // the decorative coasts: the Hair weight, Layer 3
+    c = mix(c, uInkCoast * 0.96, k.b * 0.4 * jit);
+    // the coast: the Heavy weight, Layer 2 (30–60 % against its paper), full ivory only when it glows
+    c = mix(c, cc, clamp(k.r * jit * (COAST_A + (1.0 - COAST_A) * glow), 0.0, 1.0));
     // the tint: a thin shore band only (~0.3 units out); water the outline encloses stays paper
     c = continentInk(c, bp, (1.0 - f.a) * (1.0 - smoothstep(0.15, 0.32, seaD)));
     float sh = max(liftShadow(bp, uLiftA, -1.0), liftShadow(bp, uLiftB, -1.0));
@@ -415,9 +477,8 @@ void main() {
   // mist: the sea's own veils thin out near the coasts; the crossing veils run on over the land
   vec2 mv = mistAt(bp);
   float mist = max(mv.x * mix(0.35, 1.0, smoothstep(0.0, 0.8, seaD)), mv.y);
-  c = mix(c, MIST, min(mist, 1.0) * 0.072 * uMist);
-  c *= vignette();
-  gl_FragColor = vec4(c, 1.0);
+  c = mix(c, MIST, min(mist, 1.0) * 0.085 * uMist);
+  gl_FragColor = vec4(lamp(c), 1.0);
 }
 `;
 
@@ -537,11 +598,11 @@ void main() {
   wash *= 0.97 + 0.06 * fib;
   float edge = smoothstep(0.45 - 0.12 * wander, 1.0, prox);
   wash = mix(wash, deep, 0.26 * edge * edge + 0.1 * smoothstep(0.93, 1.0, prox));
-  // wash breath: ±2 % lightness (L*), its own slow phase
-  wash *= 1.0 + 0.035 * uAmb * sin(uTime * 6.2831853 / uPeriod + uPhase);
+  // (v4 E10: the wash no longer breathes at rest; only the mist, the coast glow and the lamp move)
   wash *= 1.0 - 0.08 * uBreath;
 
-  vec3 c = mix(paper, wash, 0.92);
+  // (v4: the tint is laid at 0.95 over the paper, v3's base at 0.92: the lighter wash lets less indigo through)
+  vec3 c = mix(paper, wash, 0.95);
   c = mix(c, mix(paper, uUnclaimed, 0.6), uDry);
   // recede toward the paper
   c = mix(c, paper, 0.3 * uDim) * (1.0 - 0.05 * uDim);
@@ -551,17 +612,19 @@ void main() {
   vec2 mv = mistAt(bp);
   c = mix(c, MIST, min(1.0, mv.y * 0.6 + mv.x * 0.12) * 0.08 * uMist);
 
-  // the coast's wet feather bleeding into the wash (pale, soft, uneven with the grain)
+  // the coast glow bleeding into the wash (the heavy stroke's own bloom, drifting; uneven with the grain)
   float cs = coastSoft(bp);
-  c = mix(c, uInkCoast, 0.3 * smoothstep(0.03, 0.55, cs) * (0.75 + 0.5 * gr));
+  c = mix(c, uInkCoast, COAST_BLOOM * smoothstep(0.03, 0.55, cs) * (0.75 + 0.5 * gr));
 
-  // ink: interior borders at 40 %, the coast in full
+  // ink (v4 E2): the territory border is the Light weight in the paper's deep tone, a crack of indigo between
+  // washes; the coast is the Heavy weight in ivory (Layer 2 at rest, full when the territory glows)
   vec4 k = inkAt(bp);
   float glow;
   vec3 cc = coastColor(uId, bp, glow);
   glow = max(glow, uGlow);
-  c = mix(c, uInkBorder, clamp(k.g * (0.4 + 0.25 * uLight + 0.5 * glow), 0.0, 1.0));
-  c = mix(c, cc, clamp(k.r * (1.0 + 0.5 * glow + 0.25 * uLight), 0.0, 1.0) * 0.92);
+  float jit = brushJit(bp);
+  c = mix(c, uTerrInk, clamp(k.g * jit * TERR_A * (1.0 - 0.3 * uLight), 0.0, 1.0));
+  c = mix(c, cc, clamp(k.r * jit * (COAST_A + (1.0 - COAST_A) * max(glow, 0.3 * uLight)), 0.0, 1.0));
   // a continent's border across land (Ural, the isthmus, Suez) is the printed outline too
   c = continentInk(c, bp, 0.0);
 
@@ -575,8 +638,7 @@ void main() {
 
   float sh = max(liftShadow(bp, uLiftA, uId), liftShadow(bp, uLiftB, uId));
   c *= 1.0 - 0.3 * sh;
-  c *= vignette();
-  gl_FragColor = vec4(c, 1.0);
+  gl_FragColor = vec4(lamp(c), 1.0);
 }
 `;
 
@@ -587,3 +649,138 @@ void main() { gl_FragColor = vec4(uColor * 0.55, 1.0); }
 export const SIDE_VERT = /* glsl */ `
 void main() { gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }
 `;
+
+// ---------------------------------------------------------------------------
+// CPU mirrors of the drifting paper (v4 PLAN §5: "a point on a mist edge moves ≥ 1 px every 2 s"), for the
+// board's drift hook. They read the same noise texture the shaders do (bilinear, repeat) and follow the same
+// formulas, so what they measure is what the paper does.
+// ---------------------------------------------------------------------------
+
+/** The noise texture's channels, bilinear with repeat (texture2D at the base mip). */
+export function nzCPU(noise: THREE.DataTexture, x: number, y: number): [number, number, number, number] {
+  const img = noise.image as { data: Uint8Array; width: number; height: number };
+  const W = img.width;
+  const H = img.height;
+  const fx = x * W - 0.5;
+  const fy = y * H - 0.5;
+  const x0 = Math.floor(fx);
+  const y0 = Math.floor(fy);
+  const tx = fx - x0;
+  const ty = fy - y0;
+  const out: [number, number, number, number] = [0, 0, 0, 0];
+  const w = (v: number, m: number) => ((v % m) + m) % m;
+  for (let j = 0; j < 2; j++)
+    for (let i = 0; i < 2; i++) {
+      const o = (w(y0 + j, H) * W + w(x0 + i, W)) * 4;
+      const k = (i ? tx : 1 - tx) * (j ? ty : 1 - ty);
+      for (let c = 0; c < 4; c++) out[c] += (img.data[o + c] / 255) * k;
+    }
+  return out;
+}
+
+const smooth = (a: number, b: number, x: number) => {
+  const t = Math.min(1, Math.max(0, (x - a) / (b - a)));
+  return t * t * (3 - 2 * t);
+};
+
+/** The sea veils' field (mistAt().x before the wisps) at a board point and ambient time. */
+export function mistSeaCPU(noise: THREE.DataTexture, bx: number, by: number, uTime: number): number {
+  const t = uTime * (MIST_SPEED / 1.1);
+  const nz = (x: number, y: number) => nzCPU(noise, x, y);
+  const w = [nz(bx / 260 + t * 0.0011, by / 260 - t * 0.0008)[0] - 0.5, nz(bx / 210 + 0.41 - t * 0.0009, by / 210 + 0.17 + t * 0.001)[0] - 0.5];
+  const f = nz(bx / 26 - (t * 1.1) / 26, by / 26 + 0.33)[1] - 0.5;
+  const m1 = nz(bx / 170 - (t * 1.1) / 170 + w[0] * 0.3, by / 170 + (t * 0.1) / 170 + w[1] * 0.3)[0] + 0.05 * f;
+  const m2 = nz(bx / 140 + 0.37 - (t * 1.0) / 140 - w[1] * 0.26, by / 140 + 0.61 - (t * 0.12) / 140 - w[0] * 0.26)[0] + 0.05 * f;
+  return Math.max(smooth(0.592, 0.632, m1), smooth(0.607, 0.647, m2) * 0.85);
+}
+
+/** The coast glow's offset (glowOffset() in the shaders), board units, at full ambient amplitude. */
+export function glowOffsetCPU(noise: THREE.DataTexture, bx: number, by: number, uTime: number): [number, number] {
+  const ph = nzCPU(noise, (bx / 47) * 0.37 + 0.19, (by / 47) * 0.37 + 0.19).map((v) => v * Math.PI * 2);
+  const w1 = (Math.PI * 2) / GLOW_PERIODS[0];
+  const w2 = (Math.PI * 2) / GLOW_PERIODS[1];
+  const t = uTime;
+  return [
+    (0.6 * Math.sin(t * w1 + ph[0] * 2) + 0.4 * Math.sin(t * w2 + ph[1] * 3)) * GLOW_REACH,
+    (0.6 * Math.sin(t * w1 * 1.07 + ph[2] * 2) + 0.4 * Math.sin(t * w2 * 1.03 + ph[3] * 3)) * GLOW_REACH,
+  ];
+}
+
+/**
+ * How far the paper drifted between two ambient times, board units: the median displacement of points on the
+ * sea veils' edges (each tracked along its field's gradient to where the edge's level sits at t1), and the median
+ * coast-glow offset change over sample coast points. `seaPts` are open-sea board points to search for edges.
+ */
+export function paperDriftCPU(
+  noise: THREE.DataTexture,
+  seaPts: [number, number][],
+  coastPts: [number, number][],
+  t0: number,
+  t1: number,
+): { mist: number; mistN: number; glow: number; glowN: number } {
+  const med = (a: number[]) => {
+    const s = a.slice().sort((p, q) => p - q);
+    return s.length ? s[Math.floor(s.length / 2)] : 0;
+  };
+  const LEVEL = 0.5;
+  const mist: number[] = [];
+  for (const [bx, by] of seaPts) {
+    // walk east from the point to the first crossing of the edge's level at t0
+    let px = bx;
+    let prev = mistSeaCPU(noise, px, by, t0) - LEVEL;
+    let edge: number | null = null;
+    for (let s = 0; s < 120 && edge === null; s++) {
+      const nx = px + 0.1;
+      const v = mistSeaCPU(noise, nx, by, t0) - LEVEL;
+      if (Math.sign(v) !== Math.sign(prev) && prev !== 0) {
+        // refine the crossing
+        let a = px;
+        let b = nx;
+        for (let it = 0; it < 18; it++) {
+          const m = (a + b) / 2;
+          if (Math.sign(mistSeaCPU(noise, m, by, t0) - LEVEL) === Math.sign(prev)) a = m;
+          else b = m;
+        }
+        edge = (a + b) / 2;
+      }
+      px = nx;
+      prev = v;
+    }
+    if (edge === null) continue;
+    // its normal at t0
+    const h = 0.05;
+    const gx = (mistSeaCPU(noise, edge + h, by, t0) - mistSeaCPU(noise, edge - h, by, t0)) / (2 * h);
+    const gy = (mistSeaCPU(noise, edge, by + h, t0) - mistSeaCPU(noise, edge, by - h, t0)) / (2 * h);
+    const gl = Math.hypot(gx, gy);
+    if (gl < 1e-4) continue;
+    const nx = gx / gl;
+    const ny = gy / gl;
+    // where the level sits along that normal at t1: the nearest crossing within ±6 units
+    const at = (d: number) => mistSeaCPU(noise, edge! + nx * d, by + ny * d, t1) - LEVEL;
+    let best: number | null = null;
+    const step = 0.02;
+    let pv = at(0);
+    if (Math.abs(pv) < 1e-6) best = 0;
+    for (let k = 1; k <= 300 && best === null; k++) {
+      for (const sgn of [1, -1]) {
+        const d0 = sgn * (k - 1) * step;
+        const d1 = sgn * k * step;
+        const v0 = at(d0);
+        const v1 = at(d1);
+        if (Math.sign(v0) !== Math.sign(v1)) {
+          best = Math.abs((d0 + d1) / 2);
+          break;
+        }
+      }
+      pv = 0;
+    }
+    if (best !== null) mist.push(best);
+  }
+  const glow: number[] = [];
+  for (const [bx, by] of coastPts) {
+    const a = glowOffsetCPU(noise, bx, by, t0);
+    const b = glowOffsetCPU(noise, bx, by, t1);
+    glow.push(Math.hypot(b[0] - a[0], b[1] - a[1]));
+  }
+  return { mist: med(mist), mistN: mist.length, glow: med(glow), glowN: glow.length };
+}

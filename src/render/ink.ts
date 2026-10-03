@@ -138,6 +138,15 @@ const STREAK_THRESHOLD = 0.5;
 
 const yieldFrame = () => new Promise<void>((r) => setTimeout(r, 0));
 
+/**
+ * The v4 edge ladder (_claude/v4/PLAN.md E2): four stroke weights, one job each, in CSS px at the 1440×900 home
+ * view. Heavy = the coast (ivory), Medium = the continent outline (silver / its holder's colour; drawn by the
+ * shaders, uContW), Light = the territory border (the paper's deep tone), Hair = sea lanes (lanes.ts) and the
+ * decorative coasts. The baked strokes are sized for EDGE_REF_PPU px a board unit (the desktop home view).
+ */
+export const EDGE_PX = { heavy: 2.0, medium: 1.4, light: 0.6, hair: 0.4 } as const;
+export const EDGE_REF_PPU = 14.5;
+
 // ---------------------------------------------------------------------------
 // dry brush
 // ---------------------------------------------------------------------------
@@ -976,74 +985,43 @@ export async function buildInk(g: BoardGeometry, opt: InkOptions): Promise<InkLa
   const u = s; // px per board unit
   const spacing = opt.small ? 1.1 : 1.6;
 
-  // R: coasts. A soft underlayer (the wet feather), then the dry brush.
+  // v4 edge ladder (PLAN E2): four weights, one brush. The weights are CSS px at the 1440×900 home view
+  // (EDGE_REF_PPU px a board unit); every stroke takes the same streak brush, the same jitter and dryness relative
+  // to its width, and the shaders lay the same pen pressure (brushJit) over all four. v3's soft 0.34-unit
+  // underlayer under the coasts (a second, glowing language) is gone: the coast glow is this stroke's own bloom.
   let seed = 1;
-  ctx.save();
-  ctx.strokeStyle = 'rgba(255,255,255,0.06)';
-  ctx.lineWidth = 0.34 * u;
-  for (const r of coastRuns) {
-    ctx.beginPath();
-    const f = flatOf(r.pts);
-    ctx.moveTo(f[0], f[1]);
-    for (let i = 2; i < f.length; i += 2) ctx.lineTo(f[i], f[i + 1]);
-    if (r.closed) ctx.closePath();
-    ctx.stroke();
-  }
-  ctx.restore();
   const streakMs = Math.round(performance.now() - t0);
   const sb: StreakBrush | null = streakBrush;
   const streaked = !!sb;
-  for (const r of coastRuns) {
-    const len = ringLen(r.pts);
-    const small = r.closed && len < 3;
-    const width = (small ? 0.13 : 0.2) * u;
+  const oneBrush = (r: { pts: Vec2[]; closed: boolean }, width: number, passes: number) => {
     const sdn = seed++;
     dryBrush(ctx, flatOf(r.pts), r.closed, {
       width,
-      passes: small ? 5 : 10,
-      alpha: 0.6,
-      jitter: 0.03 * u,
-      dry: small ? 0.2 : 0.55,
+      passes,
+      alpha: 0.62,
+      jitter: width * 0.15,
+      dry: 0.5,
       seed: sdn,
       spacing,
       endTaper: 0,
       streak: sb ? streakFor(sb, sdn, width, spacing) : undefined,
     });
+  };
+  // R: coasts, the Heavy weight (an island speck a little finer, or its stroke scribbles over it).
+  for (const r of coastRuns) {
+    const small = r.closed && ringLen(r.pts) < 3;
+    oneBrush(r, (small ? 0.75 : 1) * EDGE_PX.heavy * (u / EDGE_REF_PPU), small ? 6 : 10);
   }
   grab(0);
   await yieldFrame();
 
-  // G: interior borders (thinner; the shaders draw them at 40 %).
-  for (const r of borderRuns) {
-    dryBrush(ctx, flatOf(r.pts), r.closed, {
-      width: 0.13 * u,
-      passes: 6,
-      alpha: 0.65,
-      jitter: 0.02 * u,
-      dry: 0.4,
-      seed: seed++,
-      spacing,
-      endTaper: 0,
-    });
-  }
+  // G: interior borders, the Light weight (the shaders draw them in the paper's deep tone).
+  for (const r of borderRuns) oneBrush(r, EDGE_PX.light * (u / EDGE_REF_PPU), 6);
   grab(1);
   await yieldFrame();
 
-  // B: the decorative (non-playable) coasts, finer.
-  for (const p of g.decorativeLand) {
-    const sdn = seed++;
-    dryBrush(ctx, flatOf(p.outer), true, {
-      width: 0.1 * u,
-      passes: 4,
-      alpha: 0.55,
-      jitter: 0.02 * u,
-      dry: 0.35,
-      seed: sdn,
-      spacing,
-      endTaper: 0,
-      streak: sb ? streakFor(sb, sdn, 0.1 * u, spacing) : undefined,
-    });
-  }
+  // B: the decorative (non-playable) coasts, the Hair weight.
+  for (const p of g.decorativeLand) oneBrush({ pts: p.outer, closed: true }, EDGE_PX.hair * (u / EDGE_REF_PPU), 4);
   // (The sea lanes are printed crossings of their own now: lanes.ts. B keeps the decorative coasts.)
   grab(2);
   for (let j = 3; j < inkData.length; j += 4) inkData[j] = 255;

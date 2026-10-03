@@ -30,9 +30,7 @@ varying vec2 vBP;
 void main() {
   vUv = uv;
   vec4 w = modelMatrix * vec4(position, 1.0);
-  // the swell drifts with the mist: a slow sway east and back (≤ 0.9 units, ~30 s), yielding with the calm
-  w.x += 0.9 * uAmb * sin(uTime * 0.21 + uPhase);
-  w.z += 0.15 * uAmb * sin(uTime * 0.17 + uPhase * 1.7);
+  // (v4 E10: the wave marks are printed texture and hold still; the mist drifts over them)
   vBP = vec2(w.x + uBoard.x * 0.5, uBoard.y * 0.5 - w.z);
   gl_Position = projectionMatrix * viewMatrix * w;
 }
@@ -48,9 +46,8 @@ varying vec2 vUv;
 varying vec2 vBP;
 void main() {
   float a = texture2D(uWaves, vec2(vUv.x, (uRow + 1.0 - vUv.y) / uRows)).r;
-  // breathes ±15 % over ~13 s; a faint travelling highlight runs along it
-  float br = 1.0 + 0.15 * uAmb * sin(uTime * 0.483 + uPhase);
-  a *= uAlpha * br;
+  // (v4 E10 / E3: still, and Layer 3: ≤ 15 % against the sea)
+  a *= uAlpha;
   if (a < 0.003) discard;
   gl_FragColor = vec4(uInkCoast * vignette(), a);
 }
@@ -97,7 +94,21 @@ export class WaveStrokes {
     this.place(7);
   }
 
-  /** Scatter the strokes over open water (≥ 2.2 units from any coast, apart from each other). */
+  /** Whether any sea lane's polyline passes through the box centred at (x, y), half-sizes hx × hy (board units). */
+  nearLane(x: number, y: number, hx: number, hy: number): boolean {
+    const inBox = (px: number, py: number) => Math.abs(px - x) <= hx && Math.abs(py - y) <= hy;
+    for (const l of this.g.seaLanes)
+      for (const seg of l.segments)
+        for (let i = 1; i < seg.length; i++) {
+          const [ax, ay] = seg[i - 1];
+          const [bx, by] = seg[i];
+          const n = Math.max(2, Math.ceil(Math.hypot(bx - ax, by - ay) / 0.25));
+          for (let k = 0; k <= n; k++) if (inBox(ax + ((bx - ax) * k) / n, ay + ((by - ay) * k) / n)) return true;
+        }
+    return false;
+  }
+
+  /** Scatter the strokes over open water (≥ 2.2 units from any coast, clear of the sea lanes, apart from each other). */
   place(seed: number): void {
     if (seed === this.placedSeed) return;
     this.placedSeed = seed;
@@ -123,6 +134,8 @@ export class WaveStrokes {
           break;
         }
       if (!ok) continue;
+      // v4 E9: never under a sea lane (the stroke's box, len × 0.3 len, plus a unit of air)
+      if (this.nearLane(x, y, len / 2 + 1, len * 0.15 + 1)) continue;
       if (placed.some(([px, py]) => Math.hypot((px - x) * 0.7, py - y) < 11)) continue;
       placed.push([x, y, len]);
     }
@@ -135,7 +148,8 @@ export class WaveStrokes {
       m.scale.set(len, 1, len * 0.3);
       const mat = this.mats[i];
       mat.uniforms.uRow.value = Math.floor(rnd() * this.ink.waveRows) % this.ink.waveRows;
-      mat.uniforms.uAlpha.value = 0.15 + rnd() * 0.05;
+      // (v4 E3 Layer 3: ≤ 15 % against the sea; v3 drew them at 15–20 %)
+      mat.uniforms.uAlpha.value = 0.11 + rnd() * 0.03;
       mat.uniforms.uPhase.value = rnd() * 6.283;
       // some swells run the other way
       if (rnd() < 0.35) m.scale.x = -len;

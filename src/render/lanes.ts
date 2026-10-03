@@ -8,34 +8,52 @@ import * as THREE from 'three';
 import type { BoardGeometry, Vec2 } from '../map/types';
 import type { TerritoryId } from '../engine/types';
 import { Animator, ease } from './anim';
+import { EDGE_PX } from './ink';
 import { INK_COAST, TILE_TOP, hexToRgb, toWorld } from './util';
+
+// v4 (PLAN E2 / E3 / E9): the crossing is the Hair weight (0.4 px at the home view, drawn as a 1 px ribbon at
+// 0.4 coverage), carries the board's one brush (the same pen pressure as the coasts and outlines), and sits in
+// Layer 3 at rest (≤ 15 % against the sea), Layer 2 when either shore is picked (30–60 %).
+const QUAD_PX = 1.0;
+const COVER = EDGE_PX.hair / QUAD_PX;
+/** Opacity at rest and lit, before the hair's coverage (measured: rest ΔL* ≈ 12, lit ≈ 38 on the open sea). */
+const REST = 0.36;
+const LIT = 1.25;
 
 const VERT = /* glsl */ `
 attribute float aLane;
 attribute float aSide;
 attribute float aAlong;
 uniform float uLit[32];
+uniform vec2 uBoard;
 varying float vLit;
 varying float vSide;
 varying float vAlong;
+varying vec2 vBP;
 void main() {
   vLit = uLit[int(aLane + 0.5)];
   vSide = aSide;
   vAlong = aAlong;
-  gl_Position = projectionMatrix * viewMatrix * modelMatrix * vec4(position, 1.0);
+  vec4 w = modelMatrix * vec4(position, 1.0);
+  vBP = vec2(w.x + uBoard.x * 0.5, uBoard.y * 0.5 - w.z);
+  gl_Position = projectionMatrix * viewMatrix * w;
 }
 `;
 const FRAG = /* glsl */ `
 uniform vec3 uInk;
 uniform float uRest;
+uniform float uLitA;
+uniform float uCover;
+uniform sampler2D uNoise;
 varying float vLit;
 varying float vSide;
 varying float vAlong;
+varying vec2 vBP;
 void main() {
-  // a hairline, soft at its two edges; a dry break now and then along it
+  // a hairline, soft at its two edges, with the board's pen pressure along it (inkGlsl brushJit)
   float edge = 1.0 - smoothstep(0.35, 1.0, abs(vSide));
-  float dry = 0.82 + 0.18 * step(0.12, fract(vAlong * 0.9 + 0.37));
-  float a = edge * dry * mix(uRest, 0.95, vLit);
+  float jit = 0.84 + 0.16 * smoothstep(0.3, 0.62, texture2D(uNoise, vBP / 1.3 + 0.61).a);
+  float a = edge * jit * uCover * mix(uRest, uLitA, vLit);
   if (a < 0.004) discard;
   gl_FragColor = vec4(uInk * a, a);
 }
@@ -49,18 +67,30 @@ export class SeaLanes {
   private lit: number[];
   private goal: number[];
   private ver = 0;
-  /** Board units per CSS px at the home view (the hairline is ~1.3 px, the ticks ~7 px). */
+  /** Board units per CSS px at the home view (the hairline is the Hair weight, the ticks ~7 px). */
   private pxUnit = 1 / 12.7;
 
   constructor(
     private g: BoardGeometry,
     private anim: Animator,
+    noise?: THREE.Texture,
   ) {
     const ink = hexToRgb(INK_COAST);
     this.lit = new Array(32).fill(0);
     this.goal = new Array(32).fill(0);
+    // (no noise texture: a flat mid-grey texel, so the pen pressure is even)
+    const flat = new THREE.DataTexture(new Uint8Array([128, 128, 128, 128]), 1, 1, THREE.RGBAFormat);
+    flat.needsUpdate = true;
     this.mat = new THREE.ShaderMaterial({
-      uniforms: { uLit: { value: this.lit.slice() }, uInk: { value: new THREE.Vector3(ink[0], ink[1], ink[2]) }, uRest: { value: 0.34 } },
+      uniforms: {
+        uLit: { value: this.lit.slice() },
+        uInk: { value: new THREE.Vector3(ink[0], ink[1], ink[2]) },
+        uRest: { value: REST },
+        uLitA: { value: LIT },
+        uCover: { value: COVER },
+        uNoise: { value: noise ?? flat },
+        uBoard: { value: new THREE.Vector2(g.width, g.height) },
+      },
       vertexShader: VERT,
       fragmentShader: FRAG,
       transparent: true,
@@ -93,7 +123,8 @@ export class SeaLanes {
     const side: number[] = [];
     const along: number[] = [];
     const idx: number[] = [];
-    const hw = 0.75 * this.pxUnit;
+    // (the ribbon is QUAD_PX wide; its soft edges leave a ~0.8 px core, drawn at the hair's coverage)
+    const hw = (QUAD_PX / 2 + 0.25) * this.pxUnit;
     const tick = 3.6 * this.pxUnit;
     const y = TILE_TOP + 0.004;
     const quad = (a: Vec2, b: Vec2, h: number, li: number, s0: number) => {
@@ -152,7 +183,7 @@ export class SeaLanes {
         const L = Math.hypot(dx, dy) || 1;
         const c: Vec2 = [p[0] + (dx / L) * 0.35 * tick, p[1] + (dy / L) * 0.35 * tick];
         const n: Vec2 = [-dy / L, dx / L];
-        quad([c[0] - n[0] * tick, c[1] - n[1] * tick], [c[0] + n[0] * tick, c[1] + n[1] * tick], hw * 1.15, li, 0.2);
+        quad([c[0] - n[0] * tick, c[1] - n[1] * tick], [c[0] + n[0] * tick, c[1] + n[1] * tick], hw, li, 0.2);
       }
     });
     const geo = new THREE.BufferGeometry();

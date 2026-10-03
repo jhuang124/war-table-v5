@@ -25,8 +25,8 @@ import { Overlay } from './overlay';
 import { Continents } from './continents';
 import { AttackArrow, FortifyRoute, LiveStroke } from './fx';
 import { SeaLanes } from './lanes';
-import { buildInk } from './ink';
-import { makeSharedUniforms } from './inkGlsl';
+import { EDGE_PX, buildInk } from './ink';
+import { makeSharedUniforms, paperDriftCPU } from './inkGlsl';
 import { DiceTray, boardTrayGeometry } from './dice';
 import { CameraRig, HOME_CLEAR_PX, HOME_PITCH } from './camera';
 import {
@@ -40,6 +40,7 @@ import {
   pointInRing,
   setBoardSize,
   tileRgb,
+  washRgb,
   toBoard,
   toWorld,
   mixRgb,
@@ -163,7 +164,7 @@ export const createBoardView: CreateBoardView = async (opts: BoardViewOptions): 
   scene.add(arrow.group);
   const route = new FortifyRoute(tiles, anim, ink.noise);
   scene.add(route.group);
-  const lanes = new SeaLanes(G, anim);
+  const lanes = new SeaLanes(G, anim, ink.noise);
   scene.add(lanes.group);
   const live = new LiveStroke(anim, ink.noise);
   scene.add(live.group);
@@ -339,9 +340,10 @@ export const createBoardView: CreateBoardView = async (opts: BoardViewOptions): 
 
   const setOwnerLook = (id: TerritoryId, owner: PlayerId) => {
     const t = tiles.get(id);
-    t.rgb = tileRgb(lastState, owner);
+    // v4 E4: the land takes the seat's tint, the stone keeps its full pigment
+    t.rgb = washRgb(lastState, owner);
     t.dirty = true;
-    tokens.setColor(id, t.rgb);
+    tokens.setColor(id, tileRgb(lastState, owner));
   };
 
   const refreshBadge = (id: TerritoryId, pop = false) => {
@@ -1322,7 +1324,7 @@ export const createBoardView: CreateBoardView = async (opts: BoardViewOptions): 
     o: { torn?: boolean; dir?: [number, number]; color?: RGB; ease?: (t: number) => number } = {},
   ): Promise<void> => {
     const t = tiles.get(to);
-    const toRgb = tileRgb(lastState, owner);
+    const toRgb = washRgb(lastState, owner);
     const u = t.uniforms;
     // A flood still soaking (the conquest's, when the elimination sweep follows it): land it first, so the
     // new one runs over the colour that was arriving, never back over the old owner's.
@@ -1337,7 +1339,7 @@ export const createBoardView: CreateBoardView = async (opts: BoardViewOptions): 
       if (t.ver.flood !== ver) return;
       u.uFloodOn.value = 0;
       // A drift-correcting syncState may have moved on; always land on the displayed owner.
-      t.rgb = owners[to] === owner ? (o.color ?? toRgb) : tileRgb(lastState, owners[to]);
+      t.rgb = owners[to] === owner ? (o.color ?? toRgb) : washRgb(lastState, owners[to]);
       t.dirty = true;
     };
     if (anim.instant || (run && run.skipped)) {
@@ -1440,17 +1442,17 @@ export const createBoardView: CreateBoardView = async (opts: BoardViewOptions): 
     let back = Infinity;
     for (const ring of t.rings) for (const [x, y] of ring) back = Math.min(back, (x - t.anchor[0]) * dx + (y - t.anchor[1]) * dy);
     const origin: [number, number] = [t.anchor[0] + dx * (back - 0.3), t.anchor[1] + dy * (back - 0.3)];
-    const wash = tileRgb(lastState, by);
+    const wash = washRgb(lastState, by);
     const deep = mixRgb(wash, deepOf(wash), 0.7);
     await floodInk(id, origin, by, 900, run, { torn, dir: [dx, dy], color: deep, ease: ease.inOutSine });
     if (anim.instant || (run && run.skipped)) {
-      t.rgb = owners[id] === by ? wash : tileRgb(lastState, owners[id]);
+      t.rgb = owners[id] === by ? wash : washRgb(lastState, owners[id]);
       t.dirty = true;
       return;
     }
     // the deep ink settles into the ordinary wash (not blocking the queue past the beat)
     void tw(t, 'settle', 0, 1, 520, ease.inOutSine, (v) => {
-      t.rgb = owners[id] === by ? mixRgb(deep, wash, v) : tileRgb(lastState, owners[id]);
+      t.rgb = owners[id] === by ? mixRgb(deep, wash, v) : washRgb(lastState, owners[id]);
     });
     await anim.wait(380, run);
   };
@@ -1974,7 +1976,8 @@ export const createBoardView: CreateBoardView = async (opts: BoardViewOptions): 
 
   // --- the living calm (docs/INK.md A1) -------------------------------------------------------------
   // Mist over the sea, the coastlines' wet-ink breath, each wash's slow lightness breath and the wave
-  // strokes' sway all run off one ambient clock in the shaders (no tweens). It is always the slowest thing
+  // strokes' sway all run off one ambient clock in the shaders (no tweens). (v4 E10: only the mist, the coast
+  // glow and the lamp's vignette move now; the washes, the wave marks and the strokes hold still.) It is always the slowest thing
   // on screen and yields — dims to half — while anything gameplay-related moves; it draws at ≤ 30 fps
   // (≤ 24 on phones) when it is the only thing moving, runs at half speed after 3 minutes without input,
   // stops while the tab is hidden, and is off under reduced motion (the board is still).
@@ -2314,7 +2317,10 @@ export const createBoardView: CreateBoardView = async (opts: BoardViewOptions): 
     // Every piece (its plaque included) stays above the tray's top with a little air, and clear of its
     // sides. (The HUD's header line is centred and short; southern pieces near the tray's ends sit beside it.)
     const clear = 6 * uiScale;
-    rig.trayKeepOut = { x0: W / 2 - g.trayW / 2 - 12, x1: W / 2 + g.trayW / 2 + 12, y0: H - insets.bottom - kb + (kb - g.trayH) / 2 - clear };
+    // v4 (PLAN §5 "fill the frame"; review 2026-09-30 §5): on desktop the home view no longer reserves the
+    // South Atlantic for the dice; the land fills the height between the seats row and the bottom strip, and the
+    // dice ring sits under the fight. Phones keep their framing (portrait already fills).
+    rig.trayKeepOut = compact ? { x0: W / 2 - g.trayW / 2 - 12, x1: W / 2 + g.trayW / 2 + 12, y0: H - insets.bottom - kb + (kb - g.trayH) / 2 - clear } : null;
     // The stones are sized in CSS px at the home view (14 → 36 px at 1440×900; phones 15.5 → 26, so a 1-army numeral is ≥ 11 px without the floor), so their
     // board size follows the home scale: fit, size, fit again.
     // (Landscape phones: the numeral now sits at the stone's edge, so the floor no longer has to hold an 11 px
@@ -2337,8 +2343,8 @@ export const createBoardView: CreateBoardView = async (opts: BoardViewOptions): 
     // The coastline breath reaches 0.5 CSS px at the home zoom (A1): in ink texels at this scale.
     const pxPerTexel = (homePxPerUnit() * G.width) / Math.max(1, shared.uInkSize.value.x);
     shared.uWob.value = clamp(0.5 / Math.max(0.05, pxPerTexel), 0.25, 6);
-    // The continent outline (PLAN §2): the heaviest line on the board, a crisp ~1.8 px at the home view (1.4 on phones).
-    shared.uContW.value = clamp((compact ? 0.7 : 0.9) / Math.max(1, homePxPerUnit()), 0.02, 0.3);
+    // The continent outline (v4 E2): the Medium weight, a crisp 1.4 px at the home view (1.2 on phones).
+    shared.uContW.value = clamp((compact ? 0.6 : EDGE_PX.medium / 2) / Math.max(1, homePxPerUnit()), 0.02, 0.3);
     // The attack stroke's weight is set in screen px at the home view (INK review F4): ~2 px tail, ~9 px head.
     arrow.pxUnit = live.pxUnit = 1 / Math.max(1, homePxPerUnit());
     arrow.relayout();
@@ -2907,6 +2913,27 @@ export const createBoardView: CreateBoardView = async (opts: BoardViewOptions): 
       return (f as (...a: unknown[]) => unknown).apply(this, args);
     };
   }
+
+  // v4 board paper (PLAN §5 "drift you can see"): the drift test hook (BoardView.paperDrift, additive).
+  view.paperDrift = async (ms = 2000) => {
+    const seaPts: [number, number][] = [];
+    for (let by = 4; by < G.height - 4; by += 5.5)
+      for (let bx = 3; bx < G.width - 3; bx += 7.5) if (ink.seaDistance(bx, by) >= 3) seaPts.push([bx, by]);
+    const coastPts: [number, number][] = [];
+    TERRITORY_IDS.forEach((id, i) => {
+      if (i % 2) return;
+      const ring = G.territories[id].polygons[0]?.outer ?? [];
+      for (let j = 0; j < ring.length; j += Math.max(1, Math.floor(ring.length / 4))) coastPts.push([ring[j][0], ring[j][1]]);
+    });
+    const t0 = ambT;
+    const a0 = ambAmp;
+    await new Promise((r) => setTimeout(r, ms));
+    const t1 = ambT;
+    const amp = (a0 + ambAmp) / 2;
+    const d = paperDriftCPU(ink.noise, seaPts, coastPts, t0, t1);
+    const ppu = homePxPerUnit();
+    return { mistPx: d.mist * ppu, glowPx: d.glow * amp * ppu, clockS: t1 - t0, pxPerUnit: ppu, samples: d.mistN };
+  };
 
   // Debug hook for the sandbox / e2e (cheap).
   (view as unknown as { __debug: unknown }).__debug = {
