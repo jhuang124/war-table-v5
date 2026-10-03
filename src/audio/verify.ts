@@ -15,6 +15,11 @@
 //     (≥ 15 ms fade-in except the sharp family), distance (A2), the breathing score (turnPassed moves
 //     the change, lean is cold, +2 dB swell, idle thins), the tier balance, and listening excerpts in
 //     artifacts/audio/v4/*.wav.
+//  6. v5 (PROPOSAL §4 A, B, D, F): the dice pour (5 dice 60 and 90 ms apart all land and are heard, live
+//     and offline; the 70 ms rule never eats them, nor the verdict's same-frame pairs and splashes), the
+//     three bone timbres, the pair tick's level, the new cues' tiers / attacks / key-lock (glint, pour,
+//     hit · pair on the chord), fightCold (−2 dB top, room tone thins, back in ~1 s), setEvening (same
+//     times and lengths, lower and darker, idle still thins), and excerpts in artifacts/audio/v5/*.wav.
 // Exit code 1 on any failure. Uses an existing server on :5363 or starts its own (no HMR).
 
 import { spawn, type ChildProcess } from 'node:child_process';
@@ -28,6 +33,7 @@ const PORT = Number(process.env.AUDIO_PORT ?? 5363);
 const URL = `http://127.0.0.1:${PORT}/audio.html`;
 const OUT = join(ROOT, 'artifacts/audio/ink');
 const V4 = join(ROOT, 'artifacts/audio/v4');
+const V5 = join(ROOT, 'artifacts/audio/v5');
 const WAV = join(OUT, 'sfx');
 const TMP = join(ROOT, 'artifacts/tmp/audio');
 
@@ -58,10 +64,16 @@ async function ensureServer(): Promise<ChildProcess | null> {
 }
 
 const f1 = (x: number) => (Number.isFinite(x) ? x.toFixed(1) : String(x));
+/** v5: the tick tier (the pair tick's own level). */
+const TICK_TIER = -30;
+/** v5: chord names and roots (pitch class) for the fifth check; 'no score (Dm)' falls back to D. */
+const CHORD_NAMES = ['Dm9', 'Fmaj7', 'Bbmaj7', 'Csus2', 'Gm9', 'Am7', 'Dsus4', 'no score (Dm)'];
+const CHORD_ROOTS = [2, 5, 10, 0, 7, 9, 2];
 
 async function main() {
   mkdirSync(WAV, { recursive: true });
   mkdirSync(V4, { recursive: true });
+  mkdirSync(V5, { recursive: true });
   mkdirSync(TMP, { recursive: true });
   const server = await ensureServer();
   const browser = await chromium.launch({ args: ['--use-angle=metal', '--enable-gpu', '--ignore-gpu-blocklist', '--mute-audio'] });
@@ -100,6 +112,9 @@ async function main() {
         lab.engine.lean?.('cold');
         lab.engine.setIdle?.(false);
         lab.engine.play('place', { distance: NaN });
+        lab.engine.fightCold?.(false);
+        lab.engine.setEvening?.(0);
+        lab.engine.cue?.('rattle');
       } catch {
         threw = true;
       }
@@ -313,6 +328,65 @@ async function main() {
     if (live.seeded !== 1234) failures.push(`live: setMusicSeed did not take (${live.seeded})`);
     if (live.musicOff) failures.push('live: music did not stop');
 
+    // v5 live: the dice pour (5 dice, 60 ms apart) as delayed plays and as per-frame calls; the v5 cues and
+    // hooks through the real engine
+    const live5: Any = await page.evaluate(async () => {
+      const lab = (window as Any).__audioLab;
+      const e = lab.engine;
+      const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+      e.setMusic(false);
+      e.stopAll();
+      await sleep(60);
+      const p0 = e.stats().played;
+      for (let i = 0; i < 5; i++) e.play('diceLand', { delay: i * 0.06, pan: i < 3 ? -0.3 : 0.3 });
+      const scheduled = e.stats().played - p0;
+      await sleep(500);
+      const p1 = e.stats().played;
+      for (let i = 0; i < 5; i++) {
+        e.play('diceLand', { pan: i < 3 ? -0.3 : 0.3 });
+        await sleep(60);
+      }
+      const perFrame = e.stats().played - p1;
+      await sleep(400);
+      // the verdict: two pairs and two splashes on the same frame all sound
+      const p2 = e.stats().played;
+      e.play('hit', { variant: 'pair', pan: -0.3 });
+      e.cue('splash', { pan: -0.3 });
+      e.play('hit', { variant: 'pair', pan: 0.3 });
+      e.cue('splash', { pan: 0.3 });
+      const verdict = e.stats().played - p2;
+      e.stopAll();
+      await sleep(60);
+      let threw = false;
+      const pc = e.stats().played;
+      let cold = false;
+      let evening = -1;
+      try {
+        for (const c of lab.v5Cues) {
+          e.cue(c, { pan: -0.2, panTo: 0.2 });
+          await sleep(90);
+        }
+        e.fightCold(true);
+        cold = e.stats().cold;
+        e.fightCold(false);
+        e.setEvening(0.6);
+        evening = e.stats().evening;
+        e.setEvening(NaN);
+        e.setEvening(0);
+      } catch {
+        threw = true;
+      }
+      const cuesPlayed = e.stats().played - pc;
+      e.stopAll();
+      return { scheduled, perFrame, verdict, cuesPlayed, threw, cold, evening };
+    });
+    if (live5.scheduled !== 5) failures.push(`v5 live: ${live5.scheduled}/5 dice played when scheduled 60 ms apart`);
+    if (live5.perFrame !== 5) failures.push(`v5 live: ${live5.perFrame}/5 dice played when called 60 ms apart`);
+    if (live5.verdict !== 4) failures.push(`v5 live: ${live5.verdict}/4 verdict sounds (2 pairs + 2 splashes, same frame)`);
+    if (live5.cuesPlayed !== 5) failures.push(`v5 live: ${live5.cuesPlayed}/5 v5 cues played through cue()`);
+    if (live5.threw) failures.push('v5 live: a v5 hook threw');
+    if (!live5.cold || Math.abs(live5.evening - 0.6) > 1e-9) failures.push(`v5 live: stats did not follow fightCold / setEvening (${live5.cold}, ${live5.evening})`);
+
     // ------------------------------------------------------------- offline
     const reports: Any[] = await page.evaluate(() => (window as Any).__audioLab.analyzeAll());
     for (const r of reports) for (const f of r.failures) failures.push(`${r.name}: ${f}`);
@@ -367,7 +441,7 @@ async function main() {
       if (!(v.peakDb > -60)) failures.push(`${v.label}: silent`);
       if (v.endDb > -70) failures.push(`${v.label}: tail cut off`);
       if (v.variant && Math.abs(v.lk200 - base[v.name].median.lk200) > 2.5) failures.push(`${v.label}: ${f1(v.lk200)} LUFS, base ${f1(base[v.name].median.lk200)}`);
-      if (v.duration !== undefined && v.name !== 'whoosh') {
+      if (v.duration !== undefined && v.name !== 'whoosh' && !m.toned) {
         // the sound's own length (before the room tail) must track the requested motion length
         if (v.reportedDur < v.duration || v.reportedDur > v.duration + 0.25) failures.push(`${v.label}: reported ${v.reportedDur.toFixed(3)} s`);
       }
@@ -401,8 +475,9 @@ async function main() {
     const tiers: Any = Object.fromEntries(reports.map((r) => [r.name, r.median.lk200]));
     const bowlMax = Math.max(tiers.continent, tiers.eliminated, tiers.victory);
     const restMax = Math.max(...reports.filter((r) => !['continent', 'eliminated', 'victory'].includes(r.name)).map((r) => r.median.lk200));
-    const tickMax = Math.max(tiers.uiClick, tiers.tick);
-    const restMin = Math.min(...reports.filter((r) => !['uiClick', 'tick'].includes(r.name)).map((r) => r.median.lk200));
+    // v5: the tick tier now also holds ripple and glint (the board's details); the rule is per tier
+    const tickMax = Math.max(...reports.filter((r) => r.tier === 'tick').map((r) => r.median.lk200));
+    const restMin = Math.min(...reports.filter((r) => r.tier !== 'tick').map((r) => r.median.lk200));
     if (!(bowlMax > restMax && bowlMax - restMax <= 3.2)) failures.push(`levels: the bowls are ${f1(bowlMax - restMax)} dB over everything else (want loudest by ≤ 3)`);
     if (!(tickMax < restMin)) failures.push(`levels: paper ticks (${f1(tickMax)}) are not the quietest (${f1(restMin)})`);
     const scenes: Any[] = [];
@@ -413,6 +488,64 @@ async function main() {
       if (s.stats.nan) failures.push(`scene ${name}: NaN`);
       delete s.b64;
       scenes.push({ name, peakDb: s.stats.peakDb, marks: s.marks });
+    }
+
+    // ------------------------------------------------------------------ v5
+    const stagger: Any[] = await page.evaluate(() => (window as Any).__audioLab.staggerCheck());
+    for (const s of stagger) {
+      const g = `${Math.round(s.gap * 1000)} ms`;
+      if (s.played !== s.requested) failures.push(`v5 stagger ${g}: ${s.played}/${s.requested} dice played (the arbitration ate a landing)`);
+      if (s.heard !== s.requested) failures.push(`v5 stagger ${g}: ${s.heard}/${s.requested} landings heard as onsets (${s.risesDb.join(', ')} dB)`);
+      if (s.indices.join(',') !== '0,1,2,3,4') failures.push(`v5 stagger ${g}: the pour's places ${s.indices.join(',')}`);
+      if (s.pairsPlayed !== 2 || s.splashesPlayed !== 2) failures.push(`v5 stagger ${g}: same-frame verdict played ${s.pairsPlayed} pairs, ${s.splashesPlayed} splashes (want 2 + 2)`);
+      if (!s.tickPlayed) failures.push(`v5 stagger ${g}: a paper tick inside the pour was eaten`);
+      if (s.peakDb > -1) failures.push(`v5 stagger ${g}: peak ${f1(s.peakDb)} dBFS`);
+    }
+    const timbres: Any[] = await page.evaluate(() => (window as Any).__audioLab.timbreCheck());
+    const tLk = timbres.map((t) => t.lk200);
+    const tC = timbres.map((t) => t.centroidHz);
+    if (Math.max(...tLk) - Math.min(...tLk) > 1.5) failures.push(`v5 timbres: loudness spread ${f1(Math.max(...tLk) - Math.min(...tLk))} dB (want ≤ 1.5)`);
+    if (Math.max(...tC) - Math.min(...tC) < 80) failures.push(`v5 timbres: centroids ${tC.map((c) => Math.round(c)).join('/')} Hz are not three colours`);
+    const tones: Any[] = await page.evaluate(() => (window as Any).__audioLab.toneLevels());
+    const pairTone = tones.find((t) => t.name === 'hit · pair');
+    if (Math.abs(pairTone.lk200 - TICK_TIER) > 1.5) failures.push(`v5 pair tick: ${f1(pairTone.lk200)} LUFS on its own (want ${TICK_TIER} ± 1.5)`);
+    const v5Targets: Record<string, number> = { splash: -27, rattle: -27, ripple: -30, glint: -30, pour: -22 };
+    for (const [n, want] of Object.entries(v5Targets)) {
+      const r = base[n];
+      if (!r) failures.push(`v5: ${n} not analysed`);
+      else if (r.target !== want) failures.push(`v5: ${n} is on the ${r.tier} tier (${r.target}), want ${want}`);
+    }
+    const pairVar = vars.find((v) => v.label === 'hit pair');
+    if (!pairVar || !(pairVar.riseMs >= 13)) failures.push(`v5 B4: hit · pair rises in ${pairVar?.riseMs} ms (want a ≥ 15 ms fade-in)`);
+    const v5Keyed = keys.filter((k) => /hit · pair|glint|pour/.test(k.name));
+    if (v5Keyed.length !== 24) failures.push(`v5 key-lock: ${v5Keyed.length}/24 (pair, glint, pour × 8 chords) checked`);
+    const fifthOk = v5Keyed.filter((k) => /pair|glint/.test(k.name)).every((k) => {
+      const c = [...CHORD_ROOTS, 2][Math.max(0, CHORD_NAMES.indexOf(k.chord))];
+      return (((k.midi - c - 7) % 12) + 12) % 12 === 0;
+    });
+    if (!fifthOk) failures.push('v5 key-lock: the pair tick / glint is not on the chord\'s fifth');
+    const coldV: Any = await page.evaluate(() => (window as Any).__audioLab.coldCheck());
+    if (!(coldV.highDipDb <= -1.4 && coldV.highDipDb >= -2.6)) failures.push(`v5 fightCold: the score's top dips ${f1(coldV.highDipDb)} dB (want −2)`);
+    if (Math.abs(coldV.bodyDb) > 0.5) failures.push(`v5 fightCold: the score's body moved ${f1(coldV.bodyDb)} dB (only the top should)`);
+    if (Math.abs(coldV.backAfter1sDb) > 0.5) failures.push(`v5 fightCold: not back 1 s after off (${f1(coldV.backAfter1sDb)} dB)`);
+    if (!(coldV.roomThinDb <= -3)) failures.push(`v5 fightCold: the room tone only thinned ${f1(coldV.roomThinDb)} dB`);
+    const eve: Any = await page.evaluate(() => (window as Any).__audioLab.eveningCheck());
+    if (!eve.sameTimes) failures.push('v5 evening: the score\'s timing changed with the evening (Pillar 5)');
+    if (!(eve.padMidiNight <= eve.padMidiDusk - 1.5)) failures.push(`v5 evening: pads at night ${f1(eve.padMidiNight)} vs dusk ${f1(eve.padMidiDusk)} (want ≥ 1.5 st lower)`);
+    if (!(eve.noteMidiNight < eve.noteMidiDusk)) failures.push('v5 evening: the felt notes did not sink at night');
+    if (!(eve.centroidNight < eve.centroidDusk * 0.92)) failures.push(`v5 evening: night is not darker (centroid ${Math.round(eve.centroidNight)} vs ${Math.round(eve.centroidDusk)} Hz)`);
+    if (Math.abs(eve.loudNight - eve.loudDusk) > 1.5) failures.push(`v5 evening: night is ${f1(eve.loudNight - eve.loudDusk)} dB vs dusk (want the same level ± 1.5)`);
+    if (eve.idle.heardIdle > 0 || eve.idle.heardBase < 1) failures.push(`v5 evening: idle no longer thins at night (${eve.idle.heardIdle} notes heard, baseline ${eve.idle.heardBase})`);
+    if (eve.ramp.nan || eve.ramp.peakDb > -6) failures.push(`v5 evening: the dusk → night ramp rendered badly (${JSON.stringify(eve.ramp)})`);
+    const scenes5: Any[] = [];
+    for (const name of (await page.evaluate(() => (window as Any).__audioLab.v5Scenes)) as string[]) {
+      const s: Any = await page.evaluate((n) => (window as Any).__audioLab.v5SceneWav(n), name);
+      writeFileSync(join(V5, `${name}.wav`), Buffer.from(s.b64, 'base64'));
+      if (s.stats.peakDb > -0.3) failures.push(`v5 scene ${name}: peak ${f1(s.stats.peakDb)} dBFS`);
+      if (s.stats.nan) failures.push(`v5 scene ${name}: NaN`);
+      if (s.marks.some((m: Any) => /dropped/.test(m.what))) failures.push(`v5 scene ${name}: ${s.marks.filter((m: Any) => /dropped/.test(m.what)).map((m: Any) => m.what).join(', ')}`);
+      delete s.b64;
+      scenes5.push({ name, peakDb: s.stats.peakDb, marks: s.marks });
     }
 
     const sweep: string[] = await page.evaluate(() => (window as Any).__audioLab.buildSweep(20));
@@ -475,6 +608,10 @@ async function main() {
     for (const m of relevant) failures.push(`console ${m}`);
 
     writeFileSync(join(OUT, 'report.json'), JSON.stringify({ when: new Date().toISOString(), live, warm, reports, composites: comp, score: sc, duck, stroke, moment, variants: vars, bank, cost, sweep, failures }, null, 2));
+    writeFileSync(
+      join(V5, 'report.json'),
+      JSON.stringify({ when: new Date().toISOString(), live: live5, stagger, timbres, tones, cold: coldV, evening: eve, scenes: scenes5, keys: v5Keyed, levels: Object.fromEntries(reports.filter((r) => r.name in v5Targets || r.name === 'diceLand' || r.name === 'hit').map((r) => [r.name, { tier: r.tier, target: r.target, lk200: r.median.lk200, riseMs: r.median.riseMs, centroidHz: r.median.centroidHz }])), hitPair: pairVar }, null, 2),
+    );
     writeFileSync(join(V4, 'report.json'), JSON.stringify({ when: new Date().toISOString(), room, keys, distance: dist, breath, scenes, levels: Object.fromEntries(reports.map((r) => [r.name, { tier: r.tier, target: r.target, lk200: r.median.lk200, riseMs: r.median.riseMs }])), scoreVsBoardDb: sc.vsBoardDb }, null, 2));
 
     // --------------------------------------------------------------- print
@@ -510,6 +647,14 @@ async function main() {
     console.log(`v4 · B3 breath: turn moved the change ${breath.turn.changedAtTurn} · lean → ${breath.lean.chord} at ${breath.lean.changeAt} s (cold ${breath.lean.cold}) · swell +${f1(breath.swell.atPeakDb)} dB, after ${f1(breath.swell.afterDb)} dB · idle notes heard ${breath.idle.heardIdle} (baseline ${breath.idle.heardBase}, planned ${breath.idle.plannedNotesAfter11s}), level ${f1(breath.idle.levelDropDb)} dB`);
     console.log(`v4 · levels: bowls loudest by ${f1(bowlMax - restMax)} dB · ticks quietest (${f1(tickMax)} vs next ${f1(restMin)}) · score ${f1(sc.vsBoardDb)} dB vs board`);
     console.log(`v4 · scenes: ${scenes.map((s) => `${s.name} (pk ${f1(s.peakDb)})`).join(', ')} → artifacts/audio/v4/`);
+    console.log(`\nv5 · stagger: ${stagger.map((s) => `${Math.round(s.gap * 1000)} ms → ${s.played}/${s.requested} played, ${s.heard} heard (rise ${s.risesDb.slice(1).join('/')} dB), places ${s.indices.join('')}, verdict ${s.pairsPlayed}+${s.splashesPlayed}, tick ${s.tickPlayed ? 'kept' : 'eaten'}`).join(' · ')}`);
+    console.log(`v5 · live: scheduled ${live5.scheduled}/5 · per-frame ${live5.perFrame}/5 · same-frame verdict ${live5.verdict}/4 · cues ${live5.cuesPlayed}/5`);
+    console.log(`v5 · timbres: ${timbres.map((t) => `${t.timbre}: ${f1(t.lk200)} LUFS ${Math.round(t.centroidHz)} Hz`).join(' · ')}`);
+    console.log(`v5 · levels: ${['splash', 'rattle', 'ripple', 'glint', 'pour'].map((n) => `${n} ${f1(base[n].median.lk200)} (${base[n].target}, rise ${Math.round(base[n].median.riseMs)} ms)`).join(' · ')} · hit·pair ${f1(pairVar.lk200)} (rise ${Math.round(pairVar.riseMs)} ms) · tones alone: ${tones.map((t) => `${t.name} ${f1(t.lk200)}`).join(', ')}`);
+    console.log(`v5 · key-lock: ${v5Keyed.filter((k) => k.ok).length}/${v5Keyed.length} · ${[...new Set(v5Keyed.map((k) => k.name))].map((n) => `${n} ${v5Keyed.filter((k) => k.name === n).map((k) => `${k.chord.split(' ')[0]}:${k.midi}`).join(' ')}`).join(' | ')}`);
+    console.log(`v5 · fightCold: top ${f1(coldV.highDipDb)} dB, body ${f1(coldV.bodyDb)} dB, 1 s after off ${f1(coldV.backAfter1sDb)} dB, room tone ${f1(coldV.roomThinDb)} dB (low ${f1(coldV.roomLowDb)})`);
+    console.log(`v5 · evening: same times ${eve.sameTimes} (${eve.items} items/30 min) · pads ${f1(eve.padMidiDusk)} → ${f1(eve.padMidiNight)} · notes ${f1(eve.noteMidiDusk)} → ${f1(eve.noteMidiNight)} · centroid ${Math.round(eve.centroidDusk)} → ${Math.round(eve.centroidNight)} Hz · level ${f1(eve.loudDusk)} → ${f1(eve.loudNight)} LUFS · idle at night heard ${eve.idle.heardIdle} (baseline ${eve.idle.heardBase})`);
+    console.log(`v5 · scenes: ${scenes5.map((s) => `${s.name} (pk ${f1(s.peakDb)})`).join(', ')} → artifacts/audio/v5/`);
     console.log(`build sweep: ${sweep.length ? sweep.length + ' failures' : 'every sound × variant × rate/duration extreme × 20 seeds built cleanly'}`);
     console.log(`bank: max |Δ loudness| ${Math.max(...bank.map((b) => Math.abs(b.dLk))).toFixed(3)} dB · mono keys ${bank.filter((b) => b.channels === 1).map((b) => b.name).join(', ')}`);
     console.log(`warm-up after unlock: ${Math.round(warm.ms)} ms · unlock-click task ${warm.unlockTaskMs.join(', ') || '<50'} ms (browser audio-device init) · other long tasks: ${warm.otherLongTasksMs.length ? warm.otherLongTasksMs.join(', ') + ' ms' : 'none'} · of them our script: ${warm.longScripts.length ? warm.longScripts.join(', ') : 'none'}`);

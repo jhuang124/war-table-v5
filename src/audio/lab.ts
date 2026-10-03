@@ -2,17 +2,17 @@
 // offline analysis the team uses instead of ears. Also exposes window.__audioLab for the verify script.
 
 import '@fontsource-variable/cormorant-garamond';
-import { analyze, encodeWav, fft, longLoudness, pitchNear, rt60, speakerHighpass, type SoundStats } from './analyze';
+import { analyze, encodeWav, fft, longLoudness, pitchNear, powerSpectrum, rt60, speakerHighpass, type SoundStats } from './analyze';
 import { midiHz } from './dsp';
 import { TONIC_PCS, keyPitch, layerOn } from './key';
 import { WARM_ORDER } from './bank';
 import { LIMITS, summarize, type SoundReport } from './checks';
 import { createAudio } from './engine';
 import { LIMITER_MAKEUP_COMP, MAX_VOICES, Mixer } from './mixer';
-import { CHORDS, COLD, planScore, type NoteItem } from './music';
-import { OFFLINE_SR, buildSweep, renderBankPair, renderBreath, renderDiceRoll, renderInKey, renderLimiterProbe, renderMoment, renderMusic, renderRoomProbes, renderScene, renderSfx, renderStress, renderStroke, type RenderOptions, type SceneName } from './offline';
+import { CHORDS, COLD, planScore, type NoteItem, type PadItem } from './music';
+import { OFFLINE_SR, V5_SCENES, buildSweep, renderBankPair, renderBreath, renderDicePour, renderDiceRoll, renderInKey, renderLimiterProbe, renderMoment, renderMusic, renderRoomProbes, renderScene, renderSfx, renderStress, renderStroke, renderToneOnly, renderV5Scene, type RenderOptions, type SceneName, type V5SceneName } from './offline';
 import { SFX } from './sounds';
-import { SFX_NAMES, TIER_TARGET_LUFS, V4_CUES, type PlayOptions, type SfxName, type SfxVariant, type StrokeHandle } from './types';
+import { SFX_NAMES, TIER_TARGET_LUFS, V4_CUES, V5_CUES, type KeyRole, type PlayOptions, type SfxName, type SfxVariant, type StrokeHandle } from './types';
 
 const engine = createAudio({ volume: 0.8 });
 /** Sounds that actually sound (uiHover is silent by design: no hover sounds). */
@@ -24,6 +24,7 @@ const MATERIAL: Record<SfxName, 'paper' | 'brush' | 'wood' | 'bone' | 'bowl'> = 
   whoosh: 'brush', place: 'brush', unplace: 'brush', march: 'brush', hit: 'brush', conquer: 'brush',
   diceShake: 'wood', diceLand: 'bone', continent: 'bowl', eliminated: 'bowl', victory: 'bowl',
   sheet: 'paper', tick: 'paper', cupSlide: 'wood', cupSet: 'wood', bone: 'bone',
+  ripple: 'paper', glint: 'paper', splash: 'brush', pour: 'brush', rattle: 'wood',
 };
 
 // ---------------------------------------------------------------------------
@@ -159,6 +160,15 @@ async function variants() {
     ['cupSlide', { duration: 0.8 }, 'cupSlide 800 ms'],
     ['eliminated', { chord: CHORDS[2].pcs }, 'eliminated over Bbmaj7'],
     ['continent', { chord: CHORDS[4].pcs }, 'continent over Gm9'],
+    // v5
+    ['hit', { variant: 'pair' }, 'hit pair'],
+    ['diceLand', { timbre: 1 }, 'diceLand timbre 1'],
+    ['diceLand', { timbre: 2 }, 'diceLand timbre 2'],
+    ['glint', { duration: 0.15, pan: -0.6, panTo: 0.6 }, 'glint 150 ms travel'],
+    ['glint', { duration: 1.2, pan: 0.6, panTo: -0.6 }, 'glint 1.2 s travel'],
+    ['pour', { duration: 0.25 }, 'pour 250 ms (3)'],
+    ['pour', { duration: 0.6 }, 'pour 600 ms (7)'],
+    ['rattle', { distance: 0.6 }, 'rattle at 0.6'],
   ];
   const out = [];
   for (const [name, o, label] of cases) out.push({ label, name, ...o, ...(await measure(name, { ...o, seed: 1 })) });
@@ -188,10 +198,14 @@ const PITCHED: { name: SfxName; variant?: SfxVariant; from: number; to: number }
   { name: 'turnStart', variant: 'bright', from: 0.8, to: 2.4 },
   { name: 'cardTrade', from: 0.6, to: 2.0 },
   { name: 'cupSet', from: 0.08, to: 0.9 },
+  // v5: the pair tick and the glint on the fifth; the pour's first stone on the root
+  { name: 'hit', variant: 'pair', from: 0.03, to: 0.3 },
+  { name: 'glint', from: 0.03, to: 0.4 },
+  { name: 'pour', from: 0.03, to: 0.19 },
 ];
 
 /** The role + designed pitch the key-lock uses for this sound/variant. */
-function keySpec(name: SfxName, variant?: SfxVariant): { role: 'root' | 'bright' | 'somber'; ref: number } {
+function keySpec(name: SfxName, variant?: SfxVariant): { role: KeyRole; ref: number } {
   const m = SFX[name];
   if (m.key) return { role: variant === 'somber' && m.key.somberRole ? m.key.somberRole : m.key.role, ref: m.key.ref };
   const l = m.tone!.find((x) => layerOn(x, variant))!;
@@ -278,6 +292,133 @@ async function breathCheck() {
 }
 
 const SCENES: SceneName[] = ['human-turn', 'ai-readable', 'continent-in-key', 'cold-lean', 'idle-thin'];
+
+// ---------------------------------------------------------------------------
+// v5: the fight is a moment (stagger, verdict, cold), presence, details, the evening
+// ---------------------------------------------------------------------------
+
+/** Energy (dB) of a mono signal in [a, z) seconds and [f0, f1) Hz. */
+function bandEnergyDb(b: AudioBuffer, a: number, z: number, f0: number, f1: number): number {
+  const m = monoOf(b);
+  const sr = b.sampleRate;
+  const N = 4096;
+  const P = powerSpectrum(m, Math.round(a * sr), Math.round(z * sr) - N, N);
+  let e = 0;
+  for (let k = Math.max(1, Math.floor((f0 * N) / sr)); k < Math.min(N / 2, Math.ceil((f1 * N) / sr)); k++) e += P[k];
+  return 10 * Math.log10(e + 1e-20);
+}
+
+/** The dice pour: 5 dice 60 ms and 90 ms apart all land (heard as five onsets), the verdict's pairs too. */
+async function staggerCheck() {
+  const out = [];
+  for (const gap of [0.06, 0.09]) {
+    const r = await renderDicePour(gap, 5);
+    const m = monoOf(r.buffer);
+    const sr = r.buffer.sampleRate;
+    const rms = (a: number, z: number) => {
+      let e = 0;
+      const i0 = Math.round(a * sr);
+      const i1 = Math.round(z * sr);
+      for (let i = i0; i < i1; i++) e += m[i] * m[i];
+      return 10 * Math.log10(e / Math.max(1, i1 - i0) + 1e-20);
+    };
+    // each die is a fresh onset: its first 12 ms are well above the 8 ms just before it
+    const rises = r.diceAt.map((t) => rms(t, t + 0.012) - rms(t - 0.008, t));
+    out.push({ gap, requested: r.requested, played: r.played, heard: rises.filter((x) => x > 6).length, risesDb: rises.map((x) => +x.toFixed(1)), indices: r.indices, pairsPlayed: r.pairsPlayed, splashesPlayed: r.splashesPlayed, tickPlayed: r.tickPlayed, peakDb: analyze(channelsOf(r.buffer), sr).peakDb });
+  }
+  return out;
+}
+
+/** The three bone timbres: about the same loudness, audibly different colour. */
+async function timbreCheck() {
+  const out = [];
+  for (const timbre of [0, 1, 2]) {
+    const lk: number[] = [];
+    const cent: number[] = [];
+    for (const seed of SEEDS) {
+      const r = await renderSfx('diceLand', { seed, timbre });
+      const s = analyze(channelsOf(r.buffer), r.buffer.sampleRate);
+      lk.push(s.lk200);
+      cent.push(s.centroidHz);
+    }
+    lk.sort((a, b) => a - b);
+    cent.sort((a, b) => a - b);
+    out.push({ timbre, lk200: lk[3], centroidHz: cent[3] });
+  }
+  return out;
+}
+
+/** The tuned layers on their own (the pair's tick, the glint's note, the pour's two notes), LUFS. */
+async function toneLevels() {
+  const out: { name: string; lk200: number; peakDb: number }[] = [];
+  for (const [name, variant] of [['hit', 'pair'], ['glint', undefined], ['pour', undefined]] as [SfxName, SfxVariant | undefined][]) {
+    const b = await renderToneOnly(name, variant);
+    const s = analyze(channelsOf(b), b.sampleRate);
+    out.push({ name: name + (variant ? ` · ${variant}` : ''), lk200: s.lk200, peakDb: s.peakDb });
+  }
+  return out;
+}
+
+/** fightCold: the score's top dips ~2 dB while on, the room tone thins, both come back within ~1 s. */
+async function coldCheck() {
+  const sr = 48000;
+  const plain = await renderBreath({ seconds: 16, sampleRate: sr });
+  const cold = await renderBreath({ seconds: 16, coldAt: 8, coldOffAt: 12, sampleRate: sr });
+  const d = (a: number, z: number, f0: number, f1: number) => bandEnergyDb(cold.buffer, a, z, f0, f1) - bandEnergyDb(plain.buffer, a, z, f0, f1);
+  // the room tone alone (the score's fade-in stretched to 1000 s, so it is ~45 dB under)
+  const rPlain = await renderBreath({ seconds: 6, fadeIn: 1000, sampleRate: sr });
+  const rCold = await renderBreath({ seconds: 6, fadeIn: 1000, coldAt: 3, sampleRate: sr });
+  return {
+    highDipDb: d(8.6, 11.6, 2000, 8000),
+    bodyDb: d(8.6, 11.6, 60, 500),
+    backAfter1sDb: d(13, 14.5, 2000, 8000),
+    roomThinDb: bandEnergyDb(rCold.buffer, 3.8, 5.8, 100, 2000) - bandEnergyDb(rPlain.buffer, 3.8, 5.8, 100, 2000),
+    roomLowDb: bandEnergyDb(rCold.buffer, 3.8, 5.8, 100, 300) - bandEnergyDb(rPlain.buffer, 3.8, 5.8, 100, 300),
+  };
+}
+
+/** setEvening: same times/lengths at any evening; lower, darker voicings at night; idle still thins on top. */
+async function eveningCheck() {
+  const a = planScore(5, 1800, 0);
+  const b = planScore(5, 1800, 1);
+  const sameTimes = a.length === b.length && a.every((x, i) => x.t === b[i].t && x.kind === b[i].kind && (x.kind !== 'pad' || (x as PadItem).dur === (b[i] as PadItem).dur));
+  const mean = (xs: number[]) => xs.reduce((s, x) => s + x, 0) / Math.max(1, xs.length);
+  const padMid = (p: typeof a) => mean(p.filter((x): x is PadItem => x.kind === 'pad').map((x) => mean(x.midis)));
+  const noteMid = (p: typeof a) => mean(p.filter((x): x is NoteItem => x.kind === 'piano').map((x) => x.midis[0]));
+  const sr = 24000;
+  const r0 = await renderBreath({ seconds: 40, sampleRate: sr });
+  const r1 = await renderBreath({ seconds: 40, sampleRate: sr, evening: 1 });
+  const slice = (buf: AudioBuffer, from: number) => channelsOf(buf).map((c) => c.slice(Math.round(from * sr)));
+  const s0 = analyze(slice(r0.buffer, 10), sr);
+  const s1 = analyze(slice(r1.buffer, 10), sr);
+  const l0 = longLoudness(slice(r0.buffer, 10), sr).integrated;
+  const l1 = longLoudness(slice(r1.buffer, 10), sr).integrated;
+  const idle1 = await renderBreath({ seconds: 40, idleAt: 6, evening: 1, sampleRate: sr });
+  const heardBase = detectOnsets(monoOf(r1.buffer), sr).filter((t) => t > 11).length;
+  const heardIdle = detectOnsets(monoOf(idle1.buffer), sr).filter((t) => t > 11).length;
+  // a ramp mid-game (dusk → night at 5 s) renders cleanly
+  const ramp = await renderBreath({ seconds: 20, eveningAt: 5, sampleRate: sr });
+  const rs = analyze(channelsOf(ramp.buffer), sr);
+  return {
+    sameTimes,
+    items: a.length,
+    padMidiDusk: padMid(a),
+    padMidiNight: padMid(b),
+    noteMidiDusk: noteMid(a),
+    noteMidiNight: noteMid(b),
+    centroidDusk: s0.centroidHz,
+    centroidNight: s1.centroidHz,
+    loudDusk: l0,
+    loudNight: l1,
+    idle: { heardBase, heardIdle },
+    ramp: { nan: rs.nan, peakDb: rs.peakDb },
+  };
+}
+
+async function v5SceneWav(name: V5SceneName) {
+  const s = await renderV5Scene(name);
+  return { b64: wavOf(s.buffer), marks: s.marks, stats: analyze(channelsOf(s.buffer), s.buffer.sampleRate) };
+}
 async function sceneWav(name: SceneName) {
   const s = await renderScene(name);
   return { b64: wavOf(s.buffer), marks: s.marks, stats: analyze(channelsOf(s.buffer), s.buffer.sampleRate) };
@@ -830,6 +971,62 @@ function build(): void {
   cueBtn('sheet · lift', () => engine.cue?.('sheet', { variant: 'lift', pan: opts.pan, distance: opts.distance }));
   app.append(cueRow);
 
+  // v5: the fight is a moment, presence, details, the evening
+  const v5H = el('h2', {}, 'v5');
+  v5H.append(el('span', {}, 'the dice pour, the verdict, the cold room, the cup, water and lanes, the evening'));
+  app.append(v5H);
+  const v5Row = el('div', { class: 'row' });
+  const v5Btn = (label: string, fn: (b: HTMLButtonElement) => void) => {
+    const b = el('button', { class: 'pill', 'data-v5': label }, label);
+    b.addEventListener('click', () => fn(b));
+    v5Row.append(b);
+    return b;
+  };
+  v5Btn('Staggered roll (5 dice) + verdict', () => {
+    engine.fightCold?.(true);
+    engine.play('uiClick');
+    engine.play('diceShake', { duration: 0.15, delay: 0.02 });
+    const gaps = [0, 0.07, 0.082, 0.064, 0.088];
+    let t = 0.42;
+    gaps.forEach((g, i) => {
+      t += g;
+      engine.play('diceLand', { pan: i < 3 ? -0.3 : 0.3, delay: t });
+    });
+    const settle = t + 0.1;
+    setTimeout(() => engine.hush?.(250), settle * 1000);
+    engine.play('hit', { variant: 'pair', pan: 0.3, delay: settle + 0.27 });
+    engine.cue?.('splash', { pan: 0.3, delay: settle + 0.3 });
+    engine.play('hit', { variant: 'pair', pan: -0.3, delay: settle + 0.39 });
+    engine.cue?.('splash', { pan: -0.3, delay: settle + 0.42 });
+    setTimeout(() => engine.fightCold?.(false), (settle + 0.9) * 1000);
+  });
+  v5Btn('splash', () => engine.cue?.('splash', { pan: opts.pan }));
+  v5Btn('hit · pair', () => engine.play('hit', { variant: 'pair', pan: opts.pan }));
+  v5Btn('rattle', () => engine.cue?.('rattle', { pan: opts.pan, distance: opts.distance }));
+  v5Btn('ripple', () => engine.cue?.('ripple', { pan: opts.pan }));
+  v5Btn('glint (shore to shore)', () => engine.cue?.('glint', { pan: -0.5, panTo: 0.5, duration: 0.6 }));
+  v5Btn('pour (7)', () => engine.cue?.('pour', { duration: 0.6, pan: -0.3 }));
+  v5Btn('pour (3)', () => engine.cue?.('pour', { duration: 0.26, pan: -0.3 }));
+  let coldOn = false;
+  v5Btn('Cold: off', (b) => {
+    coldOn = !coldOn;
+    engine.fightCold?.(coldOn);
+    b.textContent = `Cold: ${coldOn ? 'on' : 'off'}`;
+    b.classList.toggle('on', coldOn);
+  });
+  const ev = el('label', { class: 'evening' });
+  ev.append('Evening ');
+  const evIn = el('input', { type: 'range', min: '0', max: '1', step: '0.05', value: '0', 'data-v5': 'evening' });
+  const evOut = el('output', {}, 'dusk');
+  evIn.addEventListener('input', () => {
+    const v = Number(evIn.value);
+    evOut.textContent = v === 0 ? 'dusk' : v === 1 ? 'night' : v.toFixed(2);
+    engine.setEvening?.(v);
+  });
+  ev.append(evIn, evOut);
+  v5Row.append(ev);
+  app.append(v5Row);
+
   const brH = el('h2', {}, 'the score breathes');
   brH.append(el('span', {}, 'turnPassed · lean · idle (tempo never changes)'));
   app.append(brH);
@@ -978,7 +1175,8 @@ window.__audioLab = {
   warmKeys: WARM_ORDER.length,
   limits: LIMITS,
   sampleRate: OFFLINE_SR,
-  meta: Object.fromEntries(SFX_NAMES.map((n) => [n, { tier: SFX[n].tier, trimDb: SFX[n].trimDb, maxDur: SFX[n].maxDur, maxVoices: SFX[n].maxVoices, minGapMs: SFX[n].minGapMs, group: SFX[n].group, duration: SFX[n].duration, silent: !!SFX[n].silent, keyed: !!SFX[n].key, material: MATERIAL[n] }])),
+  meta: Object.fromEntries(SFX_NAMES.map((n) => [n, { tier: SFX[n].tier, trimDb: SFX[n].trimDb, maxDur: SFX[n].maxDur, maxVoices: SFX[n].maxVoices, minGapMs: SFX[n].minGapMs, group: SFX[n].group, duration: SFX[n].duration, silent: !!SFX[n].silent, keyed: !!SFX[n].key, toned: !!SFX[n].tone, material: MATERIAL[n] }])),
+  v5Cues: V5_CUES,
   analyzeSound,
   analyzeAll,
   measure,
@@ -997,6 +1195,13 @@ window.__audioLab = {
   breathCheck,
   scenes: SCENES,
   sceneWav,
+  staggerCheck,
+  timbreCheck,
+  toneLevels,
+  coldCheck,
+  eveningCheck,
+  v5Scenes: V5_SCENES,
+  v5SceneWav,
   scenarios: Object.keys(scenarios),
   runScenario: (k: string) => scenarios[k]?.(),
   drawAll: (extra?: { label: string; name: SfxName; o: RenderOptions }[]) => drawAll(document.getElementById('all') as HTMLCanvasElement, extra),

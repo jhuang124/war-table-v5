@@ -18,6 +18,14 @@
 //  - chordAt(t): the chord sounding at context time t, so effects can be notes in it (B2).
 //  - a faint room tone (paper and air) under everything, so silence never has a hard floor and the
 //    score's fade-in is not "sound appears".
+//
+// v5 (PROPOSAL §4 A, B; tempo and density still never change, Pillar 5):
+//  - setEvening(e, at): the game's clock, 0 dusk .. 1 night. Pads voice lower and darker, the felt notes
+//    sit lower and softer-topped, the distant bowls favour the lower one, the score's top darkens, the
+//    room tone deepens a touch. Only *which* notes and *what colour*: every item's time, every pad's
+//    length and the random stream's consumption are identical at any evening (checked).
+//  - setCold(on, at): the fight. The room tone thins (quieter, less body) quickly; back over ~1 s.
+//    (The 2 dB high shelf on the whole score lives in the mixer.)
 
 import { between, cached, cents, midiHz, mulberry32, noiseBuffer, roomImpulse } from './dsp';
 import { scoreBowl } from './sounds/bowl';
@@ -71,6 +79,8 @@ export interface PadItem {
   moved?: boolean;
   /** v4: a cold chord (lean): voiced open, a touch darker. */
   cold?: boolean;
+  /** v5: the evening when it was written (0 dusk .. 1 night). */
+  ev?: number;
 }
 export interface NoteItem {
   kind: 'piano' | 'bowl';
@@ -79,11 +89,15 @@ export interface NoteItem {
   vel: number;
   /** Seconds between the notes of a dyad (a rolled hand). */
   spread: number;
+  /** v5: the evening when it was written (0 dusk .. 1 night). */
+  ev?: number;
 }
 export type ScoreItem = PadItem | NoteItem;
 
 const PAD_LO = 45; // A2
 const PAD_HI = 65; // F4
+/** v5 evening: voicing cost per semitone of average pad height at night (pulls the pads ~3 st lower). */
+const EVENING_VOICE_COST = 1.2;
 
 function pick<T>(r: Rand, xs: T[], w: number[]): T {
   let s = 0;
@@ -98,9 +112,10 @@ function pick<T>(r: Rand, xs: T[], w: number[]): T {
 
 /**
  * Three-note voicing of `pcs` in the pad register, closest to `prev` (voice-leading), spacing 3–12.
- * `open` (v4 lean): an open fifth or wider at the bottom.
+ * `open` (v4 lean): an open fifth or wider at the bottom. `low` (v5 evening, 0..1): lean the whole
+ * voicing lower (a cost per semitone of average height), so the night sits deeper in the register.
  */
-export function voice(pcs: number[], prev: number[] | null, r: Rand, open = false): number[] {
+export function voice(pcs: number[], prev: number[] | null, r: Rand, open = false, low = 0): number[] {
   const notes: number[] = [];
   for (let m = PAD_LO; m <= PAD_HI; m++) if (pcs.includes(((m % 12) + 12) % 12)) notes.push(m);
   let best: number[] = [notes[0], notes[1], notes[2]];
@@ -119,6 +134,7 @@ export function voice(pcs: number[], prev: number[] | null, r: Rand, open = fals
         if (open) cost += g1 >= 7 ? 0 : 8;
         if (prev) cost += Math.abs(v[0] - prev[0]) + Math.abs(v[1] - prev[1]) + Math.abs(v[2] - prev[2]);
         else cost += Math.abs(v[0] - 50) * 0.5;
+        if (low > 0) cost += low * EVENING_VOICE_COST * ((v[0] + v[1] + v[2]) / 3 - 52);
         cost += r() * 2.5;
         if (cost < bestCost) {
           bestCost = cost;
@@ -144,12 +160,23 @@ export class Composer {
   private coldNext = false;
   private movedNext = false;
   private lastPadT = -Infinity;
+  /** v5: the evening, 0 (dusk) .. 1 (night). */
+  private ev = 0;
 
   constructor(seed: number) {
     this.r = mulberry32((seed ^ 0x5eed) >>> 0);
     // start somewhere in the field (seeded), usually home
     this.chord = this.r() < 0.6 ? 0 : Math.floor(this.r() * CHORDS.length);
     this.noteNext = between(this.r, 8, 14);
+  }
+
+  /** v5: the game's clock. Changes which voicing / note / colour, never when (the stream is identical). */
+  setEvening(e: number): void {
+    this.ev = Math.max(0, Math.min(1, Number.isFinite(e) ? e : 0));
+  }
+
+  get evening(): number {
+    return this.ev;
   }
 
   private makePad(): PadItem {
@@ -164,7 +191,7 @@ export class Composer {
       this.chord = pick(r, CHORDS.map((_, i) => i), w);
     }
     const pcs = CHORDS[this.chord].pcs;
-    this.voicing = voice(pcs, this.voicing, r, cold);
+    this.voicing = voice(pcs, this.voicing, r, cold, this.ev);
     const gap = between(r, 18, 30);
     const attack = between(r, 6, 9.5);
     const item: PadItem = {
@@ -175,7 +202,8 @@ export class Composer {
       release: between(r, 8, 11),
       chord: this.chord,
       midis: this.voicing,
-      cutoff: between(r, 580, 900) * (cold ? 0.8 : 1),
+      cutoff: between(r, 580, 900) * (cold ? 0.8 : 1) * (1 - 0.22 * this.ev),
+      ev: this.ev,
     };
     if (this.movedNext) item.moved = true;
     if (cold) item.cold = true;
@@ -205,12 +233,15 @@ export class Composer {
     const kind: NoteItem['kind'] = this.lastKind === 'bowl' ? (r() < 0.8 ? 'piano' : 'bowl') : r() < 0.6 ? 'piano' : 'bowl';
     this.lastKind = kind;
     if (kind === 'bowl') {
-      // two small distant bowls tuned to the key: A4 and D5
-      const m = r() < 0.5 ? 69 : 74;
-      return { kind, t, midis: [m], vel: between(r, 0.5, 0.8), spread: 0 };
+      // two small distant bowls tuned to the key: A4 and D5 (v5: the night favours the lower)
+      const m = r() < 0.5 + 0.3 * this.ev ? 69 : 74;
+      return { kind, t, midis: [m], vel: between(r, 0.5, 0.8), spread: 0, ev: this.ev };
     }
     const cands: number[] = [];
-    for (let m = 57; m <= 77; m++) {
+    // v5 evening: the felt notes' range sinks a little at night (57–77 at dusk, 54–72 at night)
+    const lo = 57 - Math.round(3 * this.ev);
+    const hi = 77 - Math.round(5 * this.ev);
+    for (let m = lo; m <= hi; m++) {
       if (!pcs.includes(m % 12)) continue;
       // no stepwise contour: nothing within a whole tone of the last note
       if (Math.abs(m - this.lastNote) <= 2) continue;
@@ -222,9 +253,11 @@ export class Composer {
     if (r() < 0.32) {
       const above = [];
       for (let k = 3; k <= 9; k++) if (pcs.includes((m + k) % 12) && m + k <= 81) above.push(m + k);
-      if (above.length) midis.push(above[Math.floor(r() * above.length)]);
+      // (one draw whether or not there is a note above: the stream never depends on the evening)
+      const u = r();
+      if (above.length) midis.push(above[Math.floor(u * above.length)]);
     }
-    return { kind, t, midis, vel: between(r, 0.35, 0.65), spread: between(r, 0.07, 0.2) };
+    return { kind, t, midis, vel: between(r, 0.35, 0.65), spread: between(r, 0.07, 0.2), ev: this.ev };
   }
 
   /** v4: when the next item starts, and whether it is a pad (nothing is generated by peeking). */
@@ -263,8 +296,9 @@ export class Composer {
 }
 
 /** The plan for [0, seconds): what offline checks measure (density, variety, loop-freeness). */
-export function planScore(seed: number, seconds: number): ScoreItem[] {
+export function planScore(seed: number, seconds: number, evening = 0): ScoreItem[] {
   const c = new Composer(seed);
+  c.setEvening(evening);
   const out: ScoreItem[] = [];
   for (;;) {
     const it = c.next();
@@ -289,12 +323,26 @@ export interface MusicHandle {
   lean?(at: number): void;
   /** v4: idle thin-out (true: notes fade over ~4 s, drone + pads stay; false: back over ~2 s). */
   setIdle?(on: boolean, at: number): void;
+  /** v5: the fight: the room tone thins quickly; off = back over ~1 s. */
+  setCold?(on: boolean, at: number): void;
+  /** v5: the evening, 0 dusk .. 1 night (voicings, colour and room tone; never time). */
+  setEvening?(e: number, at: number): void;
 }
 
 /** Pads are scheduled at most this far ahead (s), so a turn passing can still move the change. */
 const PAD_AHEAD = 1.5;
 /** Room tone level (linear, into the score bus): far under the score. */
 export const ROOM_TONE_LEVEL = 0.0042;
+/** v5: the room tone while the fight is on (linear gain on the room tone) and its extra high-pass (Hz). */
+export const ROOM_COLD_GAIN = 0.55;
+const ROOM_COLD_HP = 140;
+/** v5: how slowly the evening moves (time constant, s). */
+const EVENING_TAU = 3;
+/** v5: the score's warm top at dusk and how much darker it gets at night (Hz). */
+const TONE_DUSK_HZ = 3200;
+const TONE_NIGHT_DROP_HZ = 900;
+const roomHpHz = (ev: number, cold: boolean) => 160 - 40 * ev + (cold ? ROOM_COLD_HP : 0);
+const roomLpHz = (ev: number) => 1300 - 450 * ev;
 const ROOM_TONE_FADE = 2.5;
 
 /**
@@ -343,6 +391,10 @@ export interface MusicOptions {
    * and every restart reuses it). Absent = build one now.
    */
   hall?: MusicHall;
+  /** v5: start at this evening (0 dusk .. 1 night). */
+  evening?: number;
+  /** v5: start with the fight on (the room tone thinned). */
+  cold?: boolean;
 }
 
 const LOOKAHEAD = 5;
@@ -402,10 +454,12 @@ export function startMusic(ctx: BaseAudioContext, dest: AudioNode, at: number, o
   fades.push(room);
   room.connect(dest);
 
-  // gentle high cut on the whole score: warm, never airy (the hall return has its own)
+  let ev = Math.max(0, Math.min(1, Number.isFinite(o.evening) ? (o.evening as number) : 0));
+  let cold = !!o.cold;
+  // gentle high cut on the whole score: warm, never airy (the hall return has its own); v5: darker at night
   const tone = ctx.createBiquadFilter();
   tone.type = 'lowpass';
-  tone.frequency.value = 3200;
+  tone.frequency.value = TONE_DUSK_HZ - TONE_NIGHT_DROP_HZ * ev;
   tone.Q.value = 0.5;
   tone.connect(out);
   const bus = ctx.createGain();
@@ -430,17 +484,24 @@ export function startMusic(ctx: BaseAudioContext, dest: AudioNode, at: number, o
 
   // room tone graph: pink noise, band-limited to the paper/air band, breathing very slowly
   const roomSrcs: AudioScheduledSourceNode[] = [];
+  // v5: the room tone's shape (evening: deeper; the fight: thinner) and its fight gain
+  const roomHp = ctx.createBiquadFilter();
+  const roomLp = ctx.createBiquadFilter();
+  const roomCold = ctx.createGain();
+  roomCold.gain.value = cold ? ROOM_COLD_GAIN : 1;
+  const roomEve = ctx.createGain();
+  roomEve.gain.value = 1 + 0.12 * ev;
   {
     const src = ctx.createBufferSource();
     src.buffer = noiseBuffer(ctx, 'pink');
     src.loop = true;
-    const hp = ctx.createBiquadFilter();
+    const hp = roomHp;
     hp.type = 'highpass';
-    hp.frequency.value = 160;
+    hp.frequency.value = roomHpHz(ev, cold);
     hp.Q.value = 0.5;
-    const lp = ctx.createBiquadFilter();
+    const lp = roomLp;
     lp.type = 'lowpass';
-    lp.frequency.value = 1300;
+    lp.frequency.value = roomLpHz(ev);
     lp.Q.value = 0.5;
     const breath = ctx.createGain();
     breath.gain.value = 1;
@@ -449,7 +510,7 @@ export function startMusic(ctx: BaseAudioContext, dest: AudioNode, at: number, o
     const lfoD = ctx.createGain();
     lfoD.gain.value = 0.22;
     lfo.connect(lfoD).connect(breath.gain);
-    src.connect(hp).connect(lp).connect(breath).connect(room);
+    src.connect(hp).connect(lp).connect(breath).connect(roomCold).connect(roomEve).connect(room);
     src.start(at, (o.seed % 2000) / 1000);
     lfo.start(at);
     roomSrcs.push(src, lfo);
@@ -570,7 +631,7 @@ export function startMusic(ctx: BaseAudioContext, dest: AudioNode, at: number, o
       const vel = n.vel * (j ? 0.8 : 1);
       const lp = ctx.createBiquadFilter();
       lp.type = 'lowpass';
-      lp.frequency.value = 900 + 900 * vel;
+      lp.frequency.value = (900 + 900 * vel) * (1 - 0.2 * (n.ev ?? 0));
       lp.Q.value = 0.4;
       panned(lp, between(r, -0.35, 0.35), notesNear);
       const tau1 = 2.4 * Math.pow(220 / f, 0.35);
@@ -623,6 +684,7 @@ export function startMusic(ctx: BaseAudioContext, dest: AudioNode, at: number, o
   };
 
   const composer = new Composer(o.seed);
+  composer.setEvening(ev);
   const perf = mulberry32((o.seed * 2654435761) >>> 0);
   let stopped = false;
   // Notes are scheduled LOOKAHEAD ahead; pads only PAD_AHEAD ahead (so the change can still move).
@@ -685,6 +747,29 @@ export function startMusic(ctx: BaseAudioContext, dest: AudioNode, at: number, o
         const target = Math.max(tt - at + 2.5, composer.lastChange + MIN_CHANGE);
         if (composer.retime(target)) scheduleUntil(tt + LOOKAHEAD, tt);
       });
+    },
+    setCold(on: boolean, t: number) {
+      if (stopped || on === cold) return;
+      cold = on;
+      const tau = on ? 0.1 : 0.3;
+      roomCold.gain.cancelScheduledValues(t);
+      roomCold.gain.setValueAtTime(on ? 1 : ROOM_COLD_GAIN, t);
+      roomCold.gain.setTargetAtTime(on ? ROOM_COLD_GAIN : 1, t, tau);
+      roomHp.frequency.cancelScheduledValues(t);
+      roomHp.frequency.setValueAtTime(roomHpHz(ev, !on), t);
+      roomHp.frequency.setTargetAtTime(roomHpHz(ev, on), t, tau);
+    },
+    setEvening(e: number, t: number) {
+      if (stopped || !Number.isFinite(e)) return;
+      const v = Math.max(0, Math.min(1, e));
+      if (v === ev) return;
+      ev = v;
+      // the notes still to be written take it when the render reaches t; the colour drifts slowly
+      when(t, () => composer.setEvening(v));
+      tone.frequency.setTargetAtTime(TONE_DUSK_HZ - TONE_NIGHT_DROP_HZ * v, t, EVENING_TAU);
+      roomLp.frequency.setTargetAtTime(roomLpHz(v), t, EVENING_TAU);
+      roomHp.frequency.setTargetAtTime(roomHpHz(v, cold), t, EVENING_TAU);
+      roomEve.gain.setTargetAtTime(1 + 0.12 * v, t, EVENING_TAU);
     },
     setIdle(on: boolean, t: number) {
       if (stopped || on === idle) return;

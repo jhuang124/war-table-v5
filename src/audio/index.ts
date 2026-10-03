@@ -22,8 +22,14 @@
 // the score; nothing starts from zero except dice, the AI's bone click and the two bowls (B4).
 //
 // Silence rules the engine enforces: uiHover never sounds (no hover sounds); at most one cue starts
-// per 70 ms (the more important one wins; dice landings are one texture and exempt); nothing new
-// starts inside a hush() window (the verdict beat).
+// per 70 ms (the more important one wins; dice landings, splashes and hit · pair are one texture and
+// exempt); nothing new starts inside a hush() window (the verdict beat).
+//
+// v5 (_claude/v5/PROPOSAL.md §4 A, B, D, F; SOUL: cozy at rest, sharp in the moment, the fight is the one
+// place the room goes cold for a breath). Five cues (cue(name) ≡ play(name)): splash, rattle, ripple,
+// glint, pour; hit gains variant 'pair'; the engine gains fightCold?(on) and setEvening?(t). The dice
+// pour: landings within 200 ms of the last are one sequence: each die takes the next of three bone
+// timbres, ±4 % rate, the first a touch louder (later ones −1 dB), each later one a little wetter.
 //
 // Recommended event → sound mapping (1× timings; at 2× halve the delays/durations, floor 80 ms, and
 // never use `rate` for speed: "2× compresses the spacing, never the pitch"):
@@ -45,11 +51,26 @@
 //   drag-to-attack (A2) → const s = audio.stroke?.({ pan }); s?.move(speed, pan) on pointermove
 //       (speed 1 ≈ one board width per second); s?.end(true) when it arms, s?.end(false) otherwise
 //   attack arrow drawing itself / camera move > 0.3 board widths → whoosh { duration: ms / 1000 }
+//   the fight begins (the camera leans toward it) → audio.fightCold?.(true); the camera returns → fightCold?.(false)
+//       (the score's top dips 2 dB and the room tone thins in ~0.3 s; back over ~1 s; tempo untouched)
 //   diceRolled, single roll → diceShake { duration } as the cup shakes (not on repeat rolls within 3 s);
-//       diceLand per die as it lands { pan: attacker −0.3 / defender +0.3 };
+//       v5: diceLand per die AS EACH DIE LANDS (60–90 ms apart) { pan: attacker −0.3 / defender +0.3 };
+//       never pass `rate` on a single roll (the engine spreads each die ±4 % itself and picks its timbre);
 //       as the last die settles → audio.hush?.(250) (the verdict beat: 250 ms of nothing, score dips);
-//       hit at the verdict, after the beat { pan toward the side that lost }
+//       after the beat, per matched pair as its gold hairline draws: play('hit', { variant: 'pair', pan:
+//       toward the pair's loser }) and cue('splash', { pan: the losing die }) (pairs may share a frame or
+//       follow ~100 ms apart; both are exempt from the 70 ms rule). A pair the defender wins still plays
+//       hit · pair (the attacker's figure falls). No plain 'hit' when pairs are played.
 //   blitz → one diceShake { duration: 0.1 }; per middle roll one diceLand { rate: min(1.4, 1 + 0.08·k) } + hit
+//       { volume 0.5 } (the drum); the final roll as a single roll above (pour, beat, pairs + splashes)
+//   an AI's first attack of its turn → cue('rattle', { pan: its seat }) ~0.4 s before the stroke (no distance:
+//       the rattle's own default is 0.3, slightly across the table, nearer than the AI's other events);
+//       tap the cup → cue('rattle', { pan })
+//   reinforcements arrive → cue('pour', { duration: min(0.6, max(0.25, 0.085·armies)), pan: the holding dab })
+//       as the stones pour into the dab (3–7 dabs; root then fifth); a card trade's stones → the same, after cardTrade
+//   tap open water → cue('ripple', { pan })      tap a sea lane → cue('glint', { pan: shore A, panTo: shore B,
+//       duration: the glint's travel in s (0.15–1.2) }) (a tiny note on the chord's fifth that travels)
+//   the round changes → audio.setEvening?.(min(1, (round − 1) / 11)) (dusk at round 1, night from round 12)
 //   territoryConquered → conquer as the flood starts; { variant: 'somber' } whenever the previous
 //       owner is human (A5: the dry brush snap, a darker flood); march { duration: 0.5, delay: 0.15 }
 //   armiesMoved occupy → march { duration: 0.4 }; fortify → march { duration: min(0.9, 0.22·hops) }
@@ -63,5 +84,5 @@
 //   settings: SFX volume → setVolume, score → setMusic / setMusicVolume, M key → setMuted
 
 export { createAudio } from './engine';
-export { SFX_NAMES, TIER_TARGET_LUFS, V4_CUES } from './types';
-export type { AudioEngine, AudioStats, CreateAudioOptions, PlayOptions, SfxName, SfxVariant, StrokeHandle, V4Cue } from './types';
+export { SFX_NAMES, TIER_TARGET_LUFS, V4_CUES, V5_CUES } from './types';
+export type { AudioEngine, AudioStats, CreateAudioOptions, PlayOptions, SfxName, SfxVariant, StrokeHandle, V4Cue, V5Cue } from './types';

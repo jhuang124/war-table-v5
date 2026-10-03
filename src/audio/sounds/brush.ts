@@ -225,6 +225,69 @@ export const conquer: SoundFn = (ctx, dest, t, { rate, rand, variant }) => {
 };
 
 // ---------------------------------------------------------------------------
+// v5 (PROPOSAL §4 A, E)
+// ---------------------------------------------------------------------------
+
+/**
+ * v5 cue 'splash': a losing die takes ink. A short wet dab of ink landing on the bone: a soft low press,
+ * the paper fibre drinking it for a moment, two tiny droplets. Noise only (no mode, no tone): pitchless,
+ * so it sits under the verdict's pair tick without competing with it. Pan it to the die.
+ */
+export const splash: SoundFn = (ctx, dest, t, { rate, rand }) => {
+  const sr = ctx.sampleRate;
+  const tape = new Tape(sr, 0.2);
+  // the drop meets the die: a soft, low, wet press
+  tape.burst(0.002, { amp: 1.3, attack: 0.032, tau: 0.022, filter: [{ type: 'lowpass', f: 650 }, { type: 'highpass', f: 150 }] }, rand);
+  tape.burst(0.002, { amp: 0.7, attack: 0.03, tau: 0.014, filter: [{ type: 'bandpass', f: 1250 * jitter(rand, 0.08), q: 0.7 }] }, rand);
+  // the ink spreads: the fibre drinks it (a short, wet, grainy hiss)
+  const n = Math.round(0.11 * sr);
+  const x = paperNoise(n, rand, sr, 300, 3);
+  for (let i = 0; i < n; i++) {
+    const tt = i / sr;
+    x[i] *= tt < 0.02 ? Math.sin((Math.PI * tt) / 0.04) : Math.exp(-(tt - 0.02) / 0.03);
+  }
+  biquad(x, sr, 'bandpass', 1700 * jitter(rand, 0.08), 0.8);
+  biquad(x, sr, 'lowpass', 3400, 0.7);
+  const s0 = Math.round(0.008 * sr);
+  for (let i = 0; i < n; i++) tape.data[s0 + i] += x[i] * 0.45;
+  // two tiny droplets as it settles
+  for (let k = 0; k < 2; k++) {
+    const at = 0.04 + k * between(rand, 0.02, 0.035);
+    tape.burst(at, { amp: 0.2, attack: 0.003, tau: 0.005, filter: [{ type: 'bandpass', f: between(rand, 1000, 1500), q: 0.8 }] }, rand);
+  }
+  tape.dcBlock().endFade(0.03);
+  return tape.play(ctx, dest, t, rate);
+};
+
+/** One stone of the pour: a soft, pitchless brush dab whose low body rises a little (the dab is filling). */
+function pourDab(tape: Tape, t0: number, amp: number, u: number, rand: Rand): void {
+  tape.burst(t0, { amp: amp * 0.5, attack: 0.012, tau: 0.012, filter: [{ type: 'bandpass', f: (760 + 320 * u) * jitter(rand, 0.06), q: 0.8 }] }, rand);
+  tape.burst(t0, { amp: amp * 0.32, attack: 0.012, tau: 0.018, filter: [{ type: 'lowpass', f: 520 + 160 * u }] }, rand);
+  tape.mode(t0 + 0.0005, (225 + 75 * u) * jitter(rand, 0.03), 0.011, amp * 0.3, 0.012);
+}
+
+/**
+ * v5 cue 'pour': reinforcements pour from the cup into the holding dab. A quick run of 3–7 soft dabs
+ * (count follows `duration`: about one per 85 ms, default 450 ms → 5), each a hair higher than the last,
+ * like a dish filling. In key through two soft felt notes the mixer adds (the chord's root as the first
+ * stone lands, its fifth as the pour rises; see sounds/index.ts).
+ */
+export const pour: SoundFn = (ctx, dest, t, { rate, rand, duration }) => {
+  const D = duration ?? 0.45;
+  const n = Math.max(3, Math.min(7, Math.round(D / 0.085)));
+  const tape = new Tape(ctx.sampleRate, D + 0.08);
+  for (let i = 0; i < n; i++) {
+    const u = n > 1 ? i / (n - 1) : 0;
+    // a pour speeds up a touch, then the last stone settles
+    const at = 0.003 + (D - 0.04) * Math.pow(u, 0.92) + (i && i < n - 1 ? between(rand, -0.006, 0.006) : 0);
+    const amp = (i === n - 1 ? 0.95 : 1 - 0.18 * u) * jitter(rand, 0.08);
+    pourDab(tape, at, amp, u, rand);
+  }
+  tape.dcBlock().endFade(0.03);
+  return tape.play(ctx, dest, t, rate);
+};
+
+// ---------------------------------------------------------------------------
 // The live stroke (A2: draw your attack) — a looping bristle texture the pointer drives.
 // ---------------------------------------------------------------------------
 

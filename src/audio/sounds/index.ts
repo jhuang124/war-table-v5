@@ -15,13 +15,19 @@
 //     tuned layer under paper/wood (turnStart, cardTrade, cupSet) at the chord's pitch.
 //  B4 attacks: every voice fades in over `attack` (default 15 ms); 0 only for diceLand, bone and
 //     the two bowls (continent, eliminated): the one sharp family.
+//
+// v5 (PROPOSAL §4 A, D, F): splash (brush: a losing die takes ink, pitchless), hit · pair (the verdict
+// for one pair: the breath plus a tiny tick on the chord's fifth), rattle (wood + bone: the cup rattles
+// once), ripple (paper: open water, pitchless), glint (paper shimmer + a felt note on the fifth that
+// travels shore to shore), pour (brush: the holding dab fills, root then fifth). diceLand has three bone
+// timbres; the mixer staggers them into one pour (first die a touch louder, later dice a little wetter).
 
 import type { SfxMeta, SfxName, ToneLayer } from '../types';
 import { bone, diceLand } from './bone';
 import { continent, eliminated, victory } from './bowl';
-import { conquer, hit, march, place, unplace, whoosh } from './brush';
-import { cardDraw, cardTrade, sheet, tick, turnStart, uiClick, uiError, uiHover } from './paper';
-import { cupSet, cupSlide, diceShake } from './wood';
+import { conquer, hit, march, place, pour, splash, unplace, whoosh } from './brush';
+import { cardDraw, cardTrade, glint, ripple, sheet, tick, turnStart, uiClick, uiError, uiHover } from './paper';
+import { cupSet, cupSlide, diceShake, rattle } from './wood';
 
 /** A felt note (the score's piano colour, softened): fundamental and two soft overtones. */
 const FELT: [number, number, number][] = [
@@ -45,6 +51,26 @@ const TURN_TONE: ToneLayer[] = [
 const TRADE_TONE: ToneLayer[] = [{ role: 'bright', ref: 64, at: 0.3, amp: 0.07, partials: FELT, attack: 0.02 }];
 const CUP_TONE: ToneLayer[] = [{ role: 'root', ref: 62, at: 0.004, amp: 0.12, partials: WOOD, attack: 0.015 }];
 
+/** v5: a tiny high tick (a small felt-tipped bell, very short): the pair connects, the lane glints. */
+const TICK: [number, number, number][] = [
+  [1, 1, 0.075],
+  [2, 0.16, 0.035],
+  [3, 0.04, 0.02],
+];
+/** v5: a short felt note for the pour (the felt colour, damped sooner). */
+const FELT_SHORT: [number, number, number][] = [
+  [1, 1, 0.12],
+  [2, 0.28, 0.07],
+  [3, 0.07, 0.04],
+];
+/** v5: hit · pair: the chord's fifth, high, as the gold hairline connects (≈ −30 LUFS on its own). */
+const PAIR_TONE: ToneLayer[] = [{ role: 'fifth', ref: 81, at: 0.012, amp: 0.24, partials: TICK, attack: 0.015, variants: ['pair'] }];
+const GLINT_TONE: ToneLayer[] = [{ role: 'fifth', ref: 86, at: 0.01, amp: 0.2, partials: TICK, attack: 0.016 }];
+const POUR_TONE: ToneLayer[] = [
+  { role: 'root', ref: 74, at: 0.006, amp: 0.035, partials: FELT_SHORT, attack: 0.02 },
+  { role: 'fifth', ref: 81, at: 0.2, amp: 0.028, partials: FELT_SHORT, attack: 0.02 },
+];
+
 export const SFX: Record<SfxName, SfxMeta> = {
   uiHover: {
     fn: uiHover, label: 'Hover (silent)', group: 'UI', tier: 'micro', trimDb: -18, wet: 0,
@@ -66,6 +92,14 @@ export const SFX: Record<SfxName, SfxMeta> = {
     fn: whoosh, label: 'Brush sweep (camera, arrow)', group: 'UI', tier: 'ui', trimDb: -6.5, wet: 0.1,
     maxDur: 0.67, maxVoices: 2, minGapMs: 150, priority: 1, duration: [0.2, 1.5, 0.6],
   },
+  ripple: {
+    fn: ripple, label: 'Ripple (open water)', group: 'UI', tier: 'tick', trimDb: -4.6, wet: 0.1,
+    maxDur: 0.47, maxVoices: 2, minGapMs: 120, priority: 1,
+  },
+  glint: {
+    fn: glint, label: 'Glint (a sea lane, in key)', group: 'UI', tier: 'tick', trimDb: -7.6, wet: 0.12,
+    maxDur: 0.6, maxVoices: 2, minGapMs: 150, priority: 1, duration: [0.15, 1.2, 0.4], tone: GLINT_TONE,
+  },
   sheet: {
     fn: sheet, label: 'Sheet laid on (lift: off)', group: 'UI', tier: 'ui', trimDb: -2.7, wet: 0.06,
     maxDur: 0.5, maxVoices: 1, minGapMs: 150, priority: 2,
@@ -77,6 +111,10 @@ export const SFX: Record<SfxName, SfxMeta> = {
   unplace: {
     fn: unplace, label: 'Brush lift (take back)', group: 'Board', tier: 'board', trimDb: 8.3, wet: 0.06,
     maxDur: 0.17, maxVoices: 2, minGapMs: 40, priority: 2, densityDb: 1.5, densityMaxDb: 4,
+  },
+  pour: {
+    fn: pour, label: 'Pour (the holding dab, in key)', group: 'Board', tier: 'board', trimDb: 5.4, wet: 0.07,
+    maxDur: 1.1, maxVoices: 1, minGapMs: 200, priority: 2, duckDb: 2, duration: [0.25, 0.6, 0.45], tone: POUR_TONE,
   },
   march: {
     fn: march, label: 'Brush route (march)', group: 'Board', tier: 'board', trimDb: 4.1, wet: 0.08,
@@ -98,7 +136,15 @@ export const SFX: Record<SfxName, SfxMeta> = {
   diceLand: {
     fn: diceLand, label: 'Bone die lands', group: 'Battle', tier: 'die', trimDb: -0.5, wet: 0.06,
     maxDur: 0.17, maxVoices: 6, minGapMs: 12, priority: 3, densityDb: 0.8, densityMaxDb: 3,
-    duckDb: 3, texture: true, attack: 0,
+    duckDb: 3, texture: true, attack: 0, timbres: 3,
+  },
+  splash: {
+    fn: splash, label: 'Ink splash (a losing die)', group: 'Battle', tier: 'die', trimDb: -3.2, wet: 0.05,
+    maxDur: 0.2, maxVoices: 3, minGapMs: 0, priority: 3, densityDb: 1, densityMaxDb: 3, texture: true,
+  },
+  rattle: {
+    fn: rattle, label: 'Cup rattles once', group: 'Battle', tier: 'ui', trimDb: -7.9, wet: 0.08,
+    maxDur: 0.36, maxVoices: 1, minGapMs: 250, priority: 3, duckDb: 2, distance: 0.3,
   },
   bone: {
     fn: bone, label: 'One bone click (AI roll)', group: 'Battle', tier: 'die', trimDb: -0.2, wet: 0.08,
@@ -106,7 +152,8 @@ export const SFX: Record<SfxName, SfxMeta> = {
   },
   hit: {
     fn: hit, label: 'Breath of smoke (a figure falls)', group: 'Battle', tier: 'board', trimDb: -10.7, wet: 0.12,
-    maxDur: 0.45, maxVoices: 2, minGapMs: 70, priority: 3, densityDb: 2.5, densityMaxDb: 6, duckDb: 4,
+    maxDur: 0.6, maxVoices: 2, minGapMs: 70, priority: 3, densityDb: 2.5, densityMaxDb: 6, duckDb: 4,
+    tone: PAIR_TONE, textureVariants: ['pair'], textureGapMs: 0,
   },
   conquer: {
     fn: conquer, label: 'Ink flood (somber: the snap)', group: 'Stingers', tier: 'cue', trimDb: -1.1, wet: 0.12,

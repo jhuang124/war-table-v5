@@ -215,3 +215,57 @@ export const turnStart: SoundFn = (ctx, dest, t, { rate, rand, variant }) => {
   tape.dcBlock().endFade(0.03);
   return tape.play(ctx, dest, t, rate);
 };
+
+// ---------------------------------------------------------------------------
+// v5 (PROPOSAL §4 F: details that reward attention)
+// ---------------------------------------------------------------------------
+
+/**
+ * v5 cue 'ripple': a tap on open water. The fingertip's paper tick, then a soft, low, wet bloom that
+ * spreads and dries (~400 ms): fibre noise whose band sinks as the ring widens, with the paper's low body
+ * under it. No tone anywhere.
+ */
+export const ripple: SoundFn = (ctx, dest, t, { rate, rand }) => {
+  const sr = ctx.sampleRate;
+  const D = 0.4 * jitter(rand, 0.05);
+  const tape = new Tape(sr, D + 0.05);
+  paperTick(tape, 0.001, 0.4, rand, { f: 1300, body: 0.8 });
+  const n = Math.round(D * sr);
+  const x = paperNoise(n, rand, sr, 40, 1.3);
+  const rise = 0.07;
+  for (let i = 0; i < n; i++) {
+    const tt = i / sr;
+    x[i] *= tt < rise ? Math.sin((Math.PI * tt) / (2 * rise)) : Math.pow(Math.max(0, 1 - (tt - rise) / (D - rise)), 1.7);
+  }
+  const body = new Float32Array(x);
+  svf(x, sr, 'bp', (i) => 950 - 600 * clamp(i / n, 0, 1), 0.7);
+  biquad(x, sr, 'lowpass', 2400, 0.7);
+  biquad(body, sr, 'lowpass', 380, 0.7);
+  biquad(body, sr, 'highpass', 130, 0.7);
+  const s0 = Math.round(0.01 * sr);
+  for (let i = 0; i < n && s0 + i < tape.data.length; i++) tape.data[s0 + i] += x[i] * 0.7 + body[i] * 0.85;
+  tape.dcBlock().endFade(0.03);
+  return tape.play(ctx, dest, t, rate);
+};
+
+/**
+ * v5 cue 'glint': a sea lane glints end to end. A faint, high paper shimmer that runs the lane's length
+ * (`duration`, default 0.4 s); the glint itself is a tiny felt note on the chord's fifth the mixer adds
+ * (sounds/index.ts). Pass `pan` (one shore) and `panTo` (the other): the voice travels between them.
+ */
+export const glint: SoundFn = (ctx, dest, t, { rate, rand, duration }) => {
+  const sr = ctx.sampleRate;
+  const D = duration ?? 0.4;
+  const tape = new Tape(sr, D + 0.04);
+  const n = Math.round(D * sr);
+  const x = paperNoise(n, rand, sr, 180, 2);
+  for (let i = 0; i < n; i++) {
+    const u = i / n;
+    x[i] *= u < 0.2 ? Math.sin((Math.PI * u) / 0.4) : Math.pow(Math.cos((Math.PI * (u - 0.2)) / 1.6), 2);
+  }
+  svf(x, sr, 'bp', (i) => 1900 + 700 * Math.sin(Math.PI * clamp(i / n, 0, 1)), 1.1);
+  biquad(x, sr, 'lowpass', 3600, 0.7);
+  for (let i = 0; i < n; i++) tape.data[i + 1] += x[i] * 0.22;
+  tape.dcBlock().endFade(0.02);
+  return tape.play(ctx, dest, t, rate);
+};
