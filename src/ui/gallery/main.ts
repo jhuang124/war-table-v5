@@ -195,6 +195,9 @@ function react(i: UiIntent) {
     case 'handoffAccept':
       if (g) push({ ...vm, game: { ...g, handoff: null } });
       return;
+    case 'dismissReceipt':
+      if (g?.receipt) push({ ...vm, game: { ...g, receipt: null } });
+      return;
     case 'dismissTurnBanner':
       if (g?.banner?.kind === 'turn') push({ ...vm, game: { ...g, banner: null } });
       return;

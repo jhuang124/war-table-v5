@@ -2,7 +2,9 @@
 // it opens: rules, settings (AI speed and the seat hand-off live here) and the read-only log. Every one
 // is a paper sheet (docs/INK2.md §3.3): straight-edged deeper paper with one ivory hairline across its
 // top and the title sitting on it, items as words with room between them; focus is a gold hairline
-// underline. No radius, no box round a control. Phones: bottom sheets (the same paper, rising).
+// underline. No radius, no box round a control. v4 (E1, E8): the paper carries the board's fibre and the
+// one lamp's shadow, and is laid on the board from the top edge and lifted off it again (sheet.ts
+// sheetDrop / sheetLift); never fading in from nowhere. Phones: bottom sheets (the same paper, rising).
 
 import { cupSvg } from './hud/cup';
 import type { GameVM, LogLineVM, SeatRef, Settings, UiIntent, ViewModel } from '../game/viewModel';
@@ -12,7 +14,7 @@ import { Segmented, Slider, Switch, uiButton } from './controls';
 import { animateIn, drawEnso, drawIn, EASE_IN_QUAD, emblem, ensoEl, h, hashSeed, minus, motion, setAttr, setEnso, setStyle, setText, titleText, toggle, underlineEl } from './dom';
 import { unitSrc } from './hud/pictograms';
 import { isPhone } from './layout';
-import { dragToDismiss, grabHandle, resetSheet, sheetIn, sheetOut } from './sheet';
+import { dragToDismiss, grabHandle, resetSheet, sheetDrop, sheetIn, sheetLift, sheetOut } from './sheet';
 
 type Send = (i: UiIntent) => void;
 
@@ -124,19 +126,46 @@ export class Confirm {
     this.el.append(this.box);
   }
 
+  /** The sheet is leaving (lifting off desktop, sliding down on phones). */
+  private leaving = false;
+
   update(vm: GameVM['confirm']): void {
     if (vm === this.vm) return;
     const was = this.vm;
     this.vm = vm;
-    toggle(this.el, 'hidden', !vm);
-    if (!vm) return;
+    if (!vm) {
+      if (!was) return toggle(this.el, 'hidden', true);
+      // The sheet leaves the way it came; the scrim goes with it. Taps pass through meanwhile.
+      this.leaving = true;
+      this.el.classList.add('leaving');
+      const done = () => {
+        if (!this.leaving) return;
+        this.leaving = false;
+        this.el.classList.remove('leaving');
+        resetSheet(this.box);
+        this.el.style.opacity = '';
+        if (!this.vm) this.el.classList.add('hidden');
+      };
+      // A pull-down already slid it off (parked at 100 %): just hide.
+      if (!isPhone()) sheetLift(this.box, this.el, done);
+      else if (this.box.style.transform.includes('100%')) done();
+      else sheetOut(this.box, this.el, done);
+      return;
+    }
+    if (this.leaving) {
+      this.leaving = false;
+      this.el.classList.remove('leaving');
+      this.el.getAnimations().forEach((a) => a.cancel());
+      this.el.style.opacity = '';
+    }
+    toggle(this.el, 'hidden', false);
     setText(this.text, vm.text);
     setText(this.yesLabel, vm.kind === 'endGame' ? 'End game' : 'Restart');
     if (!was) {
       if (isPhone()) sheetIn(this.box, this.el);
       else {
-        if (!motion.reduced) this.el.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 240, easing: 'ease-out' });
-        drawIn(this.box.querySelector<HTMLElement>('.confirm-text')!, 240);
+        sheetDrop(this.box, this.el);
+        drawIn(this.box.querySelector<HTMLElement>('.confirm-text')!, 240, motion.reduced ? 0 : 200);
       }
     }
   }
@@ -514,24 +543,31 @@ export class Overlays {
     if (o !== this.current && o !== null && o !== 'pause') this.fromPause = this.current === 'pause' || (this.fromPause && this.current !== null);
     const sheets = { pause: this.pause, rules: this.rules, settings: this.settings, log: this.log.el };
     const phone = isPhone();
-    // Phones: a closing sheet slides down before the scrim goes (a drag already slid it off).
-    if (!o && this.current && phone && !this.dragged && !this.leaving) {
+    // A closing sheet leaves before the scrim goes: phones slide it down, desktop lifts it back off the
+    // top edge (a drag already slid it off).
+    if (!o && this.current && !this.dragged && !this.leaving) {
       const out = sheets[this.current as keyof typeof sheets];
       this.leaving = out;
-      // While it slides away, taps go through to the board and HUD underneath.
+      // While it leaves, taps go through to the board and HUD underneath.
       this.el.classList.add('leaving');
-      sheetOut(out, this.el, () => {
+      const finish = () => {
         if (this.leaving !== out) return;
         this.leaving = null;
         this.el.classList.remove('leaving');
+        resetSheet(out);
         if (!this.current) {
           this.el.classList.add('hidden');
+          this.el.style.opacity = '';
           toggle(out, 'hidden', true);
         }
-      });
+      };
+      if (phone) sheetOut(out, this.el, finish);
+      else sheetLift(out, this.el, finish);
     } else if (o && this.leaving) {
       this.el.classList.remove('leaving');
       this.leaving.getAnimations().forEach((a) => a.cancel());
+      this.el.getAnimations().forEach((a) => a.cancel());
+      this.el.style.opacity = '';
       resetSheet(this.leaving);
       this.leaving = null;
     }
@@ -561,10 +597,11 @@ export class Overlays {
             animateIn(sheet, { ms: 200 });
           }
         } else {
-          if (!prev && !motion.reduced) this.el.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 240, easing: 'ease-out' });
-          animateIn(sheet, { ms: 240 });
+          // A sheet of paper laid on the board from the top edge (v4 E8); moving between sheets lays
+          // the next one down over the board the same way.
+          sheetDrop(sheet, prev ? null : this.el);
           const t = sheet.querySelector<HTMLElement>('.sheet-title');
-          if (t) drawIn(t, 300);
+          if (t) drawIn(t, 300, motion.reduced ? 0 : 200);
         }
       }
     }

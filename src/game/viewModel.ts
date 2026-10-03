@@ -403,6 +403,17 @@ export interface GameVM {
   receipt?: ReceiptVM | null;
 }
 
+/**
+ * Additive (v4 PLAN §7.13): the board as it was left, for the title's Continue thumbnail (a tiny ink sketch:
+ * territory tints only). The UI draws it from the map's own geometry. Absent / null = no thumbnail.
+ */
+export interface SaveSketchVM {
+  /** The saved game's map pack (GameConfig.mapId); absent = classic. */
+  mapId?: string;
+  /** Each held territory's owner colour (the neutral seat's 'neutral' allowed, as on SeatRef). */
+  owners: Partial<Record<TerritoryId, PlayerColorId>>;
+}
+
 /** The "While you were away" receipt (v4). One line per AI seat that acted, in turn order. */
 export interface ReceiptVM {
   /** Bumps per receipt; the UI restarts its writing when it changes. */
@@ -467,7 +478,7 @@ export interface ViewModel {
   /** settings.reduceMotion || prefers-reduced-motion. */
   reducedMotion: boolean;
   /** Continue button: null = no save. */
-  save: { summary: string } | null; // 'Round 7 · John vs Sam + 2 AI'
+  save: { summary: string; sketch?: SaveSketchVM | null } | null; // 'Round 7 · John vs Sam + 2 AI'
   newGame: NewGameVM;
   game: GameVM | null;
   victory: VictoryVM | null;

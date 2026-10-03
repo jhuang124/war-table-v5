@@ -27,7 +27,7 @@ function fitRing(b: HTMLElement): void {
   let bb = -Infinity;
   const box = b.getBoundingClientRect();
   for (const c of b.children) {
-    if (c === r.svg || !(c instanceof HTMLElement) || c.offsetParent === null) continue;
+    if (c === r.svg || !(c instanceof HTMLElement) || c.offsetParent === null || c.classList.contains('ring-skip')) continue;
     const q = c.getBoundingClientRect();
     if (!q.width) continue;
     l = Math.min(l, q.left);

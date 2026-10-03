@@ -1,8 +1,53 @@
 // Bottom sheets on phones (docs/MOBILE.md §5, INK.md B4): a grab handle, drag-down (or a tap on the scrim)
-// to dismiss, a spring of at most 2 % overshoot (280 ms in), reduced motion = fades. Desktop never calls
-// these (its paper sheets are drawn in instead); every entry point checks `isPhone()`.
+// to dismiss, a spring of at most 2 % overshoot (280 ms in), reduced motion = no travel. Every entry point
+// checks `isPhone()`.
+// Desktop (v4 E8, sitting Q10): a sheet of paper is laid on the board from the top edge (sheetDrop, 400 ms,
+// the brush) and lifted back out the same way (sheetLift); it never fades in from nowhere. Reduced motion:
+// the sheet is simply there (and gone), with no travel.
 
-import { h, motion } from './dom';
+import { EASE_BRUSH, h, motion } from './dom';
+
+/** Desktop: how long a sheet takes to come down onto the board, and to lift back off it. */
+export const DROP_MS = 400;
+export const LIFT_MS = 300;
+
+/** Distance from where the sheet rests to just above the top edge (its lamp shadow included). */
+function aboveTop(sheet: HTMLElement): number {
+  const r = sheet.getBoundingClientRect();
+  return Math.ceil(r.bottom + 48);
+}
+
+/** Desktop: lay a sheet on the board from the top edge (and bring its scrim up under it). */
+export function sheetDrop(sheet: HTMLElement, scrim?: HTMLElement | null, ms = DROP_MS): void {
+  resetSheet(sheet);
+  if (scrim) scrim.style.opacity = '';
+  if (typeof sheet.animate !== 'function') return;
+  sheet.getAnimations().forEach((a) => a.cancel());
+  if (motion.reduced) return;
+  const dy = aboveTop(sheet);
+  sheet.animate([{ transform: `translateY(${-dy}px)` }, { transform: 'translateY(0)' }], { duration: ms, easing: EASE_BRUSH });
+  // The scrim's dimming comes up under it (its colour, never its opacity: the sheet is inside it and must
+  // arrive as opaque paper, never fade in).
+  scrim?.animate([{ backgroundColor: 'rgba(8, 13, 27, 0)' }, {}], { duration: Math.round(ms * 0.6), easing: 'ease-out' });
+}
+
+/** Desktop: lift a sheet back off the top edge (its scrim goes with it), then `done`. */
+export function sheetLift(sheet: HTMLElement, scrim: HTMLElement | null | undefined, done: () => void, ms = LIFT_MS): void {
+  if (motion.reduced || typeof sheet.animate !== 'function') return done();
+  sheet.getAnimations().forEach((a) => a.cancel());
+  const dy = aboveTop(sheet);
+  const a = sheet.animate([{ transform: 'translateY(0)' }, { transform: `translateY(${-dy}px)` }], { duration: ms, easing: 'cubic-bezier(0.5, 0, 0.75, 0)', fill: 'forwards' });
+  scrim?.animate([{}, { backgroundColor: 'rgba(8, 13, 27, 0)' }], { duration: ms, easing: 'ease-in', fill: 'forwards' });
+  a.onfinish = () => {
+    sheet.style.transform = `translateY(${-dy}px)`;
+    a.cancel();
+    if (scrim) {
+      scrim.getAnimations().forEach((x) => x.cancel());
+      scrim.style.opacity = '0';
+    }
+    done();
+  };
+}
 import { isPhone } from './layout';
 
 /** The sheet's spring: fast out of the gate, one small overshoot (1.55 %, under the 2 % cap), a soft settle. */
@@ -25,12 +70,10 @@ export function sheetIn(sheet: HTMLElement, scrim?: HTMLElement | null): void {
   if (scrim) scrim.style.opacity = '';
   if (typeof sheet.animate !== 'function') return;
   sheet.getAnimations().forEach((a) => a.cancel());
-  if (motion.reduced) {
-    sheet.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 180, easing: 'ease-out' });
-  } else {
-    sheet.animate([{ transform: 'translateY(100%)' }, { transform: 'translateY(0)' }], { duration: 280, easing: SHEET_SPRING });
-  }
-  scrim?.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 240, easing: 'ease-out' });
+  // Reduced motion: the sheet is simply there (v4 §7.15: sheets still arrive, instantly).
+  if (motion.reduced) return;
+  sheet.animate([{ transform: 'translateY(100%)' }, { transform: 'translateY(0)' }], { duration: 280, easing: SHEET_SPRING });
+  scrim?.animate([{ backgroundColor: 'rgba(8, 13, 27, 0)' }, {}], { duration: 240, easing: 'ease-out' });
 }
 
 /** Clear what a slide-out left behind (parked transform / opacity). */
@@ -42,17 +85,21 @@ export function resetSheet(sheet: HTMLElement): void {
 /** Slide a sheet back down (from wherever a drag left it), fade the scrim, then `done`. */
 export function sheetOut(sheet: HTMLElement, scrim: HTMLElement | null | undefined, done: () => void, fromPx?: number): void {
   if (typeof sheet.animate !== 'function') return done();
+  // Reduced motion: gone at once (parked hidden until the owner hides it), no travel, no fade.
+  if (motion.reduced) {
+    sheet.getAnimations().forEach((x) => x.cancel());
+    sheet.style.opacity = '0';
+    if (scrim) scrim.style.opacity = '0';
+    return done();
+  }
   const from = fromPx ?? currentY(sheet);
   const H = sheet.getBoundingClientRect().height || 400;
-  const ms = motion.reduced ? 160 : Math.round(Math.max(140, Math.min(240, 240 * (1 - from / H))));
-  const a = motion.reduced
-    ? sheet.animate([{ opacity: 1 }, { opacity: 0 }], { duration: ms, easing: 'ease-in', fill: 'forwards' })
-    : sheet.animate([{ transform: `translateY(${from}px)` }, { transform: 'translateY(100%)' }], { duration: ms, easing: 'cubic-bezier(0.4, 0, 1, 1)', fill: 'forwards' });
+  const ms = Math.round(Math.max(140, Math.min(240, 240 * (1 - from / H))));
+  const a = sheet.animate([{ transform: `translateY(${from}px)` }, { transform: 'translateY(100%)' }], { duration: ms, easing: 'cubic-bezier(0.4, 0, 1, 1)', fill: 'forwards' });
   scrim?.animate([{ opacity: scrim.style.opacity || 1 }, { opacity: 0 }], { duration: ms, easing: 'ease-in', fill: 'forwards' });
   a.onfinish = () => {
     // Stays parked off-screen until the owner hides it (and sheetIn brings it back): no flash.
-    sheet.style.transform = motion.reduced ? '' : 'translateY(100%)';
-    if (motion.reduced) sheet.style.opacity = '0';
+    sheet.style.transform = 'translateY(100%)';
     a.cancel();
     if (scrim) {
       scrim.getAnimations().forEach((x) => x.cancel());

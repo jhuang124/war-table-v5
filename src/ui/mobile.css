@@ -25,7 +25,7 @@
 /* ------------------------------------------------------------------------ */
 
 .touch .ui-root button { touch-action: manipulation; }
-.touch .ui-root input { font-size: max(16px, 1.0625rem); } /* never an iOS focus zoom */
+.touch .ui-root input { font-size: 1.125rem; } /* never an iOS focus zoom */
 @media (hover: none) {
   /* A tap leaves :hover stuck on iOS: no hover ink from it. */
   .touch .track.is-live:not(.is-disabled) .tr-seg.is-eligible:not(.gold):not(.is-rec):hover { color: var(--ivory-78); }
@@ -46,18 +46,32 @@
   content: ''; position: absolute; inset: -1.2rem -1.6rem; z-index: -1; pointer-events: none;
   background: radial-gradient(closest-side, rgba(11, 18, 36, 0.86), rgba(11, 18, 36, 0.6) 55%, rgba(11, 18, 36, 0));
 }
-.nc-title { font-weight: 600; font-size: 1.375rem; color: var(--ivory); line-height: 1.1; }
-.nc-cont { margin-top: 0.1rem; font-size: 1rem; color: var(--ivory-55); }
+.nc-title { font-weight: 600; font-size: 1.5rem; color: var(--ivory); line-height: 1.1; }
+.nc-cont { margin-top: 0.1rem; font-size: 1.125rem; color: var(--ivory-55); }
 .nc-owner { display: flex; align-items: center; gap: 0.4rem; margin-top: 0.4rem; font-size: 1.125rem; font-weight: 600; color: var(--ivory-90); }
 .nc-emb .emb { width: 0.85rem; height: 0.85rem; }
 .nc-armies { margin-left: auto; padding-left: 0.9rem; color: var(--ivory); white-space: nowrap; }
 .nc-nub { display: none; }
 
+/* Desktop (v4 §7.3): a click on any territory brushes its name in large beside the pointer for one
+   second; the same lines on the paper with the same soft deepening, the name at 40 px. */
+:root:not(.touch) .name-card.desk:not(.hidden) {
+  display: block; position: fixed; z-index: 40; pointer-events: none; min-width: 12rem; max-width: 22rem;
+  padding: 0.55rem 1rem 0.65rem; border: 0; border-radius: 0; background: transparent;
+  text-shadow: 0 0 0.35em rgba(11, 18, 36, 0.9), 0 0 0.12em rgba(11, 18, 36, 0.9);
+}
+:root:not(.touch) .name-card.desk:not(.hidden)::before {
+  content: ''; position: absolute; inset: -1.2rem -1.8rem; z-index: -1; pointer-events: none;
+  background: radial-gradient(closest-side, rgba(11, 18, 36, 0.8), rgba(11, 18, 36, 0.55) 55%, rgba(11, 18, 36, 0));
+}
+.name-card.desk .nc-title { font-size: 2.5rem; font-weight: 500; line-height: 1.05; }
+.name-card.desk .nc-cont, .name-card.desk .nc-owner { font-size: 1.125rem; }
+
 /* Every device: the board's WebGL context was lost and is rebuilding — one serif line on the paper. */
 .board-lost {
   position: absolute; z-index: 95; left: 0; right: 0; top: 50%; margin: -1.4rem auto 0; width: max-content; height: 2.8rem;
   display: flex; align-items: center; padding: 0 1.3rem; border: 0; border-radius: 0; background: transparent;
-  font-size: 1.25rem; font-weight: 500; color: var(--ivory-90);
+  font-size: 1.125rem; font-weight: 500; color: var(--ivory-90);
   text-shadow: 0 0 0.35em rgba(11, 18, 36, 0.9), 0 0 0.12em rgba(11, 18, 36, 0.9); animation: lost-breathe 2.4s ease-in-out infinite alternate;
 }
 @keyframes lost-breathe { from { opacity: 0.65; } to { opacity: 1; } }
@@ -96,7 +110,7 @@
   --top-h: calc(var(--edge-t) + 2.75rem);
   --spring: cubic-bezier(0.3, 1.22, 0.6, 1);
 }
-.form-phone .ui-root { font-size: 1rem; }
+.form-phone .ui-root { font-size: 1.125rem; }
 
 /* ---- Top: compact seat rings (the current seat shows its name) and the ensō menu ---- */
 .form-phone .topstrip { top: var(--edge-t); left: var(--edge-l); right: var(--edge-r); gap: 8px; }
@@ -105,13 +119,13 @@
 .form-phone .sc-ring { width: 2.625rem; height: 2.625rem; }
 .form-phone .sc-terr { font-size: 1.125rem; }
 .form-phone .seat-chip:not(.current) .sc-text { display: none; }
-.form-phone .sc-name { font-size: 1.0625rem; }
+.form-phone .sc-name { font-size: 1.125rem; }
 .form-phone .sc-emb { display: none; }
 .form-phone .sc-by { display: none; }
 .form-phone .sc-pers { display: none; } /* phones: the personality is the chip's title only */
 .form-phone .ts-right { position: relative; gap: 6px; }
 .form-phone .ts-menu { width: 2.75rem; height: 2.75rem; }
-.form-phone .ts-reset { height: 2.75rem; padding: 0 0.6rem; font-size: 1rem; }
+.form-phone .ts-reset { height: 2.75rem; padding: 0 0.6rem; font-size: 0.875rem; }
 .form-phone.portrait .ts-reset { position: absolute; top: calc(100% + 8px); right: 0; }
 .form-phone .hud::before { height: 4.5rem; }
 
@@ -119,7 +133,7 @@
 .form-phone .strip { padding: 0 var(--edge-r) var(--edge-b) var(--edge-l); column-gap: 8px; row-gap: 4px; }
 .form-phone .tr-label { display: none; }
 .form-phone .tr-short { display: inline; }
-.form-phone .st-line { font-size: 1.0625rem; line-height: 1.18; }
+.form-phone .st-line { font-size: 1.125rem; line-height: 1.18; }
 .form-phone .ln-text { white-space: normal; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; text-align: center; }
 .form-phone .ln-text.ln-ghost { width: 100%; }
 .form-phone .st-zone { gap: 6px; }
@@ -127,7 +141,7 @@
 .form-phone .st-buttons .btn { min-width: 4.5rem; padding: 0 0.9rem; font-size: 1.125rem; }
 .form-phone .st-buttons .btn.role-primary { padding: 0 1.25rem; }
 .form-phone .sp-btn { width: 2.75rem; height: 2.75rem; font-size: 1.5rem; }
-.form-phone .sp-n { min-width: 1.9rem; font-size: 1.375rem; }
+.form-phone .sp-n { min-width: 1.9rem; font-size: 1.5rem; }
 .form-phone .stepper-ctl { padding: 0; }
 .form-phone .tr-seg { min-width: 0; padding: 0 0.75rem; }
 .form-phone .count-slider { width: 9rem; gap: 0.2rem; }
@@ -148,11 +162,11 @@
 .form-phone.landscape .st-say { height: auto; align-items: center; min-height: var(--pill-h); }
 .form-phone.landscape .st-line { align-items: center; }
 .form-phone.landscape .track { height: var(--pill-h); gap: 8px; }
-.form-phone.landscape .tr-seg { min-width: 0; padding: 0 12px; font-size: 1.0625rem; }
+.form-phone.landscape .tr-seg { min-width: 0; padding: 0 12px; font-size: 1.125rem; }
 /* The breath line rises just above the dock (the row has no room for two lines). */
 .form-phone.landscape .announce { position: fixed; left: 0; right: 0; bottom: calc(var(--dock-clear, 70px) + 0.35rem); }
-.form-phone.landscape .rb-title { font-size: 1.375rem; }
-.form-phone.landscape .rb-recap { font-size: 1.0625rem; }
+.form-phone.landscape .rb-title { font-size: 1.5rem; }
+.form-phone.landscape .rb-recap { font-size: 1.125rem; }
 .form-phone.landscape .has-say .st-line { opacity: 1; }
 
 /* Portrait (phones, and tablets narrower than the desktop dock): the line, the rule, the track (four
@@ -167,57 +181,57 @@
 .dock-stacked .st-zone { display: flex; min-width: 0; justify-self: stretch; }
 .dock-stacked .st-zone.is-empty { display: none; }
 .dock-stacked .st-buttons { flex: 1 1 auto; min-width: 0; }
-.dock-stacked .st-buttons .btn { height: 3rem; flex: 0 1 auto; font-size: 1.1875rem; }
+.dock-stacked .st-buttons .btn { height: 3rem; flex: 0 1 auto; font-size: 1.125rem; }
 .dock-stacked .st-buttons .btn.role-primary { flex: 1 1 0; }
 .form-phone.dock-stacked .st-buttons .btn[data-id='cards'] { flex: none; }
 .dock-stacked .count-slider { flex: 1 1 8rem; width: auto; min-width: 7rem; }
 .dock-stacked .st-count { flex: 0 1 auto; min-width: 0; }
 .dock-stacked .st-count:has(.count-slider:not(.hidden)) { flex: 1 1 8rem; }
 .dock-stacked .stepper-ctl { height: 3rem; }
-.dock-stacked .rb-title { font-size: 1.375rem; white-space: normal; }
-.dock-stacked .rb-recap { font-size: 1.0625rem; white-space: normal; }
+.dock-stacked .rb-title { font-size: 1.5rem; white-space: normal; }
+.dock-stacked .rb-recap { font-size: 1.125rem; white-space: normal; }
 /* Tablet portrait: the same stack, centred, with full words */
 .form-tablet.dock-stacked .strip { padding-left: max(1.5rem, calc((100vw - 42rem) / 2)); padding-right: max(1.5rem, calc((100vw - 42rem) / 2)); }
-.form-tablet.dock-stacked .tr-seg { font-size: 1.25rem; }
-.form-tablet.dock-stacked .st-line { font-size: 1.3125rem; }
+.form-tablet.dock-stacked .tr-seg { font-size: 1.125rem; }
+.form-tablet.dock-stacked .st-line { font-size: 1.125rem; }
 .form-tablet.dock-stacked .ln-text { white-space: normal; text-align: center; }
 
 /* ---- Dice tray header ---- */
 /* Only with the tray under it; each side's name gives way before its number does. */
 .form-phone .battle { width: calc(100vw - 16px); }
 .form-phone .bt-head { gap: 0.55rem; padding: 0 0.5rem 0.15rem; }
-.form-phone .bt-side { font-size: 1.1875rem; gap: 0.35rem; min-width: 0; max-width: 45%; }
+.form-phone .bt-side { font-size: 1.125rem; gap: 0.35rem; min-width: 0; max-width: 45%; }
 .form-phone .bt-terr { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.form-phone .bt-captured { font-size: 1.1875rem; }
+.form-phone .bt-captured { font-size: 1.125rem; }
 .form-phone .bt-vs { font-size: 1.125rem; flex: none; }
 /* Landscape phones: the board is shortest here, so the header steps down to ~80 % with the dice
    (src/shared/tray.ts) and fewer army counts hide under them mid-roll. */
 .form-phone.landscape .bt-head { gap: 0.45rem; padding-bottom: 0.1rem; }
-.form-phone.landscape .bt-side { font-size: 0.9375rem; gap: 0.28rem; }
-.form-phone.landscape .bt-captured { font-size: 0.9375rem; }
-.form-phone.landscape .bt-vs { font-size: 0.9rem; }
+.form-phone.landscape .bt-side { font-size: 0.875rem; gap: 0.28rem; }
+.form-phone.landscape .bt-captured { font-size: 0.875rem; }
+.form-phone.landscape .bt-vs { font-size: 0.875rem; }
 
 /* ---- The rotate hint (portrait, once): one serif line on the paper, in the dock's line slot ---- */
 .form-phone.portrait .rotate-hint:not(.hidden) {
   display: flex; position: absolute; z-index: 9; left: 0; right: 0; bottom: 0; justify-content: center; align-items: flex-end;
   pointer-events: none;
 }
-.rh-text { font-size: 1.0625rem; line-height: 1.18; font-weight: 500; color: var(--ivory-78); white-space: nowrap; }
+.rh-text { font-size: 1.125rem; line-height: 1.18; font-weight: 500; color: var(--ivory-78); white-space: nowrap; }
 
 /* ---- Bottom sheets: menu, settings, rules, log, confirm, cards, hand-off, colour picker ---- */
 .form-phone .grab { display: flex; flex: none; justify-content: center; align-items: center; height: 1.5rem; margin: 0 -1rem 0.2rem; cursor: grab; }
 .form-phone .grab i { display: block; width: 2.5rem; height: 1px; background: var(--ivory-40); box-shadow: 0 2px 0 var(--ivory-12); }
 
-.form-phone .scrim { place-items: end center; align-content: end; padding: calc(var(--sa-t) + 12px) 0 0; background: rgba(8, 13, 27, 0.45); backdrop-filter: blur(4px); -webkit-backdrop-filter: blur(4px); }
+.form-phone .scrim { place-items: end center; align-content: end; padding: calc(var(--sa-t) + 12px) 0 0; background: rgba(8, 13, 27, 0.45); }
 .form-phone .scrim > .sheet {
   width: 100%; max-width: 100%; max-height: 100%; display: flex; flex-direction: column; overflow: hidden;
-  border: 0; border-top: 1px solid var(--ivory-20); border-radius: 0; background: rgba(16, 26, 48, 0.98);
+  border: 0; border-top: 1px solid var(--ivory-20); border-radius: 0;
   padding: 0.3rem max(1.25rem, var(--sa-r)) calc(var(--sa-b) + 1rem) max(1.25rem, var(--sa-l));
 }
 .form-phone.landscape .scrim > .sheet { max-width: 38rem; padding-left: 1.5rem; padding-right: 1.5rem; padding-bottom: calc(var(--sa-b) + 0.75rem); }
 .form-phone .sheet-head { flex: none; min-height: 2.75rem; margin-bottom: 0.5rem; }
-.form-phone .sheet-title { font-size: 1.625rem; }
-.form-phone .sheet-head .btn { height: 2.75rem; padding: 0 0.75rem; font-size: 1.1875rem; color: var(--ivory-90); }
+.form-phone .sheet-title { font-size: 1.5rem; }
+.form-phone .sheet-head .btn { height: 2.75rem; padding: 0 0.75rem; font-size: 1.125rem; color: var(--ivory-90); }
 .form-phone .menu-list, .form-phone .rules-blocks, .form-phone .settings-cols, .form-phone .log-list {
   min-height: 0; overflow-y: auto; overscroll-behavior: contain; touch-action: pan-y; -webkit-overflow-scrolling: touch; scrollbar-width: none;
 }
@@ -226,13 +240,13 @@
 .form-phone .pause-sheet { width: 100%; padding-top: 0.3rem; }
 .form-phone .pause-head { flex: none; }
 .form-phone .pause-sheet .sheet-title { margin-bottom: 0.4rem; font-size: 1.5rem; }
-.form-phone .menu-item { flex: none; height: 3rem; font-size: 1.375rem; }
-.form-phone .menu-item.quiet { height: 2.9rem; font-size: 1.1875rem; }
+.form-phone .menu-item { flex: none; height: 3rem; font-size: 1.5rem; }
+.form-phone .menu-item.quiet { height: 2.9rem; font-size: 1.125rem; }
 .form-phone .menu-sep { flex: none; margin: 0.35rem auto; }
 .form-phone.landscape .menu-list { display: grid; grid-template-columns: 1fr 1fr; column-gap: 0.5rem; }
 .form-phone.landscape .menu-list > :first-child, .form-phone.landscape .menu-sep { grid-column: 1 / -1; }
 .form-phone.landscape .menu-item { height: 2.75rem; }
-.form-phone.landscape .pause-sheet .sheet-title { margin-bottom: 0.2rem; font-size: 1.3125rem; }
+.form-phone.landscape .pause-sheet .sheet-title { margin-bottom: 0.2rem; font-size: 1.125rem; }
 
 /* Rules */
 .form-phone .rules-blocks { gap: 1.4rem; padding-bottom: 0.5rem; }
@@ -254,20 +268,20 @@
 /* Log */
 .form-phone .log-sheet { height: 100%; }
 .form-phone .log-list { flex: 1 1 auto; margin-right: 0; padding-right: 0; }
-.form-phone .log-line { padding: 0.6rem 0.1rem; font-size: 1.0625rem; }
+.form-phone .log-line { padding: 0.6rem 0.1rem; font-size: 1.125rem; }
 
 /* Confirm: an action sheet (Keep playing nearest the thumb) */
 .form-phone .confirm-box { max-width: 34rem; }
-.form-phone .confirm-text { font-size: 1.3125rem; margin: 0.35rem 0.25rem 1.1rem; }
+.form-phone .confirm-text { font-size: 1.125rem; margin: 0.35rem 0.25rem 1.1rem; }
 .form-phone .confirm-row { flex-direction: column-reverse; gap: 0.5rem; }
-.form-phone .confirm-row .btn { width: 100%; height: 3.25rem; font-size: 1.25rem; }
+.form-phone .confirm-row .btn { width: 100%; height: 3.25rem; font-size: 1.125rem; }
 .form-phone .confirm-row .btn.role-primary { height: 3.75rem; }
 
 /* Cards: a sheet over the dock, with a scrim */
 .form-phone .cards-scrim:not(.hidden) { display: block; position: absolute; inset: 0; z-index: 19; pointer-events: auto; background: rgba(8, 13, 27, 0.45); }
 .form-phone .cards-sheet {
   left: 0; right: 0; bottom: 0; width: 100%; max-width: 36rem; margin: 0 auto;
-  border: 0; border-top: 1px solid var(--ivory-20); border-radius: 0; background: rgba(16, 26, 48, 0.98);
+  border: 0; border-top: 1px solid var(--ivory-20); border-radius: 0;
   padding: 0.3rem max(1.25rem, var(--sa-r)) calc(var(--sa-b) + 1rem) max(1.25rem, var(--sa-l)); gap: 0.75rem;
 }
 .form-phone .cs-head .icon-btn { width: 2.75rem; height: 2.75rem; }
@@ -284,11 +298,11 @@
 }
 .form-phone .ho-box .grab { align-self: stretch; }
 .form-phone .ho-emb { width: 4.5rem; height: 4.5rem; }
-.form-phone .ho-title { font-size: 2.375rem; }
-.form-phone .ho-sub { font-size: 1.1875rem; margin-bottom: 0.35rem; }
-.form-phone .ho-box .btn.big { width: 100%; height: 3.75rem; font-size: 1.3125rem; }
+.form-phone .ho-title { font-size: 2.5rem; }
+.form-phone .ho-sub { font-size: 1.125rem; margin-bottom: 0.35rem; }
+.form-phone .ho-box .btn.big { width: 100%; height: 3.75rem; font-size: 1.125rem; }
 .form-phone.landscape .ho-box { gap: 0.35rem; padding-bottom: calc(var(--sa-b) + 0.8rem); }
-.form-phone.landscape .ho-title { font-size: 1.875rem; }
+.form-phone.landscape .ho-title { font-size: 1.5rem; }
 .form-phone.landscape .ho-emb { width: 3rem; height: 3rem; margin-bottom: 0; }
 .form-phone.landscape .ho-box .btn.big { height: 3.25rem; }
 
@@ -311,7 +325,7 @@
 .form-phone.landscape .title-menu { margin-top: 1.1rem; flex-direction: row; flex-wrap: wrap; justify-content: center; align-items: center; gap: 0.35rem 0.75rem; }
 .form-phone.landscape .title-item.gold { margin-bottom: 0; min-width: 12rem; height: 3.5rem; }
 .form-phone.landscape .title-item.continue.gold { height: auto; padding: 0.9rem 2rem 0.95rem; }
-.form-phone.landscape .title-item { font-size: 1.3125rem; }
+.form-phone.landscape .title-item { font-size: 1.125rem; }
 
 /* ---- New game: one column, sticky Start ---- */
 .form-phone .newgame-screen { padding: 0; place-items: stretch; background: var(--paper); }
@@ -345,11 +359,11 @@
 .form-phone .map-picker { grid-auto-flow: row; gap: 0.6rem; }
 .form-phone .map-opt { grid-template-columns: 7rem minmax(0, 1fr); gap: 0.75rem; }
 .form-phone .map-thumb { width: 7rem; }
-.form-phone .map-name { font-size: 1.1875rem; }
+.form-phone .map-name { font-size: 1.125rem; }
 .form-phone .add-seat { height: 2.75rem; margin-top: 0.1rem; }
 .form-phone .seg-cards { gap: 1rem; }
-.form-phone .seg-cards .seg-label { font-size: 1.1875rem; }
-.form-phone .seg-cards .seg-detail, .form-phone .seg-cards .seg-meta { font-size: 0.9375rem; }
+.form-phone .seg-cards .seg-label { font-size: 1.125rem; }
+.form-phone .seg-cards .seg-detail, .form-phone .seg-cards .seg-meta { font-size: 0.875rem; }
 .form-phone .house-toggle { min-height: 2.75rem; }
 .form-phone .house-grid { grid-template-columns: minmax(0, 1fr); gap: 0.9rem; }
 .form-phone .seed-input { max-width: none; height: 2.75rem; }
@@ -358,8 +372,8 @@
   flex-direction: column; align-items: stretch; gap: 0.55rem; border-top: 1px solid var(--ivory-12); background: var(--paper);
 }
 .form-phone .ng-sum { align-items: center; text-align: center; }
-.form-phone .ng-summary { font-size: 1.0625rem; color: var(--ivory-70); }
-.form-phone .ng-foot .btn.big { width: 100%; min-width: 0; height: 3.25rem; font-size: 1.3125rem; }
+.form-phone .ng-summary { font-size: 1.125rem; color: var(--ivory-70); }
+.form-phone .ng-foot .btn.big { width: 100%; min-width: 0; height: 3.25rem; font-size: 1.125rem; }
 /* Landscape: one-line seat rows fit; the footer is one row */
 .form-phone.landscape .seat-row { grid-template-columns: 2.9rem minmax(6rem, 1fr) auto minmax(0, 13rem) 2.75rem; grid-template-areas: 'emb name kind diff rm' '. pers pers pers pers'; padding: 0.25rem 0; }
 .form-phone.landscape .map-picker { grid-auto-flow: column; }
@@ -387,7 +401,7 @@
 .form-phone .sw-sheet .swatch { width: 3.5rem; height: 3.5rem; margin-bottom: 1.7rem; }
 .form-phone .sw-sheet .swatch .emb { width: 1.2rem; height: 1.2rem; }
 .form-phone .sw-sheet .swatch.on::after { bottom: -1.95rem; }
-.form-phone .sw-name { display: block; position: absolute; top: calc(100% + 0.3rem); left: 50%; transform: translateX(-50%); font-size: 1rem; color: var(--ivory-55); white-space: nowrap; }
+.form-phone .sw-name { display: block; position: absolute; top: calc(100% + 0.3rem); left: 50%; transform: translateX(-50%); font-size: 0.875rem; color: var(--ivory-55); white-space: nowrap; }
 .form-phone .swatch.on .sw-name { color: var(--ivory); }
 
 /* ---- Victory: the scroll full width, sticky Rematch ---- */
@@ -397,20 +411,20 @@
   padding: calc(var(--sa-t) + 1.5rem) max(1.1rem, var(--sa-r)) 0 max(1.1rem, var(--sa-l));
 }
 .form-phone .v-enso { width: 4.5rem; height: 4.5rem; margin-bottom: 0.3rem; }
-.form-phone .v-title { font-size: 2.1rem; }
+.form-phone .v-title { font-size: 2.5rem; }
 .form-phone .v-sub { font-size: 1.125rem; }
 .form-phone .aw-line { font-size: 1.125rem; }
 .form-phone .tl-row { grid-template-columns: 5.25rem minmax(0, 1fr) 3.5rem; gap: 0.6rem; }
-.form-phone .tl-name { font-size: 1.0625rem; }
+.form-phone .tl-name { font-size: 1.125rem; }
 .form-phone .tl-name .emb { display: none; }
-.form-phone .tl-val { font-size: 1.0625rem; }
+.form-phone .tl-val { font-size: 1.125rem; }
 .form-phone .tl-when { display: none; }
 .form-phone .tl-rounds { margin: 0.2rem 4.1rem 0 5.85rem; }
 .form-phone .v-stats { touch-action: pan-x pan-y; }
-.form-phone .stats-table { font-size: 1rem; }
+.form-phone .stats-table { font-size: 0.875rem; }
 .form-phone .stats-table .sx-label { width: 7.75rem; }
 .form-phone .stats-table th, .form-phone .stats-table td { padding: 0.4rem 0.3rem; }
-.form-phone .stats-table .sx-seat { font-size: 0.9375rem; }
+.form-phone .stats-table .sx-seat { font-size: 0.875rem; }
 .form-phone .stats-table:not(.many) .sx-seat .emb { display: none; }
 .form-phone .stats-table.many .sx-name { display: none; }
 .form-phone .stats-table.many .sx-seat .emb { width: 0.85rem; height: 0.85rem; margin: 0; }
@@ -424,7 +438,7 @@
 .form-phone.landscape .v-scroll { padding-top: calc(var(--sa-t) + 1rem); padding-left: max(1.5rem, calc(var(--sa-l) - 8px)); padding-right: max(1.5rem, calc(var(--sa-r) - 8px)); }
 .form-phone.landscape .v-head { flex-direction: row; flex-wrap: wrap; justify-content: center; column-gap: 1rem; }
 .form-phone.landscape .v-enso { width: 3.25rem; height: 3.25rem; margin: 0; }
-.form-phone.landscape .v-title { font-size: 1.875rem; }
+.form-phone.landscape .v-title { font-size: 1.5rem; }
 .form-phone.landscape .v-sub { flex-basis: 100%; }
 .form-phone.landscape .v-actions { grid-template-columns: 2fr 1fr 1fr 1fr; padding-top: 0.9rem; }
 .form-phone.landscape .v-actions > [data-testid='rematch'] { grid-column: auto; height: 2.875rem; }
@@ -434,9 +448,22 @@
 
 /* v3 table cues on phones: a narrower cup slot, the event line only (no ledger lines), no round label in the say row */
 .form-phone .seat-chip { --cup-slot: 1.75rem; }
-.form-phone .ts-cup .cup-body { width: 1.55rem; height: 1.75rem; }
-.form-phone .sc-marks { height: 0.7rem; font-size: 0.75rem; }
+/* Only the seat holding the cup makes room for it (its name shows too): four seats and the ensō fit 390 px. */
+.form-phone .seat-chip:not(.current) { --cup-slot: 0.2rem; }
+.form-phone .ts-cup .cup-body { right: -0.2rem; bottom: -0.45rem; width: 2.35rem; height: 2.7rem; }
+.form-phone .sc-marks { height: 0.7rem; font-size: 0.875rem; }
 .form-phone .sc-cards svg { display: none; }
-.form-phone .st-events .ev-line.prev { display: none; }
-.form-phone .st-events .ev-line { font-size: 0.8125rem; }
 .form-phone .st-round { display: none; }
+
+/* ---- v4: the receipt on phones is a bottom sheet in the same hand (paper, top hairline, square) ---- */
+.form-phone .receipt { place-items: end center; align-content: end; padding: calc(var(--sa-t) + 12px) 0 0; }
+.form-phone .receipt-sheet {
+  width: 100%; max-width: 100%; max-height: 100%; overflow: hidden;
+  padding: 0.3rem max(1.25rem, var(--sa-r)) calc(var(--sa-b) + 1.1rem) max(1.25rem, var(--sa-l));
+}
+.form-phone.landscape .receipt-sheet { max-width: 38rem; }
+.form-phone .rc-title { font-size: 1.5rem; margin-bottom: 0.7rem; }
+.form-phone .rc-line { font-size: 1.125rem; }
+.form-phone .rc-summary { font-size: 1.125rem; }
+/* The Continue thumbnail is a desktop detail: the phone's ring words fill the width. */
+.form-phone .cont-thumb { display: none; }
