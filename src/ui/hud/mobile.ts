@@ -4,10 +4,17 @@
 //   NameCard   — the long-press lines above the finger: territory, continent + bonus, owner, armies,
 //                serif words on the paper with a soft deepening behind them (no box, INK2 §3.3).
 //                Driven by the board's long-press callback through GameVM.nameCard; releasing hides it.
+//                v4 §7.3 (desktop, a click on any territory): the same lines with the name large, brushed
+//                in beside the pointer, held one second, then drying out on their own.
 
 import type { NameCardVM } from '../../game/viewModel';
 import { PLAYER_COLORS } from '../../shared/palette';
 import { animateIn, animateOut, drawIn, EASE_IN_QUAD, emblem, h, motion, setStyle, setText, toggle } from '../dom';
+import { layout } from '../layout';
+
+/** Desktop: the name card holds this long after a click, then dries (v4 §7.3: "one second"). */
+const DESK_HOLD_MS = 1000;
+const DESK_DRY_MS = 360;
 
 const ROTATE_KEY = 'risk3d.rotateHint.v1';
 
@@ -120,6 +127,8 @@ export class NameCard {
   private emb: HTMLSpanElement;
   private armies: HTMLSpanElement;
   private key = -1;
+  private deskT = 0;
+  private deskUntil = 0;
 
   constructor() {
     this.el = h('div', 'name-card hidden');
@@ -134,8 +143,27 @@ export class NameCard {
     this.el.append(this.title, this.cont, this.owner, h('i', 'nc-nub'));
   }
 
+  /** Desktop: the card dries out by itself after its second (the controller's clear never cuts it short). */
+  private dryDesk(): void {
+    window.clearTimeout(this.deskT);
+    this.deskUntil = 0;
+    if (this.key === -1) return;
+    this.key = -1;
+    delete this.el.dataset.testid;
+    if (motion.reduced) return void this.el.classList.add('hidden');
+    const a = this.el.animate([{ opacity: 1 }, { opacity: 0 }], { duration: DESK_DRY_MS, easing: EASE_IN_QUAD, fill: 'forwards' });
+    a.onfinish = () => {
+      if (this.key === -1) this.el.classList.add('hidden');
+      a.cancel();
+    };
+  }
+
   update(vm: NameCardVM | null | undefined): void {
+    const desk = !layout.touch;
+    toggle(this.el, 'desk', desk);
+    if (desk && !vm && performance.now() < this.deskUntil) return;
     if (!vm) {
+      if (desk) return this.dryDesk();
       if (this.key !== -1) {
         this.key = -1;
         delete this.el.dataset.testid;
@@ -187,6 +215,13 @@ export class NameCard {
     this.el.style.top = `${Math.round(y)}px`;
     setStyle(this.el, '--nub-x', `${Math.round(vm.x - left)}px`);
     const below = mode === 'below';
-    if (fresh) animateIn(this.el, { dy: below ? -6 : 6, ms: 150, scale: 0.96 });
+    if (fresh && desk) {
+      // Brushed in large, held one second, then dried out.
+      this.el.getAnimations().forEach((a) => a.cancel());
+      drawIn(this.title, 260);
+      window.clearTimeout(this.deskT);
+      this.deskUntil = performance.now() + DESK_HOLD_MS;
+      this.deskT = window.setTimeout(() => this.dryDesk(), DESK_HOLD_MS);
+    } else if (fresh) animateIn(this.el, { dy: below ? -6 : 6, ms: 150, scale: 0.96 });
   }
 }

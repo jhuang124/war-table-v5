@@ -18,7 +18,8 @@ import type {
   ViewModel,
   VictoryVM,
 } from '../../game/viewModel';
-import type { PlayerStats, TimelinePoint } from '../../engine/types';
+import type { PlayerColorId, PlayerStats, TerritoryId, TimelinePoint } from '../../engine/types';
+import { BOARD } from '../../map';
 
 export const JOHN: SeatRef = { id: 0, name: 'John', color: 'crimson', kind: 'human' };
 export const COBALT: SeatRef = { id: 1, name: 'Slate', color: 'cobalt', kind: 'ai' };
@@ -298,7 +299,11 @@ export function fixtures(_W: number, _H: number): Fixture[] {
   // Screens
   add('boot', 'Screens', 'Boot', root({ screen: 'boot', game: null }));
   add('title', 'Screens', 'Title, no save', root({ screen: 'title', game: null }));
-  add('title-save', 'Screens', 'Title with a save', root({ screen: 'title', game: null, save: { summary: 'Round 7 · John vs 3 AI' } }));
+  // The Continue thumbnail (v4 §7.13): a board as it was left, coloured by longitude bands, then mixed.
+  const owners: Partial<Record<TerritoryId, PlayerColorId>> = {};
+  const cols: PlayerColorId[] = ['crimson', 'cobalt', 'amber', 'emerald'];
+  Object.entries(BOARD.territories).forEach(([id, t], i) => (owners[id as TerritoryId] = cols[(Math.floor((t.anchor[0] / BOARD.width) * 4) + (i % 5 === 0 ? 1 : 0)) % 4]));
+  add('title-save', 'Screens', 'Title with a save', root({ screen: 'title', game: null, save: { summary: 'Round 7 · John vs 3 AI', sketch: { owners } } }));
   add('newgame-2', 'Screens', 'New game, 2 seats', root({ screen: 'newGame', game: null, newGame: NEW_GAME }));
   add('newgame-4', 'Screens', 'New game, 4 seats', root({ screen: 'newGame', game: null, newGame: { ...NEW_GAME_4, setup: 'placeOwn', summary: 'Territories dealt at random · you place your own armies · first to 30 territories wins' } }));
   add('newgame-problems', 'Screens', 'New game, problems', root({ screen: 'newGame', game: null, newGame: NEW_GAME_PROBLEMS }));
@@ -347,6 +352,21 @@ export function fixtures(_W: number, _H: number): Fixture[] {
   add('ai-turn', 'Watching', 'AI turn · narration', game({ strip: STRIPS['ai-turn'], seats: chips(1), cards: null, battle: { attacker: { seat: COBALT, territory: 'India', armies: 9 }, defender: { seat: AMBER, territory: 'Siam', armies: 3 }, rolling: true, captured: null, tray: true } }), { dice: [[5, 5, 1], [2, 1]] });
   add('humans-out', 'Watching', 'All humans out', game({ strip: STRIPS['humans-out'], seats: chips(2, { 0: { eliminated: true, territories: 0, out: { by: AMBER, round: 11 } } }), cards: null }));
   add('handoff', 'Watching', 'Hand-off cover', game({ strip: STRIPS.handoff, handoff: { seat: SAM, subline: '+9 armies waiting · 3 cards · set ready' }, cards: null }));
+
+  // The receipt (v4 A3): 'While you were away', after three AI turns
+  const RECEIPT: NonNullable<GameVM['receipt']> = {
+    key: 1,
+    title: 'While you were away',
+    lines: [
+      { seat: COBALT, text: 'Slate took Ural and Siberia from you · now 12 territories, 31 armies', territories: ['ural', 'siberia'], stings: true },
+      { seat: AMBER, text: 'Ochre took Brazil from Sage · now 9 territories, 24 armies', territories: ['brazil'], stings: false },
+      { seat: EMERALD, text: 'Sage placed 4 on Argentina and held its ground', territories: ['argentina'], stings: false },
+    ],
+    summary: 'You lost 2 territories · you hold 13',
+  };
+  add('receipt', 'Watching', 'Receipt · while you were away', game({ receipt: RECEIPT, seats: chips(0), cards: null }));
+  add('receipt-calm', 'Watching', 'Receipt · nothing lost', game({ receipt: { ...RECEIPT, key: 2, title: 'Since your last turn', lines: RECEIPT.lines.slice(1), summary: 'You hold 15 territories' }, seats: chips(0), cards: null }));
+  add('receipt-reduced', 'Watching', 'Receipt · reduced motion', game({ receipt: { ...RECEIPT, key: 3 }, seats: chips(0), cards: null }, { reducedMotion: true, settings: { ...SETTINGS, reduceMotion: true } }));
 
   // Banners
   add('turn-banner', 'Banners', 'Turn banner', game({ banner: banner({}) }));

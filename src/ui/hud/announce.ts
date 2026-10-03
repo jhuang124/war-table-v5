@@ -1,7 +1,7 @@
 // The one banner slot (docs/INK.md B2.6, A5): no banners any more, one serif line brushed onto the
 // paper where the strip's line sits, just above the gold rule. It is drawn in, holds, and dries; it
 // never takes input and never makes anyone wait (a press anywhere on the UI dismisses a turn line).
-//   turn          'John · 3 armies', with the grudge under it for a human: 'Sam took Ural and Siberia from you'
+//   turn          'John · 3 armies' (v4: the grudge is the receipt's now, never a second line here)
 //   continent     'John holds Asia · +7'
 //   elimination   'Sam · taken by John · round 9' (the epitaph)
 // While it shows, the strip's own line steps aside (root class `has-say`). The controller owns timing.
@@ -106,7 +106,9 @@ export class Announcements {
     if (cut) t.append(h('span', 'rb-name', text.slice(0, cut)), document.createTextNode(text.slice(cut)));
     else t.textContent = text;
     el.append(t);
-    if (b.recap) el.append(h('div', 'rb-recap num', minus(b.recap)));
+    // v4 Q4: one line above the rule. The grudge (`recap`) is the receipt's to tell now ('While you were
+    // away'), so it is never a second line under the turn line; screen readers still hear it.
+    if (b.recap) el.append(h('span', 'sr-only', ` ${minus(b.recap)}`));
     return el;
   }
 }

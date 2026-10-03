@@ -31,6 +31,8 @@ import { VictoryScreen } from './screens/victory';
 import { effectiveUiScale, isFitted } from './uiScale';
 import { installLayout, layout, onLayout } from './layout';
 import { NameCard, RotatePill } from './hud/mobile';
+import { Receipt } from './hud/receipt';
+import { resetSheet, sheetDrop, sheetLift } from './sheet';
 
 /**
  * Dice-tray band, just above the bottom strip. The renderer centres its tray in the band
@@ -88,6 +90,10 @@ export function uiDebug() {
 export const mountUi: MountUi = (host, api) => {
   const boot = host.querySelector('#boot-splash') as HTMLElement | null;
   const root = h('div', 'ui-root');
+  // The sheets' paper is the board's own paper fibre (public/tex), resolved against the build's base.
+  // Absolute: a relative url() inside a custom property resolves against the stylesheet that uses it
+  // (assets/…css in a build), not the page.
+  root.style.setProperty('--paper-tex', `url("${new URL(`${import.meta.env.BASE_URL}tex/paper-512.webp`, document.baseURI).href}")`);
   host.append(root);
   const send = (i: UiIntent) => api.intent(i);
 
@@ -132,7 +138,7 @@ export const mountUi: MountUi = (host, api) => {
   // a hand-off, a sheet or a moved view, and never once the game is decided.
   const hintQuiet = (v: ViewModel) => {
     const g = v.game;
-    return v.screen === 'game' && !v.overlay && !!g && !g.banner && !g.handoff && !g.confirm && !g.viewMoved && !g.battle && !g.cards?.open && g.strip.track.live && !worldHolder(g);
+    return v.screen === 'game' && !v.overlay && !!g && !g.banner && !g.receipt && !g.handoff && !g.confirm && !g.viewMoved && !g.battle && !g.cards?.open && g.strip.track.live && !worldHolder(g);
   };
   installLayout();
 
@@ -142,11 +148,13 @@ export const mountUi: MountUi = (host, api) => {
   const handoff = new Handoff(send);
   const overlays = new Overlays(send);
   const confirm = new Confirm(send);
+  // "While you were away" (v4 A3): a paper sheet on the board over the HUD (and over a hand-off cover).
+  const receipt = new Receipt(send);
   // A lost WebGL context (mobile GPUs drop it under memory pressure): a quiet pill while the board rebuilds.
   const lost = h('div', 'board-lost hidden', 'Reloading the board…');
   lost.setAttribute('role', 'status');
   lost.dataset.testid = 'board-lost';
-  root.append(hud, title.el, newGame.el, victory.el, handoff.el, overlays.el, confirm.el, lost);
+  root.append(hud, title.el, newGame.el, victory.el, handoff.el, receipt.el, overlays.el, confirm.el, lost);
   current = { newGame, victory };
 
   const screens: Partial<Record<Screen, HTMLElement>> = { title: title.el, newGame: newGame.el, victory: victory.el };
@@ -178,6 +186,12 @@ export const mountUi: MountUi = (host, api) => {
       inEl.getAnimations().forEach((a) => a.cancel());
       inEl.classList.remove('off', 'leaving');
       if (!motion.reduced && prev) inEl.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 320, delay: 80, easing: 'cubic-bezier(0.2, 0.9, 0.2, 1)', fill: 'backwards' });
+    }
+    // New game is a sheet of paper laid on the board from the top edge, and lifted off it again (v4 E8).
+    const ng = newGame.el.querySelector<HTMLElement>('.ng-sheet');
+    if (ng && layout.form !== 'phone') {
+      if (next === 'newGame' && prev && prev !== 'boot') sheetDrop(ng);
+      else if (prev === 'newGame') sheetLift(ng, null, () => resetSheet(ng));
     }
     if (next === 'newGame') requestAnimationFrame(() => screen === 'newGame' && !vm?.overlay && newGame.focusFirstName());
     if (next !== 'boot' && boot) {
@@ -387,8 +401,10 @@ export const mountUi: MountUi = (host, api) => {
       syncSay();
       cards.update(g.cards);
       handoff.update(g.handoff);
+      receipt.update(next.screen === 'game' ? g.receipt : null);
       confirm.update(g.confirm);
     } else if (!g && prev?.game) {
+      receipt.update(null);
       battle.update(null);
       announce.update(null);
       cards.update(null);
@@ -482,6 +498,8 @@ export const mountUi: MountUi = (host, api) => {
       return;
     }
     if (v.screen === 'game') {
+      // The receipt: any key puts it away (and does nothing else).
+      if (receipt.open && !['Shift', 'Control', 'Alt', 'Meta', 'Tab', 'CapsLock'].includes(e.key)) return void (stop(), receipt.dismiss());
       if (g?.handoff && (e.key === 'Enter' || e.key === ' ')) (stop(), send({ type: 'handoffAccept' }));
       else if (focusedCtl && (e.key === 'Enter' || e.key === ' ')) e.stopPropagation();
       return;

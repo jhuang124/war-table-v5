@@ -10,6 +10,8 @@ import type { UiIntent, VictoryVM } from '../../game/viewModel';
 import { PLAYER_COLORS } from '../../shared/palette';
 import { uiButton } from '../controls';
 import { drawEnso, drawIn, EASE_BRUSH, emblem, ensoEl, h, hashSeed, minus, motion, setEnso, setStyle, svg, toggle } from '../dom';
+import { isPhone } from '../layout';
+import { sheetDrop, sheetIn } from '../sheet';
 
 type Send = (i: UiIntent) => void;
 
@@ -254,12 +256,12 @@ export class VictoryScreen {
     this.scroll.scrollTop = 0;
     this.el.scrollTop = 0;
 
-    // The scroll rises (a fade: nothing slides), the ensō draws itself, the words are brushed on after it.
+    // The recap is a sheet of paper laid on the board (v4 E8): it comes down from the top edge (phones:
+    // it rises), the ensō draws itself, the words are brushed on after it.
     this.chart.render(vm, !motion.reduced);
-    if (!motion.reduced) {
-      this.el.querySelector('.v-scrim')!.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 600, easing: 'ease-out' });
-      this.scroll.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 400, easing: EASE_BRUSH });
-    }
+    if (!motion.reduced) this.el.querySelector('.v-scrim')!.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 600, easing: 'ease-out' });
+    if (isPhone()) sheetIn(this.scroll);
+    else sheetDrop(this.scroll, null, 480);
     drawEnso(this.mark, 900, 120);
     drawIn(this.title, 360, 420);
     drawIn(this.sub, 280, 620);

@@ -1,9 +1,13 @@
 // The dice cup (_claude/v3/PLAN.md §2 "the cup = the turn"): a turned-wood cup, an OBJECT on the paper, not
-// UI. It sits beside the current seat's ring in the seat strip with a contact shadow, at the ring's scale;
-// when the turn passes it slides along the strip to the next seat (400 ms); when that seat rolls it tips
-// and a few dice pour out toward the ink ring on the board (the board's own dice take over as they land),
-// then it rights itself. On the hand-off cover it is drawn lacquered in the next seat's colour.
-// Wood, never gold: the one gold stays the UI's (docs/INK.md B2.1).
+// UI. It sits beside the current seat's ring in the seat strip and is the largest mark there (v4 §6: the
+// turn token is found first); when the turn passes it slides along the strip to the next seat (400 ms);
+// when that seat rolls it tips and a few dice pour out toward the ink ring on the board (the board's own
+// dice take over as they land), then it rights itself. On the hand-off cover it is painted in the next
+// seat's colour.
+// v4 (PLAN E1, sitting Q8/Q11): PAINTED, never lit. Three flat tones of wood (the lamp-side band, the body,
+// the shadow-side band), an ink edge round the silhouette and the rim, and the one lamp's painted shadow
+// falling lower right on the paper. No gradients, no highlights. Wood, never gold: the one gold stays the
+// UI's (docs/INK.md B2.1).
 import { PLAYER_COLORS } from '../../shared/palette';
 import type { PlayerColorId } from '../../engine/types';
 import { EASE_BRUSH, h, motion } from '../dom';
@@ -13,12 +17,12 @@ const hex = (s: string) => [1, 3, 5].map((i) => parseInt(s.slice(i, i + 2), 16))
 const rgb = (c: number[]) => `rgb(${c.map((v) => Math.round(Math.max(0, Math.min(255, v)))).join(',')})`;
 const mix = (a: number[], b: number[], t: number) => a.map((v, i) => v + (b[i] - v) * t);
 
-/** Turned wood: dark grain at the edges, the lathe's light down the left, a darker right. */
-const WOOD = { edge: [58, 38, 25], light: [150, 104, 68], mid: [112, 76, 48], dark: [70, 46, 30], lip: [160, 116, 80], inside: [24, 15, 10] };
+/** Turned wood in three flat tones, its rim, the dark mouth and the ink of its edge. */
+const WOOD = { lit: [150, 106, 70], body: [116, 80, 52], shade: [80, 54, 35], rim: [164, 120, 82], mouth: [26, 17, 11], edge: [22, 14, 9] };
 
 /**
- * The cup as an inline SVG (viewBox 32 × 38: the cup, a little from above, and its contact shadow).
- * `tint`: lacquered in a seat's colour (the hand-off cover) over the wood.
+ * The cup as an inline SVG (viewBox 40 × 46: the cup, a little from above, and its painted shadow).
+ * `tint`: painted in a seat's colour (the hand-off cover) over the wood.
  */
 export function cupSvg(tint?: PlayerColorId | null, cls = 'cup-svg'): string {
   const id = `cup${gid++}`;
@@ -27,44 +31,34 @@ export function cupSvg(tint?: PlayerColorId | null, cls = 'cup-svg'): string {
     const t = hex(PLAYER_COLORS[tint].base);
     const k = 0.72;
     w = {
-      edge: mix(WOOD.edge, t.map((v) => v * 0.35), k),
-      light: mix(WOOD.light, t.map((v) => Math.min(255, v * 1.15)), k),
-      mid: mix(WOOD.mid, t, k),
-      dark: mix(WOOD.dark, t.map((v) => v * 0.6), k),
-      lip: mix(WOOD.lip, t.map((v) => Math.min(255, v * 1.25)), k),
-      inside: WOOD.inside,
+      lit: mix(WOOD.lit, t.map((v) => Math.min(255, v * 1.18)), k),
+      body: mix(WOOD.body, t, k),
+      shade: mix(WOOD.shade, t.map((v) => v * 0.66), k),
+      rim: mix(WOOD.rim, t.map((v) => Math.min(255, v * 1.3)), k),
+      mouth: WOOD.mouth,
+      edge: mix(WOOD.edge, t.map((v) => v * 0.3), 0.5),
     };
   }
+  // The silhouette: the rolled rim's outer edge, the tapering body, the foot.
+  const body = 'M9.6 9.4 L8.1 36.4 L7.2 36.6 L7.0 39.0 Q20 42.6 33.0 39.0 L32.8 36.6 L31.9 36.4 L30.4 9.4 Z';
   return (
-    `<svg class="${cls}" viewBox="0 1.5 32 36" aria-hidden="true">` +
-    `<defs>` +
-    `<linearGradient id="${id}b" x1="0" x2="1" y1="0" y2="0">` +
-    `<stop offset="0" stop-color="${rgb(w.edge)}"/><stop offset="0.22" stop-color="${rgb(w.light)}"/>` +
-    `<stop offset="0.55" stop-color="${rgb(w.mid)}"/><stop offset="1" stop-color="${rgb(w.edge)}"/></linearGradient>` +
-    `<linearGradient id="${id}l" x1="0" x2="1" y1="0" y2="0">` +
-    `<stop offset="0" stop-color="${rgb(w.dark)}"/><stop offset="0.3" stop-color="${rgb(w.lip)}"/><stop offset="1" stop-color="${rgb(w.dark)}"/></linearGradient>` +
-    `<filter id="${id}s" x="-30%" y="-100%" width="160%" height="300%"><feGaussianBlur stdDeviation="1.3"/></filter>` +
-    `</defs>` +
-    // the contact shadow on the paper, falling a little to the lower right
-    `<ellipse cx="17.4" cy="34.4" rx="11.6" ry="2.6" fill="rgba(3,5,12,0.62)" filter="url(#${id}s)"/>` +
-    // the foot: a turned ring a little wider than the body
-    `<path d="M5.6 30.4 L26.4 30.4 L26.6 32.2 Q16 35.2 5.4 32.2 Z" fill="url(#${id}b)"/>` +
-    `<path d="M5.5 30.5 Q16 33.2 26.5 30.5" fill="none" stroke="${rgb(w.dark)}" stroke-width="0.8" opacity="0.8"/>` +
-    // the body: a turned cup, tapering a touch toward the mouth (a dice cup, never a bucket)
-    `<path d="M8.0 7.4 L6.4 30.6 Q16 33.4 25.6 30.6 L24.0 7.4 Z" fill="url(#${id}b)"/>` +
-    // turned beads round the body (they follow the curve of the base)
-    `<path d="M7.6 12.2 Q16 14.6 24.4 12.2" fill="none" stroke="${rgb(w.dark)}" stroke-width="0.9" opacity="0.75"/>` +
-    `<path d="M7.55 13.2 Q16 15.6 24.45 13.2" fill="none" stroke="${rgb(w.light)}" stroke-width="0.55" opacity="0.5"/>` +
-    `<path d="M6.8 25.4 Q16 28.0 25.2 25.4" fill="none" stroke="${rgb(w.dark)}" stroke-width="0.9" opacity="0.7"/>` +
-    `<path d="M6.75 26.4 Q16 29.0 25.25 26.4" fill="none" stroke="${rgb(w.light)}" stroke-width="0.5" opacity="0.4"/>` +
-    // a few grain streaks
-    `<path d="M11.4 9 Q11.2 20 11.0 31" fill="none" stroke="${rgb(w.dark)}" stroke-width="0.35" opacity="0.4"/>` +
-    `<path d="M19.6 9 Q19.9 21 20.4 31.5" fill="none" stroke="${rgb(w.dark)}" stroke-width="0.35" opacity="0.35"/>` +
-    // the turned lip: a rolled rim overhanging the body, its underside in shadow, then the dark mouth
-    `<ellipse cx="16" cy="7.9" rx="9.6" ry="3.0" fill="${rgb(w.dark)}"/>` +
-    `<ellipse cx="16" cy="7.0" rx="9.9" ry="3.0" fill="url(#${id}l)"/>` +
-    `<ellipse cx="16" cy="7.2" rx="7.6" ry="2.0" fill="${rgb(w.inside)}"/>` +
-    `<path d="M8.9 6.6 Q16 4.6 23.1 6.6" fill="none" stroke="${rgb(w.dark)}" stroke-width="0.4" opacity="0.6"/>` +
+    `<svg class="${cls}" viewBox="0 0 40 46" aria-hidden="true">` +
+    `<defs><filter id="${id}s" x="-20%" y="-20%" width="140%" height="140%"><feGaussianBlur stdDeviation="0.9"/></filter></defs>` +
+    // the one lamp (upper left): the shadow falls lower right, a darker wash of the paper, soft-edged
+    `<g filter="url(#${id}s)" fill="rgba(3,5,12,0.5)"><path d="${body}" transform="translate(3.2 2.2)"/><ellipse cx="23.4" cy="41.6" rx="13.6" ry="2.6"/></g>` +
+    // three flat tones: the body, the lamp-side band, the shadow-side band
+    `<path d="${body}" fill="${rgb(w.body)}"/>` +
+    `<path d="M9.6 9.4 L8.1 36.4 L7.2 36.6 L7.0 39.0 Q10.8 40.2 14.6 40.8 L15.2 10.2 Z" fill="${rgb(w.lit)}"/>` +
+    `<path d="M26.0 10.0 L27.0 40.6 Q30.2 40.0 33.0 39.0 L32.8 36.6 L31.9 36.4 L30.4 9.4 Z" fill="${rgb(w.shade)}"/>` +
+    // the foot's lip and two turned beads, as ink lines following the curve
+    `<path d="M7.6 36.6 Q20 39.8 32.4 36.6" fill="none" stroke="${rgb(w.edge)}" stroke-width="0.8" opacity="0.75"/>` +
+    `<path d="M9.3 15.0 Q20 17.8 30.7 15.0" fill="none" stroke="${rgb(w.edge)}" stroke-width="0.85" opacity="0.7"/>` +
+    `<path d="M8.6 30.4 Q20 33.2 31.4 30.4" fill="none" stroke="${rgb(w.edge)}" stroke-width="0.85" opacity="0.65"/>` +
+    // the ink edge round the silhouette
+    `<path d="${body}" fill="none" stroke="${rgb(w.edge)}" stroke-width="1.15" stroke-linejoin="round"/>` +
+    // the rolled rim, flat, its ink edge, and the dark mouth
+    `<ellipse cx="20" cy="9.4" rx="11.6" ry="3.5" fill="${rgb(w.rim)}" stroke="${rgb(w.edge)}" stroke-width="1.1"/>` +
+    `<ellipse cx="20" cy="9.7" rx="8.9" ry="2.3" fill="${rgb(w.mouth)}"/>` +
     `</svg>`
   );
 }
