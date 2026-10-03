@@ -13,6 +13,8 @@ export interface SoundStats {
   onsetMs: number;
   /** Onset → peak sample, ms. */
   attackMs: number;
+  /** v4 (B4): onset (−40 dB) → the 1 ms RMS envelope's first arrival within 0.5 dB of its maximum, ms. */
+  riseMs: number;
   peakDb: number;
   /** RMS over onset..duration. */
   rmsDb: number;
@@ -267,12 +269,33 @@ export function analyze(channels: Float32Array[], sr: number): SoundStats {
   tot = tot || 1;
 
   const lk200 = maxWindowLoudness(channels, sr, 0.2);
+  // rise: 1 ms RMS envelope of the mono mix
+  const W1 = Math.max(1, Math.round(0.001 * sr));
+  const envs: number[] = [];
+  for (let s0 = 0; s0 + W1 <= n; s0 += W1) {
+    let e1 = 0;
+    for (let i = s0; i < s0 + W1; i++) e1 += mono[i] * mono[i];
+    envs.push(Math.sqrt(e1 / W1));
+  }
+  let envMax = 0;
+  for (const v of envs) envMax = Math.max(envMax, v);
+  let riseIdx = 0;
+  let envOn = -1;
+  for (let k = 0; k < envs.length; k++) {
+    if (envOn < 0 && envs[k] > envMax * 0.01) envOn = k;
+    if (envs[k] >= envMax * 0.944) {
+      riseIdx = k;
+      break;
+    }
+  }
+  const riseMs = Math.max(0, riseIdx - Math.max(0, envOn)) * (W1 / sr) * 1000;
   return {
     sampleRate: sr,
     renderSec: n / sr,
     durationSec: (last + 1) / sr,
     onsetMs: (onset / sr) * 1000,
     attackMs: (Math.max(0, peakIdx - onset) / sr) * 1000,
+    riseMs,
     peakDb: db(peak),
     rmsDb: db(rms),
     lk200,
@@ -290,6 +313,94 @@ export function analyze(channels: Float32Array[], sr: number): SoundStats {
     harshShare: harsh / tot,
     hfShare: hf / tot,
   };
+}
+
+/**
+ * v4 (B1): reverberation time from a decaying tail (Schroeder backward integration). Fits the energy
+ * decay curve between −5 and −25 dB below its start (T20) and extrapolates to 60 dB. `from` is where
+ * the tail starts (after the dry sound), seconds.
+ */
+export function rt60(channels: Float32Array[], sr: number, from = 0): { rt60: number; fitR2: number } {
+  const n = channels[0].length;
+  const s0 = Math.min(n - 1, Math.round(from * sr));
+  const e = new Float64Array(n - s0);
+  for (const ch of channels) for (let i = s0; i < n; i++) e[i - s0] += ch[i] * ch[i];
+  // backward integral
+  const edc = new Float64Array(e.length);
+  let acc = 0;
+  for (let i = e.length - 1; i >= 0; i--) {
+    acc += e[i];
+    edc[i] = acc;
+  }
+  const top = edc[0] || 1e-30;
+  const xs: number[] = [];
+  const ys: number[] = [];
+  const step = Math.max(1, Math.round(sr * 0.005));
+  for (let i = 0; i < edc.length; i += step) {
+    const db = 10 * Math.log10(edc[i] / top + 1e-30);
+    if (db <= -5 && db >= -25) {
+      xs.push(i / sr);
+      ys.push(db);
+    }
+    if (db < -25) break;
+  }
+  if (xs.length < 3) return { rt60: NaN, fitR2: 0 };
+  const mx = xs.reduce((a, b) => a + b, 0) / xs.length;
+  const my = ys.reduce((a, b) => a + b, 0) / ys.length;
+  let sxy = 0,
+    sxx = 0,
+    syy = 0;
+  for (let k = 0; k < xs.length; k++) {
+    sxy += (xs[k] - mx) * (ys[k] - my);
+    sxx += (xs[k] - mx) ** 2;
+    syy += (ys[k] - my) ** 2;
+  }
+  const slope = sxy / sxx; // dB per second (negative)
+  return { rt60: -60 / slope, fitR2: (sxy * sxy) / (sxx * syy) };
+}
+
+/**
+ * v4 (B2): the strongest pitch within ±`semis` semitones of `fExpected` over [from, to) seconds, found
+ * by a Hann-windowed DFT scanned in 1-cent steps. Returns the frequency and its offset in cents.
+ */
+export function pitchNear(x: Float32Array, sr: number, from: number, to: number, fExpected: number, semis = 3): { hz: number; cents: number } {
+  const a = Math.max(0, Math.round(from * sr));
+  const b = Math.min(x.length, Math.round(to * sr));
+  const N = b - a;
+  const win = new Float32Array(N);
+  for (let i = 0; i < N; i++) win[i] = x[a + i] * (0.5 - 0.5 * Math.cos((2 * Math.PI * i) / (N - 1)));
+  let best = -1;
+  let bestC = 0;
+  const mag = (f: number) => {
+    const w = (2 * Math.PI * f) / sr;
+    // Goertzel
+    const c = 2 * Math.cos(w);
+    let s1 = 0,
+      s2 = 0;
+    for (let i = 0; i < N; i++) {
+      const s = win[i] + c * s1 - s2;
+      s2 = s1;
+      s1 = s;
+    }
+    return s1 * s1 + s2 * s2 - c * s1 * s2;
+  };
+  // coarse 10-cent scan, then 1-cent refine
+  for (let cts = -semis * 100; cts <= semis * 100; cts += 10) {
+    const m = mag(fExpected * Math.pow(2, cts / 1200));
+    if (m > best) {
+      best = m;
+      bestC = cts;
+    }
+  }
+  const c0 = bestC;
+  for (let cts = c0 - 10; cts <= c0 + 10; cts += 1) {
+    const m = mag(fExpected * Math.pow(2, cts / 1200));
+    if (m > best) {
+      best = m;
+      bestC = cts;
+    }
+  }
+  return { hz: fExpected * Math.pow(2, bestC / 1200), cents: bestC };
 }
 
 /** 16-bit PCM WAV. */

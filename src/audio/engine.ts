@@ -10,7 +10,8 @@
 
 import { clamp } from './dsp';
 import { LOOKAHEAD, Mixer } from './mixer';
-import type { AudioEngine, AudioStats, CreateAudioOptions, PlayOptions, SfxName, StrokeHandle } from './types';
+import { SFX } from './sounds';
+import { V4_CUES, type AudioEngine, type AudioStats, type CreateAudioOptions, type PlayOptions, type SfxName, type StrokeHandle, type V4Cue } from './types';
 
 type AudioContextCtor = new (opts?: AudioContextOptions) => AudioContext;
 
@@ -89,6 +90,7 @@ export function createAudio(options: CreateAudioOptions = {}): AudioEngine {
       if (!ctx) {
         ctx = new AC({ latencyHint: 'interactive' });
         mixer = new Mixer(ctx, ctx.destination, { limiter: true, live: true });
+        if (idle) mixer.setIdle(true);
         mixer.sfxBus.gain.value = volume * volume;
         mixer.musicVol.gain.value = musicVolume * musicVolume;
         mixer.muteGain.gain.value = muted ? 0 : 1;
@@ -120,15 +122,49 @@ export function createAudio(options: CreateAudioOptions = {}): AudioEngine {
         rate: Number.isFinite(o.rate) ? o.rate : undefined,
         duration: Number.isFinite(o.duration) ? o.duration : undefined,
         variant: o.variant,
+        distance: Number.isFinite(o.distance) ? o.distance : undefined,
       });
     } catch (err) {
       console.warn(`[audio] play(${String(name)}) failed`, err);
     }
   }
 
+  // v4 (B3): idle is remembered before unlock and across music restarts
+  let idle = false;
+
   return {
     unlock,
     play,
+    cue(name: V4Cue, o?: PlayOptions) {
+      // tolerant: unknown names are a silent no-op
+      if (!V4_CUES.includes(name) || !SFX[name as SfxName]) return;
+      play(name as SfxName, o);
+    },
+    turnPassed(toHuman: boolean) {
+      try {
+        if (!ctx || !mixer || ctx.state !== 'running') return;
+        mixer.turnPassed(!!toHuman, ctx.currentTime + LOOKAHEAD);
+      } catch (err) {
+        console.warn('[audio] turnPassed failed', err);
+      }
+    },
+    lean(colour: 'cold') {
+      try {
+        if (colour !== 'cold' || !ctx || !mixer || ctx.state !== 'running') return;
+        mixer.lean(ctx.currentTime + LOOKAHEAD);
+      } catch (err) {
+        console.warn('[audio] lean failed', err);
+      }
+    },
+    setIdle(on: boolean) {
+      idle = !!on;
+      try {
+        if (!ctx || !mixer) return;
+        mixer.setIdle(idle, ctx.currentTime + LOOKAHEAD);
+      } catch (err) {
+        console.warn('[audio] setIdle failed', err);
+      }
+    },
     setVolume(v: number) {
       if (!Number.isFinite(v)) return;
       volume = clamp(v, 0, 1);
@@ -214,6 +250,8 @@ export function createAudio(options: CreateAudioOptions = {}): AudioEngine {
         banked: mixer?.bank?.size ?? 0,
         musicSeed,
         musicWanted,
+        chord: mixer?.chordName(),
+        idle,
       };
     },
     dispose() {

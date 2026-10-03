@@ -15,6 +15,19 @@ function click(tape: Tape, at: number, a: number, f: number, rand: Rand): void {
   tape.mode(at + 0.0003, 1010 * jitter(rand, 0.05), 0.0045, a * 0.14, 0.0006);
 }
 
+/**
+ * v4 cue 'bone': one short bone click, the AI's readable roll (never the full dice texture). A single
+ * die settling on the tray: one click and its small bounce, a little darker and softer than diceLand.
+ */
+export const bone: SoundFn = (ctx, dest, t, { rate, rand }) => {
+  const tape = new Tape(ctx.sampleRate, 0.14);
+  const f = between(rand, 1900, 2400);
+  click(tape, 0.003, 1, f, rand);
+  click(tape, 0.003 + between(rand, 0.026, 0.034), 0.28, f * jitter(rand, 0.02), rand);
+  tape.filter('lowpass', 4200, 0.7).dcBlock().endFade(0.03);
+  return tape.play(ctx, dest, t, rate);
+};
+
 export const diceLand: SoundFn = (ctx, dest, t, { rate, rand }) => {
   const tape = new Tape(ctx.sampleRate, 0.16);
   const f = between(rand, 2200, 3000);

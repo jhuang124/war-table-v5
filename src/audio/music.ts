@@ -8,8 +8,18 @@
 //  - `Composer` (pure, seeded): yields the score as timed items. Offline checks read it directly.
 //  - `startMusic` (the performer): turns items into cheap node graphs (oscillators + envelopes, no
 //    JS synthesis on the main thread), scheduled a few seconds ahead. Live and offline share it.
+//
+// v4 (PLAN §4 B3, "the score breathes with the table"; tempo and density never change, Pillar 5):
+//  - advance(at): the turn passed: the next chord change happens now (the walk keeps its weights;
+//    only the moment moves). Pads are scheduled only ~1.5 s ahead so the moment can still move.
+//  - lean(at): one cold chord (minor or open, voiced open) within ~2.5 s, then the walk returns.
+//  - setIdle(on, at): the felt-piano notes and distant bowls thin out (~4 s) leaving drone + pads;
+//    back over ~2 s.
+//  - chordAt(t): the chord sounding at context time t, so effects can be notes in it (B2).
+//  - a faint room tone (paper and air) under everything, so silence never has a hard floor and the
+//    score's fade-in is not "sound appears".
 
-import { between, cents, midiHz, mulberry32, noiseBuffer, roomImpulse } from './dsp';
+import { between, cached, cents, midiHz, mulberry32, noiseBuffer, roomImpulse } from './dsp';
 import { scoreBowl } from './sounds/bowl';
 import type { Rand } from './types';
 
@@ -31,6 +41,10 @@ export const CHORDS: { name: string; pcs: number[] }[] = [
   { name: 'Am7', pcs: [9, 0, 4, 7] },
   { name: 'Dsus4', pcs: [2, 7, 9] },
 ];
+/** Chords a cold lean may take (minor, or open with no third): Dm9, Csus2, Gm9, Am7, Dsus4. */
+export const COLD = [1, 0, 0, 1, 1, 1, 1];
+/** A chord change never lands closer than this to the previous one (s): the room changes once. */
+export const MIN_CHANGE = 4;
 /** Where each chord may drift next (weights), so the walk has direction but no cycle. */
 const NEXT: number[][] = [
   // Dm9 Fmaj7 Bb  Csus Gm9  Am7  Dsus4
@@ -53,6 +67,10 @@ export interface PadItem {
   chord: number;
   midis: number[];
   cutoff: number;
+  /** v4: this change was moved (turn passed / lean) rather than timed by the walk. */
+  moved?: boolean;
+  /** v4: a cold chord (lean): voiced open, a touch darker. */
+  cold?: boolean;
 }
 export interface NoteItem {
   kind: 'piano' | 'bowl';
@@ -78,8 +96,11 @@ function pick<T>(r: Rand, xs: T[], w: number[]): T {
   return xs[xs.length - 1];
 }
 
-/** Three-note voicing of `pcs` in the pad register, closest to `prev` (voice-leading), spacing 3–12. */
-export function voice(pcs: number[], prev: number[] | null, r: Rand): number[] {
+/**
+ * Three-note voicing of `pcs` in the pad register, closest to `prev` (voice-leading), spacing 3–12.
+ * `open` (v4 lean): an open fifth or wider at the bottom.
+ */
+export function voice(pcs: number[], prev: number[] | null, r: Rand, open = false): number[] {
   const notes: number[] = [];
   for (let m = PAD_LO; m <= PAD_HI; m++) if (pcs.includes(((m % 12) + 12) % 12)) notes.push(m);
   let best: number[] = [notes[0], notes[1], notes[2]];
@@ -95,6 +116,7 @@ export function voice(pcs: number[], prev: number[] | null, r: Rand): number[] {
         const bassPc = ((v[0] % 12) + 12) % 12;
         let cost = bassPc === pcs[0] ? 0 : bassPc === (pcs[0] + 7) % 12 ? 2 : 5;
         cost += g1 < 5 ? 2 : 0;
+        if (open) cost += g1 >= 7 ? 0 : 8;
         if (prev) cost += Math.abs(v[0] - prev[0]) + Math.abs(v[1] - prev[1]) + Math.abs(v[2] - prev[2]);
         else cost += Math.abs(v[0] - 50) * 0.5;
         cost += r() * 2.5;
@@ -119,6 +141,9 @@ export class Composer {
   private noteNext: number;
   private lastNote = -100;
   private lastKind: NoteItem['kind'] = 'bowl';
+  private coldNext = false;
+  private movedNext = false;
+  private lastPadT = -Infinity;
 
   constructor(seed: number) {
     this.r = mulberry32((seed ^ 0x5eed) >>> 0);
@@ -129,9 +154,17 @@ export class Composer {
 
   private makePad(): PadItem {
     const r = this.r;
-    if (this.pads.length) this.chord = pick(r, CHORDS.map((_, i) => i), NEXT[this.chord]);
+    const cold = this.coldNext;
+    if (this.pads.length) {
+      let w = NEXT[this.chord];
+      if (cold) {
+        const cw = w.map((x, i) => x * COLD[i]);
+        if (cw.some((x) => x > 0)) w = cw;
+      }
+      this.chord = pick(r, CHORDS.map((_, i) => i), w);
+    }
     const pcs = CHORDS[this.chord].pcs;
-    this.voicing = voice(pcs, this.voicing, r);
+    this.voicing = voice(pcs, this.voicing, r, cold);
     const gap = between(r, 18, 30);
     const attack = between(r, 6, 9.5);
     const item: PadItem = {
@@ -142,8 +175,13 @@ export class Composer {
       release: between(r, 8, 11),
       chord: this.chord,
       midis: this.voicing,
-      cutoff: between(r, 580, 900),
+      cutoff: between(r, 580, 900) * (cold ? 0.8 : 1),
     };
+    if (this.movedNext) item.moved = true;
+    if (cold) item.cold = true;
+    this.coldNext = false;
+    this.movedNext = false;
+    this.lastPadT = item.t;
     this.padNext += gap;
     this.pads.push(item);
     if (this.pads.length > 8) this.pads.shift();
@@ -151,7 +189,7 @@ export class Composer {
   }
 
   /** The chord sounding at time t (the latest pad that has started). */
-  private chordAt(t: number): number {
+  chordAt(t: number): number {
     let c = this.pads.length ? this.pads[0].chord : this.chord;
     for (const p of this.pads) if (p.t <= t) c = p.chord;
     return c;
@@ -189,6 +227,34 @@ export class Composer {
     return { kind, t, midis, vel: between(r, 0.35, 0.65), spread: between(r, 0.07, 0.2) };
   }
 
+  /** v4: when the next item starts, and whether it is a pad (nothing is generated by peeking). */
+  peekTime(): number {
+    return Math.min(this.padNext, this.noteNext);
+  }
+  peekIsPad(): boolean {
+    return this.padNext <= this.noteNext;
+  }
+  /** Score time of the most recent chord change. */
+  get lastChange(): number {
+    return this.lastPadT;
+  }
+  /**
+   * v4: take the next chord change at score time `s` (if it is later than that). Never closer than
+   * MIN_CHANGE to the previous change. Returns whether the moment moved.
+   */
+  retime(s: number): boolean {
+    if (!this.pads.length) return false;
+    const t = Math.max(s, this.lastPadT + MIN_CHANGE);
+    if (t >= this.padNext) return false;
+    this.padNext = t;
+    this.movedNext = true;
+    return true;
+  }
+  /** v4: the next chord is a cold one (minor or open), once. */
+  lean(): void {
+    this.coldNext = true;
+  }
+
   /** Next item in time order. */
   next(): ScoreItem {
     if (this.padNext <= this.noteNext) return this.makePad();
@@ -215,6 +281,54 @@ export function planScore(seed: number, seconds: number): ScoreItem[] {
 export interface MusicHandle {
   stop(at: number, fade?: number): void;
   readonly seed: number;
+  /** v4: CHORDS index sounding at context time t (null before the score is set up). */
+  chordAt?(t: number): number | null;
+  /** v4: the turn passed: take the next chord change at context time `at`. Returns whether it moved. */
+  advance?(at: number): boolean;
+  /** v4: one cold chord, soon (≤ ~2.5 s, or MIN_CHANGE after the last change). */
+  lean?(at: number): void;
+  /** v4: idle thin-out (true: notes fade over ~4 s, drone + pads stay; false: back over ~2 s). */
+  setIdle?(on: boolean, at: number): void;
+}
+
+/** Pads are scheduled at most this far ahead (s), so a turn passing can still move the change. */
+const PAD_AHEAD = 1.5;
+/** Room tone level (linear, into the score bus): far under the score. */
+export const ROOM_TONE_LEVEL = 0.0042;
+const ROOM_TONE_FADE = 2.5;
+
+/**
+ * Offline renders schedule the score incrementally (like live) using OfflineAudioContext.suspend, so
+ * scripted events (turn passed, lean, idle) can move it. One suspend per quantum, shared by callers.
+ */
+export function offlineAt(ctx: BaseAudioContext, t: number, cb: () => void): boolean {
+  const oc = ctx as OfflineAudioContext;
+  if (typeof oc.suspend !== 'function' || typeof oc.startRendering !== 'function') return false;
+  const q = 128 / ctx.sampleRate;
+  const tq = Math.ceil(t / q) * q;
+  if (tq <= ctx.currentTime || tq >= oc.length / ctx.sampleRate) return false;
+  const reg = cached(ctx, 'offlineTicks', () => new Map<number, (() => void)[]>());
+  const key = Math.round(tq / q);
+  const list = reg.get(key);
+  if (list) {
+    list.push(cb);
+    return true;
+  }
+  const cbs = [cb];
+  reg.set(key, cbs);
+  oc.suspend(tq)
+    .then(() => {
+      for (const f of cbs) {
+        try {
+          f();
+        } catch (err) {
+          console.warn('[audio] offline tick failed', err);
+        }
+      }
+      return oc.resume();
+    })
+    .catch(() => {});
+  return true;
 }
 
 export interface MusicOptions {
@@ -240,8 +354,13 @@ export interface MusicHall {
 
 /** Hall impulse (cached per context). Split from `createMusicHall` so live callers can spread the cost. */
 export function musicHallImpulse(ctx: BaseAudioContext): AudioBuffer {
-  return roomImpulse(ctx, 3.6, 4.2);
+  return roomImpulse(ctx, HALL_RT60, 4.2);
 }
+
+/** The hall's decay (s). B1: the effects use the same impulse, so the same RT60. */
+export const HALL_RT60 = 3.6;
+/** B1: the effects' tap of the hall is shorter (the same seeded impulse, cut at −40 dB and tapered). */
+export const SFX_HALL_SECONDS = 2.4;
 
 export function createMusicHall(ctx: BaseAudioContext, dest: AudioNode): MusicHall {
   const tone = ctx.createBiquadFilter();
@@ -274,6 +393,15 @@ export function startMusic(ctx: BaseAudioContext, dest: AudioNode, at: number, o
   const wet = fade();
   wet.connect(hall.input);
 
+  // v4: the room tone (paper and air), very low, filtered, under everything. It fades in faster than
+  // the score so the score arrives into a room rather than out of digital silence.
+  const room = ctx.createGain();
+  room.gain.value = 0;
+  room.gain.setValueAtTime(0, at);
+  room.gain.linearRampToValueAtTime(ROOM_TONE_LEVEL, at + Math.min(ROOM_TONE_FADE, o.fadeIn ?? FADE_IN));
+  fades.push(room);
+  room.connect(dest);
+
   // gentle high cut on the whole score: warm, never airy (the hall return has its own)
   const tone = ctx.createBiquadFilter();
   tone.type = 'lowpass';
@@ -299,6 +427,33 @@ export function startMusic(ctx: BaseAudioContext, dest: AudioNode, at: number, o
     s.onended = () => sources.delete(s);
     return s;
   };
+
+  // room tone graph: pink noise, band-limited to the paper/air band, breathing very slowly
+  const roomSrcs: AudioScheduledSourceNode[] = [];
+  {
+    const src = ctx.createBufferSource();
+    src.buffer = noiseBuffer(ctx, 'pink');
+    src.loop = true;
+    const hp = ctx.createBiquadFilter();
+    hp.type = 'highpass';
+    hp.frequency.value = 160;
+    hp.Q.value = 0.5;
+    const lp = ctx.createBiquadFilter();
+    lp.type = 'lowpass';
+    lp.frequency.value = 1300;
+    lp.Q.value = 0.5;
+    const breath = ctx.createGain();
+    breath.gain.value = 1;
+    const lfo = ctx.createOscillator();
+    lfo.frequency.value = 0.031;
+    const lfoD = ctx.createGain();
+    lfoD.gain.value = 0.22;
+    lfo.connect(lfoD).connect(breath.gain);
+    src.connect(hp).connect(lp).connect(breath).connect(room);
+    src.start(at, (o.seed % 2000) / 1000);
+    lfo.start(at);
+    roomSrcs.push(src, lfo);
+  }
   const hasPan = typeof ctx.createStereoPanner === 'function';
   const panned = (node: AudioNode, pan: number, to: AudioNode) => {
     if (hasPan) {
@@ -342,9 +497,36 @@ export function startMusic(ctx: BaseAudioContext, dest: AudioNode, at: number, o
     track(osc);
   }
   for (const s of sources) s.start(at);
+  for (const s of roomSrcs) track(s);
+
+  // --- idle (v4): notes go through one gain that thins to nothing; drone + pads stay ---------
+  const notesNear = ctx.createGain();
+  notesNear.connect(bus);
+  const notesFar = ctx.createGain();
+  notesFar.connect(far);
+  let idle = false;
+
+  // pads still sounding, so a moved change can release the old chord early
+  const livePads: { gains: GainNode[]; releaseAt: number; tau: number }[] = [];
 
   // --- items -------------------------------------------------------------------
   const pad = (s: number, p: PadItem, r: Rand) => {
+    if (p.moved) {
+      // the change was moved forward: let the old chord go about as it would have, a couple of
+      // seconds into the new one's bow, instead of holding over it
+      const rel = s + 2;
+      for (const lp of livePads) {
+        if (lp.releaseAt <= rel) continue;
+        for (const g of lp.gains) {
+          g.gain.cancelScheduledValues(rel);
+          g.gain.setTargetAtTime(0, rel, lp.tau);
+        }
+        lp.releaseAt = rel;
+      }
+    }
+    for (let i = livePads.length - 1; i >= 0; i--) if (livePads[i].releaseAt + livePads[i].tau * 7 < s) livePads.splice(i, 1);
+    const mine: GainNode[] = [];
+    livePads.push({ gains: mine, releaseAt: s + p.dur, tau: p.release / 5 });
     const lp = ctx.createBiquadFilter();
     lp.type = 'lowpass';
     lp.Q.value = 0.5;
@@ -365,6 +547,7 @@ export function startMusic(ctx: BaseAudioContext, dest: AudioNode, at: number, o
       g.gain.linearRampToValueAtTime(peak * 0.35, T + p.attack * 0.35);
       g.gain.setTargetAtTime(peak, T + p.attack * 0.35, p.attack * 0.3);
       g.gain.setTargetAtTime(0, T + p.dur, p.release / 5);
+      mine.push(g);
       panned(g, pans[i % 3], lp);
       const f = midiHz(m);
       for (const dc of [-6, 5]) {
@@ -389,7 +572,7 @@ export function startMusic(ctx: BaseAudioContext, dest: AudioNode, at: number, o
       lp.type = 'lowpass';
       lp.frequency.value = 900 + 900 * vel;
       lp.Q.value = 0.4;
-      panned(lp, between(r, -0.35, 0.35), bus);
+      panned(lp, between(r, -0.35, 0.35), notesNear);
       const tau1 = 2.4 * Math.pow(220 / f, 0.35);
       const B = 0.00032;
       for (let k = 1; k <= 6; k++) {
@@ -435,22 +618,21 @@ export function startMusic(ctx: BaseAudioContext, dest: AudioNode, at: number, o
     lp.type = 'lowpass';
     lp.frequency.value = 2400;
     g.connect(lp);
-    panned(lp, between(r, -0.5, 0.5), far);
+    panned(lp, between(r, -0.5, 0.5), notesFar);
     scoreBowl(ctx, g, s, n.midis[0], n.vel, r, track);
   };
 
   const composer = new Composer(o.seed);
   const perf = mulberry32((o.seed * 2654435761) >>> 0);
-  let pending: ScoreItem | null = null;
-  const scheduleUntil = (tEnd: number) => {
+  let stopped = false;
+  // Notes are scheduled LOOKAHEAD ahead; pads only PAD_AHEAD ahead (so the change can still move).
+  const scheduleUntil = (tEnd: number, now: number) => {
+    if (stopped) return;
     for (;;) {
-      const it = pending ?? composer.next();
-      pending = null;
-      const s = at + it.t;
-      if (s >= tEnd) {
-        pending = it;
-        return;
-      }
+      const s = at + composer.peekTime();
+      if (s >= tEnd) return;
+      if (composer.peekIsPad() && s > now + PAD_AHEAD) return;
+      const it = composer.next();
       if (it.kind === 'pad') pad(s, it, perf);
       else if (it.kind === 'piano') piano(s, it, perf);
       else bowl(s, it, perf);
@@ -458,14 +640,63 @@ export function startMusic(ctx: BaseAudioContext, dest: AudioNode, at: number, o
   };
 
   let timer: ReturnType<typeof setInterval> | null = null;
+  const end = o.renderUntil ?? at + 60;
   if (o.live) {
-    scheduleUntil(ctx.currentTime + LOOKAHEAD);
-    timer = setInterval(() => scheduleUntil(ctx.currentTime + LOOKAHEAD), 1000);
-  } else scheduleUntil(o.renderUntil ?? at + 60);
+    scheduleUntil(ctx.currentTime + LOOKAHEAD, ctx.currentTime);
+    timer = setInterval(() => scheduleUntil(ctx.currentTime + LOOKAHEAD, ctx.currentTime), 1000);
+  } else {
+    const t0 = Math.max(at, ctx.currentTime);
+    scheduleUntil(Math.min(end, t0 + LOOKAHEAD), t0);
+    // offline: the same incremental schedule, one tick a second (falls back to all at once)
+    let incremental = true;
+    for (let k = t0 + 1; k < end && incremental; k += 1) {
+      const tick = k;
+      incremental = offlineAt(ctx, tick, () => scheduleUntil(Math.min(end, tick + LOOKAHEAD), tick));
+    }
+    if (!incremental) scheduleUntil(end, end);
+  }
 
-  let stopped = false;
+  /** Run `f` at context time `t`: now (live), or when the offline render reaches it. */
+  const when = (t: number, f: (t: number) => void) => {
+    if (o.live || t <= ctx.currentTime + 0.01 || !offlineAt(ctx, t - 0.004, () => f(t))) f(Math.max(t, ctx.currentTime));
+  };
+
   return {
     seed: o.seed,
+    chordAt(t: number) {
+      return composer.chordAt(t - at);
+    },
+    advance(t: number) {
+      if (stopped) return false;
+      if (o.live) {
+        const moved = composer.retime(t - at);
+        if (moved) scheduleUntil(ctx.currentTime + LOOKAHEAD, ctx.currentTime);
+        return moved;
+      }
+      when(t, (tt) => {
+        if (composer.retime(tt - at)) scheduleUntil(tt + LOOKAHEAD, tt);
+      });
+      return true;
+    },
+    lean(t: number) {
+      if (stopped) return;
+      when(t, (tt) => {
+        composer.lean();
+        const target = Math.max(tt - at + 2.5, composer.lastChange + MIN_CHANGE);
+        if (composer.retime(target)) scheduleUntil(tt + LOOKAHEAD, tt);
+      });
+    },
+    setIdle(on: boolean, t: number) {
+      if (stopped || on === idle) return;
+      idle = on;
+      when(t, (tt) => {
+        for (const g of [notesNear, notesFar]) {
+          g.gain.cancelScheduledValues(tt);
+          g.gain.setValueAtTime(g.gain.value, tt);
+          g.gain.setTargetAtTime(on ? 0 : 1, tt, on ? 4 / 3 : 2 / 3);
+        }
+      });
+    },
     stop(t: number, fade = 1.5) {
       if (stopped) return;
       stopped = true;

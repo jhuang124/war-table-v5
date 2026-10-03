@@ -2,12 +2,15 @@
 
 import { mulberry32 } from './dsp';
 import { MAX_VOICES, Mixer } from './mixer';
+import { createMusicHall } from './music';
 import { SFX } from './sounds';
 import type { SfxName, SfxVariant } from './types';
 
 export const OFFLINE_SR = 48000;
-/** Room tail allowance after a sound's own duration. */
-const TAIL = 1.4;
+/** Room tail allowance after a sound's own duration (B1: the shared hall's tap is 2.4 s). */
+const TAIL = 2.6;
+/** Key-locked sounds may be re-pitched down by up to a tritone (longer by up to √2). */
+const KEY_STRETCH = Math.SQRT2;
 
 export interface RenderOptions {
   seed?: number;
@@ -18,6 +21,10 @@ export interface RenderOptions {
   /** Include the master limiter + soft clip (default false: measure the sound on its own). */
   limiter?: boolean;
   sampleRate?: number;
+  /** v4 A2: 0 = at the table .. 1 = far. */
+  distance?: number;
+  /** v4 B2: force the chord (pitch classes, root first); default: no score → D minor. */
+  chord?: number[];
 }
 
 export interface RenderResult {
@@ -29,7 +36,7 @@ export interface RenderResult {
 export function renderLength(name: SfxName, o: RenderOptions = {}): number {
   const meta = SFX[name];
   const rate = o.rate ?? 1;
-  let dur = meta.maxDur;
+  let dur = meta.maxDur * (meta.key ? KEY_STRETCH : 1);
   if (meta.duration && o.duration !== undefined) dur += Math.max(0, o.duration - meta.duration[2]);
   return dur / rate + TAIL;
 }
@@ -39,7 +46,7 @@ export async function renderSfx(name: SfxName, o: RenderOptions = {}): Promise<R
   const len = Math.ceil(renderLength(name, o) * sr);
   const ctx = new OfflineAudioContext(2, len, sr);
   const mixer = new Mixer(ctx, ctx.destination, { limiter: o.limiter ?? false, live: false });
-  const ok = mixer.trigger(name, 0, { rand: mulberry32(o.seed ?? 1), rate: o.rate, duration: o.duration, variant: o.variant, volume: o.volume });
+  const ok = mixer.trigger(name, 0, { rand: mulberry32(o.seed ?? 1), rate: o.rate, duration: o.duration, variant: o.variant, volume: o.volume, distance: o.distance, chord: o.chord });
   if (!ok) throw new Error(`${name} failed to build (seed ${o.seed ?? 1})`);
   const reportedDur = mixer.lastDuration;
   const buffer = await ctx.startRendering();
@@ -77,7 +84,8 @@ export async function buildSweep(seeds = 20): Promise<string[]> {
     const d = SFX[name].duration;
     if (d) cases.push({ name, duration: d[0] }, { name, duration: d[1] });
   }
-  for (const name of ['turnStart', 'conquer', 'continent'] as SfxName[]) cases.push({ name, variant: 'bright' }, { name, variant: 'somber' });
+  for (const name of ['turnStart', 'conquer', 'continent', 'sheet'] as SfxName[]) cases.push({ name, variant: 'bright' }, { name, variant: 'somber' });
+  cases.push({ name: 'sheet', variant: 'lift' });
   const origWarn = console.warn;
   let msg = '';
   console.warn = (...a: unknown[]) => (msg = a.map(String).join(' '));
@@ -239,3 +247,143 @@ export async function renderMoment(seed = 6, seconds = 18): Promise<{ buffer: Au
   play('march', fall + 0.15, { duration: 0.5, pan: 0.1 });
   return { buffer: await ctx.startRendering(), marks };
 }
+
+// ---------------------------------------------------------------------------
+// v4: one room (B1), key-lock (B2), the breathing score (B3), distance (A2)
+// ---------------------------------------------------------------------------
+
+/**
+ * B1: the hall's decay as each path hears it. Renders (a) diceLand, seed 1, through the effects path
+ * (its real tail), (b) a unit click through the effects' hall send alone, and (c) a unit click through
+ * the score's own hall path (createMusicHall + the score's warm high cut): the "pad note's" room.
+ */
+export async function renderRoomProbes(): Promise<{ diceLand: AudioBuffer; sfxHall: AudioBuffer; scoreHall: AudioBuffer; diceDrySec: number }> {
+  const sr = OFFLINE_SR;
+  const len = Math.ceil(4.5 * sr);
+  const a = new OfflineAudioContext(2, len, sr);
+  const ma = new Mixer(a, a.destination, { limiter: false });
+  ma.trigger('diceLand', 0, { rand: mulberry32(1) });
+  const diceDrySec = ma.lastDuration;
+  const click = (ctx: OfflineAudioContext, dest: AudioNode) => {
+    const b = ctx.createBuffer(1, 2, sr);
+    b.getChannelData(0)[0] = 1;
+    const s = ctx.createBufferSource();
+    s.buffer = b;
+    s.connect(dest);
+    s.start(0);
+  };
+  const b = new OfflineAudioContext(2, len, sr);
+  const mb = new Mixer(b, b.destination, { limiter: false });
+  click(b, mb.room);
+  const c = new OfflineAudioContext(2, len, sr);
+  const hall = createMusicHall(c, c.destination);
+  click(c, hall.input);
+  return { diceLand: await a.startRendering(), sfxHall: await b.startRendering(), scoreHall: await c.startRendering(), diceDrySec };
+}
+
+/** B2: render one pitched sound over a forced chord; returns the buffer and the pitch the key-lock chose. */
+export async function renderInKey(name: SfxName, chord: number[] | null, variant?: SfxVariant, seed = 1): Promise<{ buffer: AudioBuffer; midi: number | undefined }> {
+  const sr = OFFLINE_SR;
+  const ctx = new OfflineAudioContext(1, Math.ceil(renderLength(name) * sr), sr);
+  const mixer = new Mixer(ctx, ctx.destination, { limiter: false });
+  mixer.room.disconnect(); // the dry note only: the hall would smear the pitch estimate
+  mixer.trigger(name, 0, { rand: mulberry32(seed), variant, chord: chord ?? undefined });
+  return { buffer: await ctx.startRendering(), midi: mixer.lastKey[name] };
+}
+
+/** B3: the score alone (effects muted) with scripted breathing; for level and chord checks. */
+export async function renderBreath(o: { seconds: number; seed?: number; swellAt?: number; turnAt?: number; leanAt?: number; idleAt?: number; wakeAt?: number; sampleRate?: number }): Promise<{ buffer: AudioBuffer; chords: { t: number; chord: string }[] }> {
+  const sr = o.sampleRate ?? 24000;
+  const ctx = new OfflineAudioContext(2, Math.ceil(o.seconds * sr), sr);
+  const mixer = new Mixer(ctx, ctx.destination, { limiter: false });
+  mixer.sfxBus.gain.value = 0;
+  mixer.startMusic(0, { seed: o.seed ?? 5, renderUntil: o.seconds, fadeIn: 2 });
+  if (o.swellAt !== undefined) mixer.swell(o.swellAt);
+  if (o.turnAt !== undefined) mixer.turnPassed(false, o.turnAt);
+  if (o.leanAt !== undefined) mixer.lean(o.leanAt);
+  if (o.idleAt !== undefined) mixer.setIdle(true, o.idleAt);
+  if (o.wakeAt !== undefined) mixer.setIdle(false, o.wakeAt);
+  const buffer = await ctx.startRendering();
+  const chords: { t: number; chord: string }[] = [];
+  for (let t = 0; t < o.seconds; t += 0.5) chords.push({ t, chord: mixer.chordName(t) });
+  return { buffer, chords };
+}
+
+export type SceneName = 'human-turn' | 'ai-readable' | 'continent-in-key' | 'idle-thin' | 'cold-lean';
+
+/**
+ * Listening excerpts for the lead and John (artifacts/audio/v4/*.wav). Through the live mix (limiter
+ * on), the score underneath (seeded), effects at the controller's v4 mapping.
+ */
+export async function renderScene(name: SceneName): Promise<{ buffer: AudioBuffer; marks: { t: number; what: string }[] }> {
+  const sr = OFFLINE_SR;
+  const seconds = name === 'idle-thin' ? 24 : 10;
+  const ctx = new OfflineAudioContext(2, Math.ceil(seconds * sr), sr);
+  const mixer = new Mixer(ctx, ctx.destination, { limiter: true });
+  const rand = mulberry32(21);
+  mixer.startMusic(0, { seed: 11, renderUntil: seconds, fadeIn: 1.5 });
+  const marks: { t: number; what: string }[] = [];
+  const play = (n: SfxName, t: number, o: Parameters<Mixer['trigger']>[2] = {}) => {
+    mixer.trigger(n, t, { rand, ...o });
+    marks.push({ t, what: n + (o.variant ? ` · ${o.variant}` : '') + (o.distance ? ` · d ${o.distance}` : '') });
+  };
+  const mark = (t: number, what: string) => marks.push({ t, what });
+  if (name === 'human-turn') {
+    // an AI turn ends; the cup slides to Sam (a human): the chord changes with the slide, the score
+    // swells, the cup is set down in the new chord's root, the sheet breath brightens
+    play('cupSlide', 3.6, { duration: 0.4, pan: 0.2 });
+    mixer.turnPassed(true, 3.6);
+    mark(3.6, 'turnPassed(toHuman)');
+    play('cupSet', 4.0, { pan: 0.3 });
+    play('turnStart', 4.25, { variant: 'bright' });
+    play('tick', 6.2, { pan: -0.2 });
+    play('place', 6.8, { pan: -0.1 });
+    play('place', 7.1, { pan: 0.05, rate: 1.03 });
+    play('place', 7.4, { pan: 0.15, rate: 1.06 });
+  } else if (name === 'ai-readable') {
+    // an AI turn at distance 0.6: stroke → one bone click → verdict → the flood; twice, evenly
+    const d = 0.6;
+    play('cupSlide', 1.0, { duration: 0.4, distance: d });
+    mixer.turnPassed(false, 1.0);
+    mark(1.0, 'turnPassed(AI)');
+    play('cupSet', 1.4, { distance: d });
+    for (let k = 0; k < 4; k++) play('place', 2.0 + k * 0.12, { distance: d, pan: -0.3 + 0.1 * k });
+    for (const [t0, pan] of [[3.2, -0.2], [6.2, 0.25]] as [number, number][]) {
+      play('whoosh', t0, { duration: 0.5, distance: d, pan });
+      play('bone', t0 + 0.75, { distance: d, pan });
+      play('hit', t0 + 1.2, { distance: d, pan });
+      play('conquer', t0 + 1.55, { distance: d, pan });
+      play('march', t0 + 1.7, { duration: 0.4, distance: d, pan });
+    }
+  } else if (name === 'continent-in-key') {
+    // Sam takes the last territory of a continent: flood, then the bowl rings in the chord's key;
+    // later a human's continent is broken: the damped bowl on the minor third, and one cold chord
+    play('hit', 2.0, { pan: 0.2 });
+    play('conquer', 2.35, { pan: 0.2 });
+    play('continent', 3.1);
+    play('conquer', 6.6, { variant: 'somber', pan: -0.2, distance: 0.6 });
+    play('continent', 7.3, { variant: 'somber', distance: 0.6 });
+    mixer.lean(7.3);
+    mark(7.3, 'lean(cold)');
+  } else if (name === 'cold-lean') {
+    play('cupSlide', 1.0, { duration: 0.4 });
+    mixer.turnPassed(true, 1.0);
+    play('cupSet', 1.4);
+    play('eliminated', 5.0);
+    mixer.lean(5.0);
+    mark(5.0, 'lean(cold)');
+  } else {
+    // idle: nobody touches the table at 2 s; the notes thin out over ~4 s (drone + pads stay); a tap
+    // at 18 s brings them back over ~2 s
+    mixer.setIdle(true, 2);
+    mark(2, 'setIdle(true)');
+    mixer.setIdle(false, 18);
+    mark(18, 'setIdle(false)');
+    play('tick', 18);
+  }
+  const buffer = await ctx.startRendering();
+  const chordAt = (t: number) => mixer.chordName(t);
+  for (const m of marks) if (/turnPassed|lean/.test(m.what)) m.what += ` (chord ${chordAt(m.t - 0.2)} → ${chordAt(m.t + 3)})`;
+  return { buffer, marks };
+}
+

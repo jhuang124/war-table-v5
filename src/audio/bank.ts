@@ -14,17 +14,23 @@ function variationsFor(name: SfxName): number {
   // bowls are long (4–7 s of buffer each) and rare: keep memory small on phones
   if (name === 'victory' || name === 'eliminated') return 1;
   if (name === 'continent') return 2;
-  if (name === 'turnStart' || name === 'cardTrade' || name === 'conquer') return 3;
+  if (name === 'turnStart' || name === 'cardTrade' || name === 'conquer' || name === 'sheet' || name === 'cupSlide' || name === 'cupSet') return 3;
   return 5;
 }
 
 /** Warm-up order: what the first minutes of a game need first. */
 export const WARM_ORDER: { name: SfxName; variant?: SfxVariant }[] = [
   { name: 'uiClick' },
+  { name: 'tick' },
   { name: 'place' },
   { name: 'unplace' },
+  { name: 'cupSlide' },
+  { name: 'cupSet' },
   { name: 'turnStart' },
   { name: 'turnStart', variant: 'bright' },
+  { name: 'bone' },
+  { name: 'sheet' },
+  { name: 'sheet', variant: 'lift' },
   { name: 'diceShake' },
   { name: 'diceLand' },
   { name: 'hit' },

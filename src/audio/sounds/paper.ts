@@ -44,11 +44,83 @@ export function cardSlide(tape: Tape, t0: number, dur: number, amp: number, rand
   for (let i = 0; i < n && start + i < tape.data.length; i++) tape.data[start + i] += x[i] * amp;
 }
 
-/** Button press / Turn Track segment change: a small dry tick of a fingertip on the sheet. */
+/**
+ * v4 paper tick (B4): a fingertip brushing the sheet, no pitch at all (no table mode under it), so it
+ * never competes with the score. Fibre noise only, a short swell (≥ 15 ms with the mixer's fade-in)
+ * and a quick dry fall. `f` sets the fibre band; `body` adds a little low paper (not a tone).
+ */
+export function paperTick(tape: Tape, t0: number, amp: number, rand: Rand, o: { f?: number; body?: number } = {}): void {
+  const sr = tape.sr;
+  const f = (o.f ?? 2000) * jitter(rand, 0.07);
+  const n = Math.round(0.07 * sr);
+  const x = paperNoise(n, rand, sr, 260, 2.4);
+  const lo = new Float32Array(x);
+  const rise = 0.026;
+  for (let i = 0; i < n; i++) {
+    const tt = i / sr;
+    const e = tt < rise ? 0.5 - 0.5 * Math.cos((Math.PI * tt) / rise) : Math.exp(-(tt - rise) / 0.012);
+    x[i] *= e;
+    lo[i] *= e;
+  }
+  biquad(x, sr, 'bandpass', f, 0.9);
+  biquad(x, sr, 'lowpass', 4200, 0.7);
+  biquad(lo, sr, 'lowpass', 520, 0.7);
+  biquad(lo, sr, 'highpass', 160, 0.7);
+  const b = o.body ?? 0.35;
+  const s0 = Math.max(0, Math.round(t0 * sr));
+  for (let i = 0; i < n && s0 + i < tape.data.length; i++) tape.data[s0 + i] += (x[i] + lo[i] * b) * amp;
+}
+
+/** Button press / Turn Track segment change: the paper tick (pitchless). */
 export const uiClick: SoundFn = (ctx, dest, t, { rate, rand }) => {
-  const tape = new Tape(ctx.sampleRate, 0.09);
-  pat(tape, 0.001, 1, rand, { f: 1900, body: 0.45 });
+  const tape = new Tape(ctx.sampleRate, 0.1);
+  paperTick(tape, 0.001, 1, rand, { f: 2100, body: 0.3 });
   tape.dcBlock().endFade(0.015);
+  return tape.play(ctx, dest, t, rate);
+};
+
+/** v4 cue 'tick': the board's paper tick (tap a territory, the deal's flips, the round numeral). */
+export const tick: SoundFn = (ctx, dest, t, { rate, rand }) => {
+  const tape = new Tape(ctx.sampleRate, 0.1);
+  paperTick(tape, 0.001, 1, rand, { f: 1600, body: 0.55 });
+  tape.dcBlock().endFade(0.015);
+  return tape.play(ctx, dest, t, rate);
+};
+
+/**
+ * v4 cue 'sheet': a sheet of paper laid on the table (overlays open), or lifted off it ('lift').
+ * Laid on: a short slide as it comes down, the air pushed out from under it, a soft settle.
+ * Lifted: the sheet peels up (air rushing in under it, brightening), one small flutter, gone.
+ */
+export const sheet: SoundFn = (ctx, dest, t, { rate, rand, variant }) => {
+  const sr = ctx.sampleRate;
+  const lift = variant === 'lift';
+  const tape = new Tape(sr, 0.5);
+  if (!lift) {
+    const d = 0.2 * jitter(rand, 0.08);
+    cardSlide(tape, 0.002, d, 0.75, rand, 700 * jitter(rand, 0.06), 1500 * jitter(rand, 0.06));
+    // the air pushed out from under it, then the sheet settles
+    tape.burst(0.002 + d * 0.8, { amp: 0.16, attack: 0.03, tau: 0.05, filter: [{ type: 'bandpass', f: 650, q: 0.6 }] }, rand);
+    paperTick(tape, 0.002 + d * 0.92, 0.55, rand, { f: 1100, body: 1 });
+  } else {
+    const n = Math.round(0.26 * sr);
+    const x = paperNoise(n, rand, sr, 80, 1.3);
+    for (let i = 0; i < n; i++) {
+      const u = i / n;
+      x[i] *= u < 0.35 ? Math.sin((Math.PI * u) / 0.7) : Math.pow(Math.cos((Math.PI * (u - 0.35)) / 1.3), 2);
+    }
+    svf(x, sr, 'bp', (i) => 600 + 1300 * clamp(i / n, 0, 1), 0.8);
+    biquad(x, sr, 'lowpass', 3600, 0.7);
+    for (let i = 0; i < n; i++) tape.data[i + 1] += x[i] * 0.8;
+    // one small flutter as it leaves the table
+    const fl = Math.round(0.16 * sr);
+    const m = Math.round(0.06 * sr);
+    const y = paperNoise(m, rand, sr, 220, 2.6);
+    for (let i = 0; i < m; i++) y[i] *= Math.sin((Math.PI * i) / m);
+    biquad(y, sr, 'bandpass', 1900, 1);
+    for (let i = 0; i < m; i++) tape.data[fl + i] += y[i] * 0.3;
+  }
+  tape.dcBlock().endFade(0.03);
   return tape.play(ctx, dest, t, rate);
 };
 

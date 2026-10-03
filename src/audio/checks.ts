@@ -1,6 +1,7 @@
 // Pass/fail rules for offline measurements. Shared by the lab page and the verify script.
 
 import type { SoundStats } from './analyze';
+import { DEFAULT_ATTACK } from './mixer';
 import { SFX } from './sounds';
 import { TIER_TARGET_LUFS, type SfxName } from './types';
 
@@ -23,7 +24,17 @@ export const LIMITS = {
   laptopShareMin: 0.45,
   /** On laptop speakers a sound may lose at most this much against its tier target. */
   laptopDropMaxDb: 4,
+  /**
+   * v4 (B4): everything but the one sharp family (diceLand, bone, continent, eliminated) fades in over
+   * ≥ 15 ms; measured as onset → within 1 dB of the envelope's max (a linear fade reaches −1 dB at 89%).
+   */
+  riseMinMs: 13,
+  /** v4 (B4): the sharp family really is sharp. */
+  sharpRiseMaxMs: 8,
 };
+
+/** v4 (B4): this sound starts from zero (no fade-in). */
+export const isSharp = (name: SfxName): boolean => (SFX[name].attack ?? DEFAULT_ATTACK) === 0;
 
 export interface SoundReport {
   name: SfxName;
@@ -78,6 +89,8 @@ export function summarize(name: SfxName, runs: { stats: SoundStats; reportedDur:
   // whoosh is a swell by design; stingers may breathe in; everything else must answer instantly
   const onsetMax = name === 'whoosh' ? LIMITS.onsetMaxMsSwell : stinger ? LIMITS.onsetMaxMsStinger : LIMITS.onsetMaxMs;
   if (median.onsetMs > onsetMax) f.push(`slow onset ${median.onsetMs.toFixed(1)} ms`);
+  const riseMin = Math.min(...runs.map((r) => r.stats.riseMs));
+  if (!isSharp(name) && riseMin < LIMITS.riseMinMs) f.push(`hard onset: rises in ${riseMin.toFixed(0)} ms (B4: ≥ 15 ms fade-in)`);
   if (repMax > meta.maxDur + 1e-6) f.push(`reported duration ${repMax.toFixed(3)} s > maxDur ${meta.maxDur}`);
 
   return {

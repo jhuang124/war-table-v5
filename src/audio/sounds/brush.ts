@@ -69,10 +69,10 @@ export function brushStroke(tape: Tape, t0: number, rand: Rand, o: StrokeOpts): 
 /** The brush tip meets the paper: a soft, short, low press (the figure's dab of ink). */
 export function dab(tape: Tape, t0: number, amp: number, rand: Rand, o: { f?: number; wet?: number } = {}): void {
   const f = (o.f ?? 820) * jitter(rand, 0.07);
-  tape.burst(t0, { amp: amp * 0.55, attack: 0.0016, tau: 0.014, filter: [{ type: 'bandpass', f, q: 0.8 }] }, rand);
-  tape.burst(t0, { amp: amp * 0.3, attack: 0.002, tau: 0.02 + 0.03 * (o.wet ?? 0), filter: [{ type: 'lowpass', f: 600 }] }, rand);
-  tape.mode(t0 + 0.0005, 290 * jitter(rand, 0.05), 0.012, amp * 0.34, 0.0015);
-  tape.mode(t0 + 0.0005, 610 * jitter(rand, 0.05), 0.006, amp * 0.12, 0.0012);
+  tape.burst(t0, { amp: amp * 0.55, attack: 0.02, tau: 0.014, filter: [{ type: 'bandpass', f, q: 0.8 }] }, rand);
+  tape.burst(t0, { amp: amp * 0.3, attack: 0.02, tau: 0.02 + 0.03 * (o.wet ?? 0), filter: [{ type: 'lowpass', f: 600 }] }, rand);
+  tape.mode(t0 + 0.0005, 290 * jitter(rand, 0.05), 0.014, amp * 0.34, 0.02);
+  tape.mode(t0 + 0.0005, 610 * jitter(rand, 0.05), 0.008, amp * 0.12, 0.02);
 }
 
 /** The dry brush snapping: bristles flick apart and the paper tears a little under them. */

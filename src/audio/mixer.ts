@@ -1,15 +1,22 @@
 // The mixer: voice management + room reverb + master chain. Works on any BaseAudioContext, so the
 // exact same routing renders live and inside an OfflineAudioContext for measurement.
 //
-//  voice ─┬─ panner ──────────────────────────► sfxBus (volume²) ─ HP 30 Hz ─ shelf ─┐
-//         └─ send(wet) ─ room convolver ─ return ► sfxBus                            │
-//  music ─ duck ─ musicVol ────────────────────────────────────────────────────────── ┤
-//                                                                                    ▼
-//                                     preMaster ─ limiter ─ makeup-comp ─ soft clip ─ mute ─ out
+//  voice ─ fade-in ─ [distance shelf] ─┬─ panner ─────────────────► sfxBus (volume²) ─ HP 30 Hz ─ shelf ─┐
+//                                      └─ send(wet·distance) ─ hall (the score's impulse, shorter tap)    │
+//                                                                  ─ warm LP ─ return ► sfxBus            │
+//  music ─ duck ─ swell ─ musicVol ─────────────────────────────────────────────────────────────────────── ┤
+//                                                                                                         ▼
+//                                                          preMaster ─ limiter ─ makeup-comp ─ soft clip ─ mute ─ out
+//
+// v4 (PLAN §4): B1 one room (the effects' send goes into the score's hall: same impulse, same RT60),
+// B2 key-locked effects (chordAt from the score; D-minor fallback), B3 the score breathes (turnPassed,
+// lean, setIdle, the +2 dB swell), B4 every voice fades in over ≥ 15 ms except the one sharp family,
+// A2 distance (0 at the table .. 1 far: −4 dB, more hall, a gentle high-shelf cut).
 
 import { SoundBank } from './bank';
 import { cached, clamp, dbToGain, mulberry32, roomImpulse, softClipCurve } from './dsp';
-import { createMusicHall, musicHallImpulse, startMusic, type MusicHall, type MusicHandle } from './music';
+import { TONIC_PCS, keyPitch, layerOn, toneLayer } from './key';
+import { CHORDS, HALL_RT60, SFX_HALL_SECONDS, createMusicHall, musicHallImpulse, startMusic, type MusicHall, type MusicHandle } from './music';
 import { SFX } from './sounds';
 import { strokeLoop } from './sounds/brush';
 import type { Rand, SfxName, SfxVariant, StrokeHandle } from './types';
@@ -33,6 +40,20 @@ export const LIMITER_MAKEUP_COMP = dbToGain(0.6 * (LIM_THRESHOLD + -LIM_THRESHOL
 /** Live stroke level: at full speed it sits around the ui tier (a whisper under the board). */
 export const STROKE_TRIM_DB = -9.5;
 
+/** B4: default voice fade-in (s). Nothing starts from zero except the sounds that set attack: 0. */
+export const DEFAULT_ATTACK = 0.02;
+/** A2: at distance 1 (far across the room). */
+export const FAR_DB = -4;
+export const FAR_SHELF_DB = -6;
+const FAR_SHELF_HZ = 1800;
+/** A2: hall send at distance 1 = wet·FAR_WET_MUL + FAR_WET_ADD (linear in between). */
+const FAR_WET_MUL = 2.2;
+const FAR_WET_ADD = 0.12;
+/** B3: the swell when a human's turn begins. */
+export const SWELL_DB = 2;
+const SWELL_IN = 2;
+const SWELL_OUT = 8;
+
 export interface MixerOptions {
   /** Master limiter + soft clip (live: on; per-sound analysis: off, to prove sounds are clean alone). */
   limiter?: boolean;
@@ -53,6 +74,10 @@ export interface TriggerOptions {
   duration?: number;
   variant?: SfxVariant;
   rand?: Rand;
+  /** A2: 0 = at the table .. 1 = far. */
+  distance?: number;
+  /** Tests: force the chord (pitch classes, root first) instead of asking the score. */
+  chord?: number[];
 }
 
 interface Voice {
@@ -71,8 +96,14 @@ export class Mixer {
   readonly musicBus: GainNode;
   readonly musicDuck: GainNode;
   readonly musicVol: GainNode;
+  /** B3: +2 dB when a human's turn begins. */
+  readonly musicSwell: GainNode;
   readonly muteGain: GainNode;
+  /** B1: the effects' hall (the score's impulse, a shorter tap). */
   readonly room: ConvolverNode;
+  private idle = false;
+  /** Last pitch the key-lock chose per sound (debugging, tests). */
+  lastKey: Partial<Record<SfxName, number>> = {};
   private readonly live: boolean;
   private readonly rateJitter: boolean;
   readonly bank: SoundBank | null;
@@ -106,10 +137,15 @@ export class Mixer {
     this.sfxBus = ctx.createGain();
     this.room = ctx.createConvolver();
     this.room.normalize = false;
-    this.room.buffer = roomImpulse(ctx);
+    this.room.buffer = roomImpulse(ctx, HALL_RT60, SFX_HALL_SECONDS);
+    // the same warm high cut the score's hall return has
+    const roomTone = ctx.createBiquadFilter();
+    roomTone.type = 'lowpass';
+    roomTone.frequency.value = 3200;
+    roomTone.Q.value = 0.5;
     const roomReturn = ctx.createGain();
     roomReturn.gain.value = 1;
-    this.room.connect(roomReturn).connect(this.sfxBus);
+    this.room.connect(roomTone).connect(roomReturn).connect(this.sfxBus);
 
     const hp = ctx.createBiquadFilter();
     hp.type = 'highpass';
@@ -124,7 +160,8 @@ export class Mixer {
     this.musicDuck = ctx.createGain();
     this.musicVol = ctx.createGain();
     this.musicVol.gain.value = 0.7 * 0.7;
-    this.musicBus.connect(this.musicDuck).connect(this.musicVol);
+    this.musicSwell = ctx.createGain();
+    this.musicBus.connect(this.musicDuck).connect(this.musicSwell).connect(this.musicVol);
 
     const pre = ctx.createGain();
     this.sfxBus.connect(hp).connect(shelf).connect(pre);
@@ -214,26 +251,53 @@ export class Mixer {
     }
 
     const ctx = this.ctx;
-    const rate = clamp(o.rate ?? 1, 0.5, 2);
     const volume = clamp(o.volume ?? 1, 0, 2);
+    const distance = clamp(Number.isFinite(o.distance) ? (o.distance as number) : 0, 0, 1);
     const density = meta.densityDb ? Math.min(meta.densityMaxDb ?? 6, others * meta.densityDb) : 0;
     const duration = meta.duration ? clamp(o.duration ?? meta.duration[2], meta.duration[0], meta.duration[1]) : undefined;
+    // B2: a whole-note sound is re-pitched to the chord tone (the caller's rate is ignored: key wins)
+    let rate = clamp(o.rate ?? 1, 0.5, 2);
+    const pcs = meta.key || meta.tone ? (o.chord ?? this.chordPcs(when)) : null;
+    if (meta.key && pcs) {
+      const role = o.variant === 'somber' && meta.key.somberRole ? meta.key.somberRole : meta.key.role;
+      const m = keyPitch(pcs, role, meta.key.ref);
+      this.lastKey[name] = m;
+      rate = Math.pow(2, (m - meta.key.ref) / 12);
+    }
+    // the voice: fade-in (B4) → distance shelf (A2) → panner + hall send (B1)
     const gain = ctx.createGain();
-    gain.gain.value = dbToGain(meta.trimDb - density) * volume;
+    const level = dbToGain(meta.trimDb - density + FAR_DB * distance) * volume;
+    const attack = meta.attack ?? DEFAULT_ATTACK;
+    if (attack > 0) {
+      gain.gain.value = 0;
+      gain.gain.setValueAtTime(0, when);
+      gain.gain.linearRampToValueAtTime(level, when + attack);
+    } else gain.gain.value = level;
     const nodes: AudioNode[] = [gain];
-    let head: AudioNode = gain;
+    let tap: AudioNode = gain;
+    if (distance > 0) {
+      const sh = ctx.createBiquadFilter();
+      sh.type = 'highshelf';
+      sh.frequency.value = FAR_SHELF_HZ;
+      sh.gain.value = FAR_SHELF_DB * distance;
+      gain.connect(sh);
+      tap = sh;
+      nodes.push(sh);
+    }
+    let head: AudioNode = tap;
     if (typeof ctx.createStereoPanner === 'function') {
       const p = ctx.createStereoPanner();
       p.pan.value = clamp(o.pan ?? 0, -1, 1);
-      gain.connect(p);
+      tap.connect(p);
       head = p;
       nodes.push(p);
     }
     head.connect(this.sfxBus);
-    if (meta.wet > 0) {
+    const wet = meta.wet * (1 + (FAR_WET_MUL - 1) * distance) + FAR_WET_ADD * distance;
+    if (wet > 0) {
       const send = ctx.createGain();
-      send.gain.value = meta.wet;
-      gain.connect(send).connect(this.room);
+      send.gain.value = wet;
+      tap.connect(send).connect(this.room);
       nodes.push(send);
     }
 
@@ -253,6 +317,15 @@ export class Mixer {
       } else {
         dur = meta.fn(ctx, gain, when, { rate, rand, duration: dq, variant: o.variant });
         this.bank?.request(name, o.variant, dq);
+      }
+      // B2: tuned layers at the chord's pitch (never banked: a few oscillators)
+      if (meta.tone && pcs) {
+        for (const l of meta.tone) {
+          if (!layerOn(l, o.variant)) continue;
+          const m = keyPitch(pcs, l.role, l.ref);
+          this.lastKey[name] = this.lastKey[name] === undefined || l === meta.tone[0] ? m : this.lastKey[name];
+          dur = Math.max(dur, toneLayer(ctx, gain, when, m, l, rand, 1 / rate));
+        }
       }
     } catch (err) {
       for (const n of nodes) n.disconnect();
@@ -327,6 +400,63 @@ export class Mixer {
     this.muteGain.gain.setTargetAtTime(m ? 0 : 1, at, 0.02);
   }
 
+  // v4: the chord, the breathing score -------------------------------------
+
+  /** Pitch classes of the chord sounding at context time t (root first); D minor without the score. */
+  chordPcs(t: number): number[] {
+    const i = this.music?.chordAt?.(t);
+    return i === null || i === undefined ? TONIC_PCS : CHORDS[i].pcs;
+  }
+
+  /** Name of the chord the effects are tuned to at t ('Dm' = the no-score fallback). */
+  chordName(t = this.ctx.currentTime): string {
+    const i = this.music?.chordAt?.(t);
+    return i === null || i === undefined ? 'Dm' : CHORDS[i].name;
+  }
+
+  /**
+   * B3: the turn passed. The score takes its next chord change at `at` (the walk keeps its weights;
+   * only the moment moves). `toHuman`: the score swells +2 dB over 2 s and settles back over ~8 s.
+   */
+  turnPassed(toHuman: boolean, at = this.ctx.currentTime): void {
+    this.music?.advance?.(at);
+    if (toHuman) this.swell(at);
+  }
+
+  /** B3: the +2 dB swell (never stacks: a new one starts from wherever the last one is). */
+  swell(at = this.ctx.currentTime): void {
+    const g = this.musicSwell.gain;
+    g.cancelScheduledValues(at);
+    g.setValueAtTime(this.swellValueAt(at), at);
+    g.linearRampToValueAtTime(dbToGain(SWELL_DB), at + SWELL_IN);
+    g.linearRampToValueAtTime(1, at + SWELL_IN + SWELL_OUT);
+    this.swellFrom = at;
+  }
+
+  private swellFrom = -Infinity;
+  private swellValueAt(t: number): number {
+    const u = t - this.swellFrom;
+    const top = dbToGain(SWELL_DB);
+    if (!(u >= 0) || u >= SWELL_IN + SWELL_OUT) return 1;
+    if (u < SWELL_IN) return 1 + (top - 1) * (u / SWELL_IN);
+    return top + (1 - top) * ((u - SWELL_IN) / SWELL_OUT);
+  }
+
+  /** B3: a human lost a continent or a seat: one cold chord, soon, then the walk returns. */
+  lean(at = this.ctx.currentTime): void {
+    this.music?.lean?.(at);
+  }
+
+  /** B3 / §7.14: idle. The score thins to drone + pads over ~4 s; back over ~2 s. Tempo untouched. */
+  setIdle(on: boolean, at = this.ctx.currentTime): void {
+    this.idle = on;
+    this.music?.setIdle?.(on, at);
+  }
+
+  get isIdle(): boolean {
+    return this.idle;
+  }
+
   // Music ------------------------------------------------------------------
 
   startMusic(at = this.ctx.currentTime, opts: { seed?: number; renderUntil?: number; fadeIn?: number } = {}): void {
@@ -337,10 +467,12 @@ export class Mixer {
     if (!this.live) {
       this.hall ??= createMusicHall(this.ctx, this.musicBus);
       this.music = begin(at);
+      if (this.idle) this.music.setIdle?.(true, at);
       return;
     }
     if (this.hall) {
       this.music = begin(at);
+      if (this.idle) this.music.setIdle?.(true, at);
       return;
     }
     // Live, first start: the hall (a 4 s impulse plus the convolver's setup, ~40 ms together) is
@@ -357,6 +489,7 @@ export class Mixer {
     void this.buildHall().then(() => {
       if (cancelled || this.music !== pending) return;
       this.music = begin(Math.max(at, this.ctx.currentTime + 0.05));
+      if (this.idle) this.music.setIdle?.(true, this.ctx.currentTime);
     });
   }
 

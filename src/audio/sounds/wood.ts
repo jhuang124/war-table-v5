@@ -2,8 +2,58 @@
 // dice clicking against each other stay under the cup's knock, so the shake reads as wood, not glass.
 // Timing: the shake fills `duration` (default 150 ms at 1×); its pitch never changes with length.
 
-import { Tape, between, biquad, jitter } from '../dsp';
+import { Tape, between, biquad, clamp, jitter, svf } from '../dsp';
 import type { SoundFn } from '../types';
+import { paperNoise } from './paper';
+
+/**
+ * v4 cue 'cupSlide': the turned-wood cup slides along the seat strip to the next player (turn passes).
+ * Wood on paper: a low, soft friction with the cup's hollow body murmuring under it. ~400 ms (follows
+ * `duration`), eased in and out so it never starts or stops abruptly.
+ */
+export const cupSlide: SoundFn = (ctx, dest, t, { rate, rand, duration }) => {
+  const sr = ctx.sampleRate;
+  const D = duration ?? 0.4;
+  const tape = new Tape(sr, D + 0.06);
+  const n = Math.round(D * sr);
+  const x = paperNoise(n, rand, sr, 55, 1.6);
+  for (let i = 0; i < n; i++) {
+    const u = i / n;
+    // eased: in over the first quarter, out over the last third
+    const e = u < 0.25 ? Math.sin((Math.PI * u) / 0.5) : u > 0.67 ? Math.cos((Math.PI * (u - 0.67)) / 0.66) : 1;
+    x[i] *= e * e;
+  }
+  const body = new Float32Array(x);
+  // friction: a band that rises a little as the cup gets going, then settles
+  svf(x, sr, 'bp', (i) => 520 + 380 * Math.sin(Math.PI * clamp(i / n, 0, 1)), 0.9);
+  biquad(x, sr, 'lowpass', 2400, 0.7);
+  // the hollow cup over the paper
+  const cup = 330 * jitter(rand, 0.05);
+  biquad(body, sr, 'bandpass', cup, 2.2);
+  biquad(body, sr, 'highpass', 140, 0.7);
+  for (let i = 0; i < n; i++) tape.data[i + 1] += x[i] * 0.85 + body[i] * 1.1;
+  tape.dcBlock().endFade(0.03);
+  return tape.play(ctx, dest, t, rate);
+};
+
+/**
+ * v4 cue 'cupSet': the cup set down at the next seat. A placed (not slammed) knock of turned wood on
+ * the table: a soft low thump and the cup's short hollow ring. The ring's pitch is the chord root
+ * (a tone layer the mixer adds in key, see sounds/index.ts); this is the unpitched wood body.
+ */
+export const cupSet: SoundFn = (ctx, dest, t, { rate, rand }) => {
+  const tape = new Tape(ctx.sampleRate, 0.4);
+  const at = 0.003;
+  tape.burst(at, { amp: 0.32, attack: 0.02, tau: 0.03, filter: [{ type: 'lowpass', f: 420 }, { type: 'highpass', f: 90 }] }, rand);
+  tape.burst(at, { amp: 0.1, attack: 0.02, tau: 0.012, filter: [{ type: 'bandpass', f: 1200 * jitter(rand, 0.06), q: 0.8 }] }, rand);
+  tape.mode(at + 0.001, 175 * jitter(rand, 0.04), 0.03, 0.34, 0.02);
+  tape.mode(at + 0.001, 470 * jitter(rand, 0.04), 0.014, 0.1, 0.02);
+  // the cup rocks once on its foot, softer
+  const rock = at + between(rand, 0.045, 0.06);
+  tape.mode(rock, 190 * jitter(rand, 0.04), 0.02, 0.09, 0.006);
+  tape.dcBlock().endFade(0.04);
+  return tape.play(ctx, dest, t, rate);
+};
 
 export const diceShake: SoundFn = (ctx, dest, t, { rate, rand, duration }) => {
   const sr = ctx.sampleRate;
