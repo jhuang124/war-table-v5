@@ -122,6 +122,25 @@ class Chip {
     this.el.addEventListener('pointerleave', (e) => {
       if (e.pointerType === 'mouse') send({ type: 'hoverSeat', player: null });
     });
+    // v5 G: a long-press (touch) or a 600 ms press (mouse) on the seat asks for its secret mission; the
+    // controller shows it only on that seat's live turn. Releasing puts it away.
+    let pressT = 0;
+    let shown = false;
+    this.el.addEventListener('pointerdown', (e) => {
+      if (e.button !== 0 || !this.vm) return;
+      const player = this.vm.seat.id;
+      window.clearTimeout(pressT);
+      pressT = window.setTimeout(() => {
+        shown = true;
+        send({ type: 'seatMission', player });
+      }, 600);
+    });
+    const release = () => {
+      window.clearTimeout(pressT);
+      if (shown) send({ type: 'seatMission', player: null });
+      shown = false;
+    };
+    for (const ev of ['pointerup', 'pointercancel', 'pointerleave'] as const) this.el.addEventListener(ev, release);
     // A lit ring (choosing a truce partner) is a button: a tap offers the truce.
     this.el.addEventListener('click', () => {
       const vm = this.vm;

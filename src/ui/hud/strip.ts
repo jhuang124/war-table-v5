@@ -918,7 +918,10 @@ export class BottomStrip {
     }
     this.seat.update(vm.track.seat);
     this.track.update(vm.track, g?.kind === 'segment' ? g.seg : null);
-    this.line.update(vm.line, vm.lineKind, vm.lineKey, vm.lineKind === 'narration' ? PLAYER_COLORS[vm.track.seat.color].light : null);
+    // v5 D: an AI's voice line is set in that seat's light pigment (the narration italic), never ivory.
+    const voice = vm.voice ?? null;
+    toggle(this.line.el, 'is-voice', !!voice);
+    this.line.update(vm.line, voice ? 'narration' : vm.lineKind, vm.lineKey, voice ? PLAYER_COLORS[voice.color].light : vm.lineKind === 'narration' ? PLAYER_COLORS[vm.track.seat.color].light : null);
     const c = vm.count;
     toggle(this.count, 'hidden', !c);
     toggle(this.stepper.el, 'hidden', c?.control !== 'stepper');
