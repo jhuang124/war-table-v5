@@ -129,3 +129,35 @@ export function personaFor(difficulty: AiDifficulty, personality?: AiPersonality
       };
   }
 }
+
+// ---------------------------------------------------------------------------
+// v5 D "presence of the opponents": each personality's few plain lines. Name first, no exclamation marks,
+// no quotes, ≤ 60 characters once filled in. {name} the speaker, {by} who did it, {continent}, {victim}.
+// The controller picks one per AI turn at most (src/game/voice.ts).
+// ---------------------------------------------------------------------------
+
+export type VoiceKind = 'attacked' | 'continent' | 'truceBroken' | 'out' | 'eliminates';
+
+export const VOICE: Record<AiPersonality, Record<VoiceKind, readonly string[]>> = {
+  turtle: {
+    attacked: ['{name} remembers that', '{name} will not forget {by}', '{name} digs in against {by}'],
+    continent: ['{name} holds {continent} · it will keep it', '{name} has {continent} · it is staying'],
+    truceBroken: ['{name} kept its word · {by} did not', '{name} trusted {by} · never again'],
+    out: ['{name} is out · it blames {by}', '{name} is out · {by} did that'],
+    eliminates: ['{name} has put {victim} out', '{name} took the last of {victim}'],
+  },
+  opportunist: {
+    attacked: ['{name} remembers that', '{name} will wait for {by} to slip', '{name} saw that, {by}'],
+    continent: ['{name} holds {continent} · nobody was watching', '{name} holds {continent} · it came cheap'],
+    truceBroken: ['{name} expected that from {by}', '{name} will remember the truce {by} broke'],
+    out: ['{name} is out · it blames {by}', '{name} is out · {by} got lucky'],
+    eliminates: ['{name} finishes {victim}', '{name} saw {victim} was weak'],
+  },
+  warlord: {
+    attacked: ['{name} remembers that', '{name} is coming for {by}', '{name} will answer {by}'],
+    continent: ['{name} holds {continent} · come and take it', '{name} holds {continent} · it will keep it'],
+    truceBroken: ['{name} will make {by} pay for that', '{name} remembers the truce {by} broke'],
+    out: ['{name} is out · it blames {by}', '{name} is out · {by} took everything'],
+    eliminates: ['{name} has knocked out {victim}', '{name} is done with {victim}'],
+  },
+};

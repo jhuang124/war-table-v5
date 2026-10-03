@@ -247,7 +247,8 @@ describe('banners (docs/SIMPLIFY.md §5)', () => {
     }
     expect(c.hooks.getState()!.territories.eastern_australia.owner).toBe(0);
     expect([...titles]).toContain('JOHN HOLDS AUSTRALIA · +2');
-    expect([...titles]).toContain('John holds Australia · +2');
+    // v5 E7: a human's continent says what it is worth to them.
+    expect([...titles]).toContain('John holds Australia · +2 next turn');
     c.dispose();
   });
 });

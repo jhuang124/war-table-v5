@@ -282,6 +282,11 @@ export interface StripVM {
    * text: 'Sage proposes a truce with John · 3 rounds · you share a border in Asia'. null / absent = none.
    */
   offer?: { text: string; buttons: ButtonVM[] } | null;
+  /**
+   * Additive (v5 D): the line is an AI seat's own voice ('Sage remembers that'), set in that seat's light tint.
+   * lineKind stays 'narration'. null / absent = an ordinary line.
+   */
+  voice?: SeatRef | null;
 }
 
 export interface BattleSideVM {
@@ -405,7 +410,12 @@ export interface GameVM {
    */
   updateReady?: boolean;
   banner: BannerVM | null;
-  handoff: { seat: SeatRef; subline: string } | null; // 'Pass to Sam' cover
+  handoff: {
+    seat: SeatRef;
+    subline: string;
+    /** Additive (v5 G): this seat's secret mission ('Conquer Asia and Africa'), shown only on its own cover. */
+    mission?: string | null;
+  } | null; // 'Pass to Sam' cover
   confirm: { kind: 'endGame' | 'restart'; text: string } | null;
   /** Settings → Seats: hand a human seat to the AI (and back). Empty when there's nothing to offer. */
   seatActions: { seat: SeatRef; label: string; intent: UiIntent }[];
@@ -500,6 +510,8 @@ export interface NameCardVM {
   y: number;
   /** Bumps on every new press. */
   key: number;
+  /** Additive (v5 F5): the stone's history, 'Ural · 19 · held since round 3 · taken from Sage'. Absent = none. */
+  history?: string | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -518,6 +530,11 @@ export interface VictoryVM {
   standings: { seat: SeatRef; place: number; territories: number; stats: PlayerStats }[];
   /** Additive (ink overhaul): the game's seed (state.config.seed), so the scroll's ensō is the one drawn all game. */
   seed?: number;
+  /**
+   * Additive (v5 C): the game's three turning points in plain sentences, in game order ('Round 6: Siberia
+   * changed hands three times'), the same as the replay's `moments`, for the recap. Absent = none.
+   */
+  moments?: string[];
 }
 
 // ---------------------------------------------------------------------------
@@ -589,6 +606,11 @@ export type UiIntent =
   | { type: 'tapLane'; from: TerritoryId; to: TerritoryId }
   | { type: 'hoverSeat'; player: PlayerId | null }
   | { type: 'stoneHistory'; territory: TerritoryId | null }
+  /**
+   * Additive (v5 G): long-press of a seat mark. For the seat whose turn it is (a live human turn, no cover), its
+   * secret mission writes on the line for a moment; for anyone else nothing (missions are secret). null = released.
+   */
+  | { type: 'seatMission'; player: PlayerId | null }
   // victory
   | { type: 'rematch' }
   // settings

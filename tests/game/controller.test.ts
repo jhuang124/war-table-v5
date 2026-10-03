@@ -201,9 +201,10 @@ describe('AI highlight reel (UX.md §6.1)', () => {
       if (ev[i].ev.type !== 'turnStarted') continue;
       const firstPlace = ev.slice(i + 1).find((p) => p.ev.type === 'armiesPlaced' || p.ev.type === 'cardsTraded');
       if (firstPlace) {
-        // v4: 300 ms at 1×, shortened with every other beat on a long turn (≥ 4× compression floor).
+        // v4: 300 ms at 1×, shortened with every other beat on a long turn (≥ 4× compression floor). v5 D5: a turn
+        // that attacks gives 140 ms of it to the cup's rattle before its first attack (160 ms at 1×, same total).
         const gap = firstPlace.start - ev[i].end;
-        expect(gap).toBeGreaterThanOrEqual(74);
+        expect(gap).toBeGreaterThanOrEqual(39);
         expect(gap).toBeLessThan(700);
         checkedStart++;
       }
