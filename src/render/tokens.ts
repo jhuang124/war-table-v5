@@ -5,10 +5,12 @@
 // wash stroke offset ~1.5 px lower-right for its shadow — painted, never blurred, no gradient, no highlight.
 // A piece is a thing because it has an edge, a painted shadow, and it moves, not because it is lit.
 //
-// Size is strength, area-linear: d = dmin + (dmax − dmin) · √(min(n, 30) / 30) (14 → 36 px at the 1440 home;
-// the board scales the pair per device). Each territory has a cap (set from the home view by index.ts) so a
-// stone never crosses another territory's land, and its figure and numeral never cover another territory's
-// figure or numeral (pieceEnvelope below is the box the caps are fitted with).
+// Size is strength (v4 stone scale law, _claude/v4/PLAN.md §6, review 2026-09-30 §1): area-linear and steep,
+// d ∝ √n from 1 to 20 armies: ≈ 10 px for 1 → 22 for 5 → 32 for 10 → 44 for 20+ at the 1440×900 home (the
+// board scales the pair per device; phones run a flatter pair). A big stone may cross a neighbour's border
+// (decision Q9); the only per-territory caps (set from the home view by index.ts, `piecesClash`) keep a stone,
+// a figure or a numeral from covering another territory's numeral, and two figures from standing on each other
+// (pieceEnvelope below is the box the caps are fitted with).
 //
 // The piece (John 2026-09-30, "Bring the icons back"; SOUL touchstone units-place.png: the pale ivory brush
 // figure on an owner-coloured blot — the stone is the blot): the unit figure STANDS ON the stone, centred,
@@ -43,12 +45,16 @@ export type Denom = 0 | 1 | 2;
 export const denomOf = (n: number): Denom => (n >= 10 ? 2 : n >= 5 ? 1 : 0);
 export const DENOM_NAMES = ['infantry', 'cavalry', 'artillery'] as const;
 
-/** The count past which a stone stops growing (the numeral carries the rest). */
-export const STONE_FULL = 30;
-/** A stone's diameter as a fraction of its full size for a count: dmin + (dmax − dmin)·√(n/30), normalised. */
+/** The count past which a stone stops growing (the numeral carries the rest): 20+ is the largest stone. */
+export const STONE_FULL = 20;
+/**
+ * A stone's diameter for a count: dmin at 1, dmax at STONE_FULL, √n between (area-linear: a stone's area is
+ * its army). With the desktop pair 10 / 44: 1 → 10, 5 → 22, 10 → 31, 20+ → 44 px.
+ */
 export function stoneK(n: number, dmin: number, dmax: number): number {
   if (n <= 0) return 0;
-  return dmin + (dmax - dmin) * Math.sqrt(Math.min(n, STONE_FULL) / STONE_FULL);
+  const k = (Math.sqrt(Math.min(Math.max(n, 1), STONE_FULL)) - 1) / (Math.sqrt(STONE_FULL) - 1);
+  return dmin + (dmax - dmin) * k;
 }
 /** Kept for the overlay's numeral box: a stone's numeral box is 70 % of its diameter tall. */
 export const DISC_E = 0.7;
@@ -73,8 +79,18 @@ const ASPECT = SPRITES.map((s) => s.w / s.h);
 export const FIG_K = 1.1;
 /** The figure's feet, below the stone's centre, × its radius. */
 export const FEET = 0.4;
-/** The numeral's centre from the stone's centre, × its radius: right, and down (the lower-right edge). */
+/** Kept for callers of the old API: the numeral's centre from the stone's centre, × its radius (now numOffset). */
 export const NUM_AT: readonly [number, number] = [0.98, 0.8];
+/**
+ * Where the numeral sits (v4): straddling the stone's lower-right edge, its left edge NUM_IN × R right of the
+ * centre and its top NUM_TOP × R below it (the figure's feet are at FEET × R), so the digit never stands on the
+ * figure whatever the band. Px about the stone's centre (y down); `side` −1 mirrors it to the lower-left.
+ */
+export const NUM_IN = 0.5;
+export const NUM_TOP = 0.36;
+export function numOffset(R: number, nw: number, nh: number, side = 1): [number, number] {
+  return [side * (NUM_IN * R + nw / 2), NUM_TOP * R + nh / 2];
+}
 /** The small soldier's opacity (the squint guard's lever: thinner than a rider, never a smaller stone). */
 export const SOLDIER_ALPHA = 0.85;
 /** The smallest figure a crowded layout may draw (× the stone's diameter), after the stone is at its floor. */
@@ -85,15 +101,16 @@ export function figDims(denom: Denom, d: number, k = FIG_K): [number, number] {
   return denom === 2 ? [long, long / ASPECT[2]] : [long * ASPECT[denom], long];
 }
 /**
- * The numeral's smallest size, CSS px (× the text size), set by the drawn digit, not the font size: Cormorant's
- * lining digit is ~0.63 em, so 14 px draws a 9 px digit at 1440×900, the couch read (lead review 2026-09-30).
- * A phone, held in the hand, keeps 11 px (a 7 px digit at DPR 3; TokenSystem.numMin, set per device by index.ts).
+ * The numeral's smallest size, CSS px (× the text size): the v4 type scale's numeral floor (PLAN §5b E6, review
+ * §1): 18 px at 1440 on desktop, 12 px on phones (TokenSystem.numMin, set per device by index.ts). Never squashed.
  */
-export const NUMERAL_MIN = 14;
-export const NUMERAL_MIN_PHONE = 11;
-/** The numeral's height (CSS px at the home view) on a stone `d` px across: the floor, to ~17 on the largest stones. */
+export const NUMERAL_MIN = 18;
+export const NUMERAL_MIN_PHONE = 12;
+/** The numeral's top size, CSS px (the type scale's 24 step), on the largest stones. */
+export const NUMERAL_MAX = 24;
+/** The numeral's height (CSS px at the home view) on a stone `d` px across: the floor, to ~22 on a 20+ stone. */
 export function numeralPxFor(d: number, s = 1, min = NUMERAL_MIN): number {
-  return Math.min(17 * s, Math.max(min * s, 0.4 * d + 3.6));
+  return Math.min(NUMERAL_MAX * s, Math.max(min * s, 0.3 * d + 9));
 }
 /** The DOM numeral's box for a font size (as overlay.ts lays it out): [w, h]. */
 export function numeralBox(fs: number, digits: number): [number, number] {
@@ -110,18 +127,50 @@ export function pieceBoxes(n: number, d: number, s = 1, k = FIG_K, side = 1, num
   const feet = FEET * R;
   const fs = numeralPxFor(d, s, numMin);
   const [nw, nh] = numeralBox(fs, String(n).length);
-  const cx = side * NUM_AT[0] * R;
-  const cy = NUM_AT[1] * R;
+  const [cx, cy] = numOffset(R, nw, nh, side);
   return { stone: [-R, -R, R, R], fig: [-w / 2, feet - h, w / 2, feet], num: [cx - nw / 2, cy - nh / 2, cx + nw / 2, cy + nh / 2] };
+}
+/**
+ * PIECE_AIR px of air between parts: the drawn boxes snap to the device grid, the stones lie a hair foreshortened
+ * and a tilted phone view stretches the numeral's box against the model's.
+ */
+export const PIECE_AIR = 2.5;
+export function boxesHit(a: PxBox, b: PxBox, air = PIECE_AIR): boolean {
+  const w = Math.min(a[2], b[2]) - Math.max(a[0], b[0]) + air;
+  const h = Math.min(a[3], b[3]) - Math.max(a[1], b[1]) + air;
+  return w > 0 && h > 0;
+}
+/**
+ * The v4 cap rule (review §1, decision Q9): two pieces clash only where one would hide the other's count (any
+ * part of one over the other's numeral) or two figures would stand on each other. A stone over a neighbour's
+ * stone or border is allowed: a big army spreads past its border.
+ */
+export function piecesClash(A: { stone: PxBox; fig: PxBox; num: PxBox }, B: { stone: PxBox; fig: PxBox; num: PxBox }, air = PIECE_AIR): boolean {
+  return (
+    boxesHit(A.num, B.num, air) ||
+    boxesHit(A.num, B.fig, air) ||
+    boxesHit(A.num, B.stone, air) ||
+    boxesHit(A.fig, B.num, air) ||
+    boxesHit(A.stone, B.num, air) ||
+    boxesHit(A.fig, B.fig, air)
+  );
 }
 const grow = (a: PxBox, b: PxBox): PxBox => [Math.min(a[0], b[0]), Math.min(a[1], b[1]), Math.max(a[2], b[2]), Math.max(a[3], b[3])];
 /**
- * Count-independent: the union of a territory's piece parts over every count 1–99 when its stone is capped at
- * `cap` px (dmin/dmax: the 0 → 30 sizes, already × sizeScale). A cap that clears this clears every count.
+ * The count buckets the caps are fitted for (v4): a territory's caps hold for every count up to the top of its
+ * bucket, so they are refitted only when a stone crosses into the next bucket (not on every army).
  */
-export function pieceEnvelope(cap: number, dmin: number, dmax: number, s = 1, k = FIG_K, side = 1, numMin = NUMERAL_MIN): { stone: PxBox; fig: PxBox; num: PxBox } {
+export const CAP_BUCKETS = [2, 4, 6, 9, 12, 16, 20, 99] as const;
+export const capBucket = (n: number): number => CAP_BUCKETS.find((b) => n <= b) ?? 99;
+/**
+ * The union of a territory's piece parts over every count 1–`maxN` (default 99: count-independent) when its
+ * stone is capped at `cap` px (dmin/dmax: the 1 → 20 sizes, already × sizeScale). A cap that clears this
+ * clears every count up to maxN.
+ */
+export function pieceEnvelope(cap: number, dmin: number, dmax: number, s = 1, k = FIG_K, side = 1, numMin = NUMERAL_MIN, maxN = 99): { stone: PxBox; fig: PxBox; num: PxBox } {
   let out: { stone: PxBox; fig: PxBox; num: PxBox } | null = null;
-  for (const n of [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 12, 15, 20, 25, 30, 99]) {
+  for (const n of [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 12, 15, 20, 25, 30, 99, maxN]) {
+    if (n > maxN) continue;
     const d = Math.min(stoneK(n, dmin, dmax), Math.max(dmin, cap));
     const b = pieceBoxes(n, d, s, k, side, numMin);
     out = out ? { stone: grow(out.stone, b.stone), fig: grow(out.fig, b.fig), num: grow(out.num, b.num) } : b;
@@ -129,6 +178,11 @@ export function pieceEnvelope(cap: number, dmin: number, dmax: number, s = 1, k 
   return out!;
 }
 const MAX_TRAVELERS = 8;
+/** The loser's ring (v4 A4): its centre line this many px outside the stone's edge at the home view. */
+const RING_GAP_PX = 3.5;
+/** The receipt pulse (v4 A3): one tier-0 swell, this long at 1×, the stone this much larger at its height. */
+export const PULSE_MS = 260;
+const PULSE_SWELL = 0.22;
 const STONE_CAP = TERRITORY_IDS.length * 2;
 const FIG_CAP = TERRITORY_IDS.length * 2;
 const BLOT_CAP = TERRITORY_IDS.length;
@@ -172,6 +226,10 @@ interface Tok {
   soak: number;
   /** Ghost total (preview), or null. */
   preview: number | null;
+  /** v4 A4: the loser's ring colour (its pigment), or null. */
+  ring: RGB | null;
+  /** v4 A3: the receipt's pulse, 0..1 (a tier-0 swell of the stone). */
+  swell: number;
   // --- the figure on the stone
   /** Presence 0..1 (1 whenever the stone stands; 0 once it has gone to smoke). */
   fig: number;
@@ -223,13 +281,16 @@ attribute vec4 iSize;
 attribute vec4 iCol;
 attribute vec3 iDeep;
 attribute vec4 iFx;
+attribute vec4 iRing;
 varying vec2 vP;
 varying vec4 vSize;
 varying vec4 vCol;
 varying vec3 vDeep;
 varying vec4 vFx;
-const float M = 1.35;
+varying vec4 vRing;
 void main() {
+  // (a loser's ring (v4 A4) sits a few px outside the stone: the quad grows to hold it)
+  float M = max(1.35, iRing.w + 0.3);
   float R = iSize.x;
   vP = position.xy * 2.0 * M;
   vec3 w = iPos + vec3(position.x * 2.0 * M * R + iFx.x, 0.0, -position.y * 2.0 * M * R + iFx.y);
@@ -237,6 +298,7 @@ void main() {
   vCol = iCol;
   vDeep = iDeep;
   vFx = iFx;
+  vRing = iRing;
   gl_Position = projectionMatrix * viewMatrix * vec4(w, 1.0);
 }
 `;
@@ -249,6 +311,7 @@ varying vec4 vSize;
 varying vec4 vCol;
 varying vec3 vDeep;
 varying vec4 vFx;
+varying vec4 vRing;
 float nrm(float v) { return clamp((v - 0.22) * 1.8, 0.0, 1.0); }
 // the stone's brushed wobble: a few low harmonics, fixed per territory
 float wob(vec2 p, float seed) {
@@ -269,7 +332,14 @@ void main() {
   float inside = 1.0 - smoothstep(1.0 - 0.7 * fw, 1.0 + 0.3 * fw, d);
   float shadowIn = 1.0 - smoothstep(1.0 - 0.7 * fw, 1.0 + 0.3 * fw, ds);
   float shadow = shadowIn * (1.0 - inside);
-  if (inside < 0.004 && shadow < 0.004) discard;
+  // the loser's ring (v4 A4, edge ladder Hair): a thin closed brush line in the loser's pigment, a few px out
+  float ringA = 0.0;
+  if (vRing.w > 0.0) {
+    float rd = abs(d - vRing.w) / fw;
+    vec4 rn = texture2D(uNoise, p * 0.31 + seed * 1.7);
+    ringA = (1.0 - smoothstep(0.45, 1.15, rd)) * (0.78 + 0.22 * nrm(rn.r)) * vCol.a * (1.0 - dry);
+  }
+  if (inside < 0.004 && shadow < 0.004 && ringA < 0.004) discard;
   // the fill: a flat wash of the seat's base (a hair of paper grain, like every wash on the board)
   vec4 nz = texture2D(uNoise, p * 0.18 + seed);
   // (more pigment than the territory's own wash: the same colour, laid on thicker, so the stone stands off it)
@@ -300,9 +370,11 @@ void main() {
   // the shadow stroke: a darker wash of the seat's deep (on the paper under it), never blurred
   float sa = shadow * 0.55 * vCol.a * (1.0 - dry) * (1.0 - 0.8 * ghost);
   vec3 sc = vDeep * 0.42;
-  // stone over shadow (premultiplied)
+  // stone over shadow (premultiplied), the ring beside both
   vec3 outC = col * a + sc * sa * (1.0 - a);
   float outA = a + sa * (1.0 - a);
+  outC += vRing.rgb * ringA * (1.0 - outA);
+  outA += ringA * (1.0 - outA);
   if (outA < 0.004) discard;
   gl_FragColor = vec4(outC, outA);
 }
@@ -321,14 +393,19 @@ varying vec4 vUV;
 varying vec4 vA;
 varying vec4 vB;
 varying vec4 vC;
+const float PADX = 0.3;
+const float PADY = 0.1;
 void main() {
   vec3 right = vec3(viewMatrix[0][0], viewMatrix[1][0], viewMatrix[2][0]);
   vec3 up = vec3(viewMatrix[0][1], viewMatrix[1][1], viewMatrix[2][1]);
   float smoke = iA.z;
   float grow = 1.0 + 1.3 * smoke;
   float widen = 1.0 + 0.6 * smoke;
-  vSt = vec2(position.x + 0.5, position.y * grow);
-  vec2 p = vec2(position.x * iSize.x * widen, position.y * grow * iSize.y);
+  // (the quad runs a little past the sprite so its hairline (E7) has room outside the drawing)
+  float qx = position.x * (1.0 + 2.0 * PADX);
+  float qy = position.y * (1.0 + 2.0 * PADY) - PADY;
+  vSt = vec2(qx + 0.5, qy * grow);
+  vec2 p = vec2(qx * iSize.x * widen, qy * grow * iSize.y);
   float c = cos(iB.x);
   float s = sin(iB.x);
   p = vec2(p.x * c + p.y * s, -p.x * s + p.y * c);
@@ -347,12 +424,23 @@ uniform sampler2D uNoise;
 uniform sampler2D uSmoke;
 uniform float uSmokeOn;
 uniform vec3 uIvory;
+uniform vec2 uAtlasPx;
 varying vec2 vSt;
 varying vec4 vUV;
 varying vec4 vA;
 varying vec4 vB;
 varying vec4 vC;
 float nrm(float v) { return clamp((v - 0.22) * 1.8, 0.0, 1.0); }
+// the drawing at a point of the sprite (0..1 both ways; nothing outside it)
+vec4 samp(vec2 q) {
+  // (two atlas texels in from the sprite's box: the crop leaves a faint frame on its very edge)
+  vec2 e = 2.0 / max(abs(vec2(vUV.z - vUV.x, vUV.w - vUV.y)) * uAtlasPx, vec2(1.0));
+  if (q.x < e.x || q.x > 1.0 - e.x || q.y < e.y || q.y > 1.0 - e.y) return vec4(0.0);
+  float fx = vB.y < 0.0 ? 1.0 - q.x : q.x;
+  return texture2D(uAtlas, vec2(mix(vUV.x, vUV.z, fx), mix(vUV.y, vUV.w, q.y)));
+}
+// the drawing's own strokes only (the atlas's faint margins never grow a hairline)
+float edgeA(vec2 q) { return smoothstep(0.2, 0.6, samp(q).a); }
 void main() {
   float smoke = vA.z;
   float seed = vB.w;
@@ -371,13 +459,23 @@ void main() {
     sp.y -= rise;
     sp.x += (nrm(nz.g) - 0.5) * 0.9 * smoke * (0.15 + sp.y);
   }
-  if (sp.x < 0.0 || sp.x > 1.0 || sp.y < 0.0 || sp.y > 1.0) discard;
-  float fx = vB.y < 0.0 ? 1.0 - sp.x : sp.x;
-  vec2 uv = vec2(mix(vUV.x, vUV.z, fx), mix(vUV.y, vUV.w, sp.y));
-  vec4 tex = texture2D(uAtlas, uv);
-  float a = tex.a;
+  if (sp.x < -0.3 || sp.x > 1.3 || sp.y < -0.1 || sp.y > 1.1) discard;
+  vec4 tex = samp(sp);
+  // (the lossy atlas leaves a faint veil inside each sprite's box: never drawn)
+  float body = tex.a * smoothstep(0.08, 0.22, tex.a);
+  // E7 (v4): a hairline of the seat's deep tone round the figure, heavier on its lamp-shadow side (the lower
+  // right, E1's one light), so the ivory reads on any wash: one screen pixel, never a glow.
+  vec2 f1 = max(fwidth(sp), vec2(1e-4)) * 1.1;
+  float ring = 0.0;
+  ring = max(ring, edgeA(sp + vec2(f1.x, 0.0)));
+  ring = max(ring, edgeA(sp - vec2(f1.x, 0.0)));
+  ring = max(ring, edgeA(sp + vec2(0.0, f1.y)));
+  ring = max(ring, edgeA(sp - vec2(0.0, f1.y)));
+  float under = max(edgeA(sp + vec2(-f1.x, f1.y) * 1.5), edgeA(sp + vec2(0.0, f1.y) * 1.8));
+  float hair = max(ring * 0.8, under) * (1.0 - smoke);
+  float a = body + hair * (1.0 - body);
   if (a < 0.02) discard;
-  vec3 rgb = tex.rgb / max(a, 0.001);
+  vec3 rgb = tex.rgb / max(tex.a, 0.001);
   float L = dot(rgb, vec3(0.299, 0.587, 0.114));
   // pale ivory figures with the ink only in the drawing's darkest strokes (the touchstone's, not a dark silhouette)
   float k = smoothstep(0.06, 0.42, L);
@@ -385,6 +483,8 @@ void main() {
   vec3 ivory = uIvory * (1.0 + 0.07 * vB.z);
   deep *= 1.0 - 0.35 * vB.z;
   vec3 col = mix(deep, ivory, k);
+  vec3 hairCol = vC.rgb * 0.5 + vec3(0.006, 0.008, 0.015);
+  col = mix(hairCol, col, body / max(a, 1e-4));
   float rv = vA.y;
   if (rv < 0.999) {
     float rn = texture2D(uNoise, vec2(sp.x * 1.3 + seed * 3.1, sp.y * 0.35 + seed)).b;
@@ -623,6 +723,7 @@ export class TokenSystem {
         uSmoke: { value: null },
         uSmokeOn: { value: 0 },
         uIvory: { value: new THREE.Vector3(IVORY_RGB[0], IVORY_RGB[1], IVORY_RGB[2]) },
+        uAtlasPx: { value: new THREE.Vector2(ATLAS.width, ATLAS.height) },
       },
       vertexShader: FIG_VERT,
       fragmentShader: FIG_FRAG,
@@ -643,7 +744,7 @@ export class TokenSystem {
         this.dirty = true;
       });
     const flat = new THREE.PlaneGeometry(1, 1);
-    const stoneSpec = { iPos: 3, iSize: 4, iCol: 4, iDeep: 3, iFx: 4 };
+    const stoneSpec = { iPos: 3, iSize: 4, iCol: 4, iDeep: 3, iFx: 4, iRing: 4 };
     const figSpec = { iPos: 3, iSize: 2, iUV: 4, iA: 4, iB: 4, iC: 4, iOff: 2 };
     const blotSpec = { iPos: 3, iR: 3, iCol: 4, iK: 2 };
     this.stones = new Instanced(flat, stoneSpec, STONE_CAP, this.stoneMat);
@@ -706,6 +807,8 @@ export class TokenSystem {
         dry: 0,
         soak: 0,
         preview: null,
+        ring: null,
+        swell: 0,
         fig: 0,
         denom: 0,
         reveal: 1,
@@ -1181,6 +1284,32 @@ export class TokenSystem {
     t.denom = denomOf(t.n);
   }
 
+  /**
+   * v4 A4 "losing leaves a mark": a thin ring (Hair weight) in the loser's pigment round each listed stone;
+   * every other stone loses its ring. The ring is still (E10): it never breathes.
+   */
+  setRings(rings: { id: TerritoryId; rgb: RGB }[]): void {
+    const next = new Map(rings.map((r) => [r.id, r.rgb] as const));
+    for (const t of this.list) {
+      const c = next.get(t.id) ?? null;
+      const same = c === t.ring || (c && t.ring && c[0] === t.ring[0] && c[1] === t.ring[1] && c[2] === t.ring[2]);
+      if (!same) {
+        t.ring = c;
+        this.dirty = true;
+      }
+    }
+  }
+  /** Test hook: the ring a stone wears (its rgb) or null. */
+  ringOf(id: TerritoryId): RGB | null {
+    return this.toks.get(id)!.ring;
+  }
+  /** v4 A3: the receipt's pulse — one tier-0 swell of the stone (PULSE_MS), the wash deepening with it. */
+  pulse(id: TerritoryId): void {
+    const t = this.toks.get(id);
+    if (!t || t.shown <= 0 || this.anim.instant || this.reduced) return;
+    this.tw(t, 'swell', { ms: PULSE_MS, ease: ease.linear, update: (v) => (t.swell = Math.sin(Math.PI * v) * (1 - 0.25 * v)), done: () => (t.swell = 0) });
+  }
+
   /** A count changed with no motion of its own: the wash deepens once. */
   pop(id: TerritoryId, _amt = 0.12): void {
     const t = this.toks.get(id)!;
@@ -1282,7 +1411,7 @@ export class TokenSystem {
 
   // --- per frame ----------------------------------------------------------------------------------
 
-  private writeStone(pos: THREE.Vector3, R: number, col: RGB, deep: RGB, alpha: number, o: { seed?: number; ghost?: boolean; dry?: number; soak?: number; dim?: number } = {}): void {
+  private writeStone(pos: THREE.Vector3, R: number, col: RGB, deep: RGB, alpha: number, o: { seed?: number; ghost?: boolean; dry?: number; soak?: number; dim?: number; ring?: RGB | null } = {}): void {
     const s = this.stones;
     if (!s.next() || alpha <= 0.002 || R <= 0) return;
     s.set('iPos', pos.x, pos.y, pos.z);
@@ -1290,6 +1419,9 @@ export class TokenSystem {
     s.set('iCol', col[0], col[1], col[2], alpha);
     s.set('iDeep', deep[0], deep[1], deep[2]);
     s.set('iFx', 0, 0, o.soak ?? 0, o.dim ?? 0);
+    // the ring's radius in stone radii: 3.5 px clear of the edge at the home view (RING_GAP_PX)
+    if (o.ring) s.set('iRing', o.ring[0], o.ring[1], o.ring[2], 1 + RING_GAP_PX / Math.max(1, R / this.pxUnit));
+    else s.set('iRing', 0, 0, 0, 0);
     s.push();
   }
 
@@ -1317,11 +1449,15 @@ export class TokenSystem {
     this.q.set(c.x - g.x * down + this.right.x * 0.07 * R, c.y, c.z - g.z * down + this.right.z * 0.07 * R);
     this.writeBlot(this.q, Math.min(0.8 * R, Math.max(0.36 * R, w * 0.55)), 0.2 * R, [deep[0] * 0.55, deep[1] * 0.55, deep[2] * 0.55], alpha, seed);
   }
-  /** Where the numeral sits for a stone of radius R at c: the lower-right edge. */
-  private numAt(c: THREE.Vector3, R: number, out: THREE.Vector3, side = 1): THREE.Vector3 {
+  /**
+   * Where the numeral's centre sits for a stone of radius R at c (world): straddling the lower-right edge
+   * (numOffset), for a numeral `numH` tall (world) with `digits` digits.
+   */
+  private numAt(c: THREE.Vector3, R: number, out: THREE.Vector3, side: number, numH: number, digits: number): THREE.Vector3 {
     const g = this.upG;
-    const x = side * NUM_AT[0] * R;
-    const y = NUM_AT[1] * R;
+    const px = this.pxUnit;
+    const [nw, nh] = numeralBox(numH / px, digits);
+    const [x, y] = numOffset(R / px, nw, nh, side).map((v) => v * px);
     return out.set(c.x + this.right.x * x - g.x * y, c.y, c.z + this.right.z * x - g.z * y);
   }
 
@@ -1360,17 +1496,17 @@ export class TokenSystem {
       const colors = t.frozen ?? { col: t.col, deep: t.deep };
       // the size follows the displayed count (a float while it swells), capped for this territory; a stone
       // arriving on an empty territory grows from nothing (below one army it scales, never pops)
-      const R = t.disp > 0 ? this.radiusFor(Math.max(1, t.disp), t.id) * Math.min(1, t.disp) : 0;
+      const R = (t.disp > 0 ? this.radiusFor(Math.max(1, t.disp), t.id) * Math.min(1, t.disp) : 0) * (1 + PULSE_SWELL * t.swell);
       const Rn = this.radiusFor(Math.max(1, t.shown), t.id);
       t.top.copy(this.p);
       t.plaque.copy(this.p);
       const Rs = t.shown > 0 ? Math.max(R, Rn * 0.5) : R;
       t.halfW = Rs;
-      this.numAt(this.p, Rs, t.figTop, this.numSide.get(t.id) ?? 1);
       t.numH = numeralPxFor((2 * Rn) / px, ss, this.numMin) * px;
+      this.numAt(this.p, Rs, t.figTop, this.numSide.get(t.id) ?? 1, t.numH, String(Math.max(1, t.shown)).length);
       const dim = tile.dim;
       const ghost = t.preview !== null && t.preview !== t.shown && t.preview > 0 ? t.preview : 0;
-      if (R > 0 && t.alpha > 0.002) this.writeStone(this.p, R, colors.col, colors.deep, t.alpha, { seed: t.seed, dry: t.dry, soak: t.soak, dim });
+      if (R > 0 && t.alpha > 0.002) this.writeStone(this.p, R, colors.col, colors.deep, t.alpha, { seed: t.seed, dry: t.dry, soak: Math.max(t.soak, 0.5 * t.swell), dim, ring: t.ring });
       if (ghost) this.writeStone(this.p, this.radiusFor(ghost, t.id), t.col, t.deep, 1, { seed: t.seed, ghost: true, dim });
       // the figure standing on the stone: sized with the stone as drawn (it swells with it), fading up as a
       // new stone grows, drying with it, gone to smoke at 0
@@ -1409,8 +1545,8 @@ export class TokenSystem {
       tr.top.copy(this.p);
       tr.plaque.copy(this.p);
       tr.halfW = this.radiusFor(tr.n, tr.to);
-      this.numAt(this.p, tr.halfW, tr.figTop, this.numSide.get(tr.to) ?? 1);
       tr.numH = numeralPxFor((2 * tr.halfW) / px, ss, this.numMin) * px;
+      this.numAt(this.p, tr.halfW, tr.figTop, this.numSide.get(tr.to) ?? 1, tr.numH, String(Math.max(1, tr.n)).length);
       const fadeIn = Math.min(1, tr.t * 10);
       // the stone and its figure travel together
       const R = tr.halfW;

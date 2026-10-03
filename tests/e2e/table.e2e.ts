@@ -38,8 +38,8 @@ const sizes = () => page.evaluate((d) => { const k = (eval(d) as Dbg).tokens; re
     const n = (s.territories as Record<string, { armies: number }>)[t].armies;
     const st = await stoneOf(t);
     const { dmin, dmax } = await sizes();
-    // area-linear: d = dmin + (dmax − dmin) · √(min(n, 30) / 30), then this territory's cap
-    const want = Math.min(dmin + (dmax - dmin) * Math.sqrt(Math.min(n, 30) / 30), Math.max(dmin, st.capPx));
+    // area-linear (v4 stone scale law, tokens.stoneK): d = dmin + (dmax − dmin) · (√min(n, 20) − 1) / (√20 − 1), then this territory's cap
+    const want = Math.min(dmin + ((dmax - dmin) * (Math.sqrt(Math.min(Math.max(n, 1), 20)) - 1)) / (Math.sqrt(20) - 1), Math.max(dmin, st.capPx));
     if (st.n !== n || Math.abs(st.dPx - want) > 0.05) bad.push(`${t}: ${n} armies, stone ${st.dPx.toFixed(1)} px (want ${want.toFixed(1)})`);
     // the figure on it: its band, and its long side 1.1 × the stone (a crowded layout may draw it smaller)
     const band = n >= 10 ? 2 : n >= 5 ? 1 : 0;

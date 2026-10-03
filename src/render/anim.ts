@@ -196,3 +196,25 @@ export class Animator {
 
 export const clamp = (v: number, a: number, b: number) => (v < a ? a : v > b ? b : v);
 export const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
+
+// --- v4 one motion ladder (_claude/v4/PLAN.md §5b E5) ------------------------------------------------------
+/** The tier bands at 1×, ms: 0 tick · 1 stroke · 2 soak · 3 breath. */
+export const TIER_BANDS: Readonly<Record<0 | 1 | 2 | 3, readonly [number, number]>> = {
+  0: [160, 290],
+  1: [400, 650],
+  2: [650, 1200],
+  3: [1600, 2400],
+};
+/** A motion's duration kept inside its tier's band (absent tier: the event's own v3 number, unchanged). */
+export function tierMs(ms: number, tier?: 0 | 1 | 2 | 3): number {
+  if (tier === undefined) return ms;
+  const [a, b] = TIER_BANDS[tier];
+  return clamp(ms, a, b);
+}
+/**
+ * The readable beat (v4 §8a Q7, PlayEventOptions.style 'readable'): one AI engagement, ≈ 900 ms at 1×.
+ * The stroke draws (STROKE), the casualties tick on the loser's stone (TICKS, shared by every roll of the
+ * engagement, so a long blitz folds into the same beat), then the verdict: the flood with the march
+ * (CONQUER_WAIT + MARCH) or, if the attack stops, the attacker's recoil (RECOIL).
+ */
+export const READABLE = { STROKE: 300, TICKS: 160, CONQUER_WAIT: 100, MARCH: 340, FLOOD: 650, RECOIL: 300 } as const;
