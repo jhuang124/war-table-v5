@@ -253,6 +253,13 @@ export interface BoardView {
    * height; null clears them. The controller already sends it when the board has it (PreviewBoard).
    */
   setCountPreview?(totals: Partial<Record<TerritoryId, number>> | null): void;
+  /**
+   * Additive (renderer, v4 board paper; _claude/v4/PLAN.md §5 "drift you can see"), a test hook: waits `ms`
+   * (default 2000) of real time and reports how far the paper drifted over that window at the home view, in CSS
+   * px: `mistPx` = the median displacement of points on the sea veils' edges, `glowPx` = the median drift of the
+   * coast glow; `clockS` = the ambient seconds that passed (half speed after 3 min idle, 0 under reduced motion).
+   */
+  paperDrift?(ms?: number): Promise<{ mistPx: number; glowPx: number; clockS: number; pxPerUnit: number; samples: number }>;
 
   /**
    * Screen position (client px) of a territory's army piece — the top centre of its base, which is always

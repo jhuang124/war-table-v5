@@ -15,11 +15,14 @@ import type { InkLayer } from './ink';
 
 export const FONT_SERIF = "'Cormorant Garamond Variable', 'Cormorant Garamond', Georgia, serif";
 void INK_COAST;
-/** The label in its continent's tint, lifted so the words read on the indigo. */
-const tintOf = (ci: number): RGB => hexToRgb(continentInk(ci, 0.45));
-/** Label opacity: unheld labels are quiet; a held one is a little stronger. */
-const LABEL_A = 0.5;
-const HELD_LABEL_A = 0.72;
+/**
+ * The label in its continent's tint, lifted toward the ivory so the words read on the indigo. v4 E3: the label and
+ * its bonus are Layer 1 with the outline they name (≥ 60 % against the paper; v3's were ≈ 25 %).
+ */
+const tintOf = (ci: number): RGB => hexToRgb(continentInk(ci, 0.72));
+/** Label opacity: unheld labels are Layer 1 at rest (lead round 2: a touch quieter); a held one a little stronger. */
+const LABEL_A = 0.8;
+const HELD_LABEL_A = 0.9;
 
 interface Cont {
   id: ContinentId;

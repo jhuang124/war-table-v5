@@ -40,23 +40,59 @@ export interface PlayerPalette {
   deep: string;
   light: string;
   ink: string;
+  /**
+   * v4 (additive; optional so older callers still type-check): the territory WASH, a desaturated (never lighter)
+   * tint of `base`, which stays the seat's full PIGMENT (the stones). Read it through `washOf()`.
+   */
+  tint?: string;
+  /**
+   * v4 round 2 (additive, optional): the stone's 1 px edge ink (E2 Light weight), the seat's deep tone taken dark
+   * enough to stand ≥ 25 % |ΔL*| off its own wash on screen: the pigment's hue, L* = the tint's − 34 (floor 8).
+   * Plum's wash is already dark (L* 28), so its edge floors at L* 8 (≈ 18 off). Falls back to `deep`.
+   */
+  edge?: string;
 }
 
 /** The ivory the figures, pips and marks are drawn in, on every wash. */
 const IVORY_INK = '#f2ede2';
 
+// v4 (_claude/v4/PLAN.md E4, "colour in two intensities"; additive): `base` is the seat's PIGMENT (stones, seat
+// ring: the seat as an object) and `tint` its WASH (the land it holds). The tint is the pigment DESATURATED in
+// CIELAB, never lighter (round 2, lead 2026-10-03: a lighter tint was the rejected lightness pass): chroma × 0.8
+// (the most desaturation the colour-blind bar allows; × 0.65–0.75 fail it), L* the pigment's or a little lower
+// (Vermilion −2, Sage −2, Plum −6, Neutral −4: the moves that clear the bar). Tints, worst pair under Machado 2009
+// full severity + CIEDE2000, raw and washed: all six ΔE 9.95 (bar 9.8), the neutral against the six 10.55
+// (artifacts/board-paper/tints.ts DESAT=1, a local tool). The stone reads off its wash by its deep-tone edge, its
+// painted shadow and its ivory figure and numeral, not by a lighter land.
+// The reference's own washes (tests/e2e/palette-sample.ts re-run 2026-10-03: Vermilion #9d604f, Slate #455c73,
+// Ochre #a78653, Sage #5c6852, paper #111d2a) stay the pigments' source; the renderer applies no lightness pass
+// on top (the wash is the tint, laid at 0.92 over the paper, as in v3).
 export const PLAYER_COLORS: Record<SeatColorId, PlayerPalette> = {
-  crimson: { id: 'crimson', emblem: 'triangle', name: 'Vermilion', base: '#a15f4d', deep: '#6a3f33', light: '#c39b8c', ink: IVORY_INK },
-  cobalt: { id: 'cobalt', emblem: 'circle', name: 'Slate', base: '#4f6e96', deep: '#344963', light: '#93a3b6', ink: IVORY_INK },
-  emerald: { id: 'emerald', emblem: 'square', name: 'Sage', base: '#818e75', deep: '#555e4d', light: '#b0b6a3', ink: IVORY_INK },
-  amber: { id: 'amber', emblem: 'diamond', name: 'Ochre', base: '#b7935b', deep: '#79613c', light: '#d0b994', ink: IVORY_INK },
-  violet: { id: 'violet', emblem: 'star', name: 'Wisteria', base: '#9f95bb', deep: '#69627b', light: '#c2bacb', ink: IVORY_INK },
-  rose: { id: 'rose', emblem: 'cross', name: 'Plum', base: '#704156', deep: '#4a2b39', light: '#a78991', ink: IVORY_INK },
+  crimson: { id: 'crimson', emblem: 'triangle', name: 'Vermilion', base: '#a15f4d', deep: '#6a3f33', light: '#c39b8c', ink: IVORY_INK, tint: '#935e4f', edge: '#3e0d00' },
+  cobalt: { id: 'cobalt', emblem: 'circle', name: 'Slate', base: '#4f6e96', deep: '#344963', light: '#93a3b6', ink: IVORY_INK, tint: '#576e8e', edge: '#00213e' },
+  emerald: { id: 'emerald', emblem: 'square', name: 'Sage', base: '#818e75', deep: '#555e4d', light: '#b0b6a3', ink: IVORY_INK, tint: '#7e8874', edge: '#2c3623' },
+  amber: { id: 'amber', emblem: 'diamond', name: 'Ochre', base: '#b7935b', deep: '#79613c', light: '#d0b994', ink: IVORY_INK, tint: '#b29468', edge: '#594012' },
+  violet: { id: 'violet', emblem: 'star', name: 'Wisteria', base: '#9f95bb', deep: '#69627b', light: '#c2bacb', ink: IVORY_INK, tint: '#9e96b4', edge: '#49425f' },
+  rose: { id: 'rose', emblem: 'cross', name: 'Plum', base: '#704156', deep: '#4a2b39', light: '#a78991', ink: IVORY_INK, tint: '#5b3747', edge: '#2f091c' },
   // v3 (additive): the 2-player neutral seat. A muted grey wash, never pickable; ΔE ≥ 9.8 against all six
   // in every vision, raw and washed (tests/e2e/palette-check.ts prints the neutral line). The brief's #6f7278 fell
   // to 9.19 against Sage (tritan, washed); two steps darker (#6d7076) clears it at 9.83 (vs Plum, deutan, washed).
-  neutral: { id: 'neutral', emblem: 'dash', name: 'Neutral', base: '#6d7076', deep: '#484a4e', light: '#a3a6ab', ink: IVORY_INK },
+  neutral: { id: 'neutral', emblem: 'dash', name: 'Neutral', base: '#6d7076', deep: '#484a4e', light: '#a3a6ab', ink: IVORY_INK, tint: '#64666b', edge: '#181a1e' },
 };
+
+/** The wash a seat's territories take (v4 E4): its tint, or its pigment for a palette without one. */
+export function washOf(p: Pick<PlayerPalette, 'base' | 'tint'>): string {
+  return p.tint ?? p.base;
+}
+
+/**
+ * The one gold (v4, _claude/v4/PLAN.md §5 and 8a Q2: "candle, not brass"; additive). v3's brass #c9a961
+ * (CIELAB L 70.6, C 41.3, h 86°) turned 8° toward orange at 90 % of the chroma (L 70.6, C 37.2, h 78°): warmer,
+ * a touch quieter. The renderer reads it through src/render/util.ts GOLD; the HUD's CSS gold should follow.
+ */
+export const GOLD = '#cfa66b';
+/** v3's brass gold (for comparison shots only). */
+export const GOLD_BRASS = '#c9a961';
 
 /** The six colours a seat can pick, in picker order (the neutral grey is not one of them). */
 export const PLAYER_COLOR_IDS: PlayerColorId[] = ['crimson', 'cobalt', 'emerald', 'amber', 'violet', 'rose'];
