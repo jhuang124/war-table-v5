@@ -6,10 +6,11 @@
 //                Driven by the board's long-press callback through GameVM.nameCard; releasing hides it.
 //                v4 §7.3 (desktop, a click on any territory): the same lines with the name large, brushed
 //                in beside the pointer, held one second, then drying out on their own.
+//                v5 F5 (a long-press on a stone, 'stoneHistory'): the stone's history line is the second row.
 
 import type { NameCardVM } from '../../game/viewModel';
 import { PLAYER_COLORS } from '../../shared/palette';
-import { animateIn, animateOut, drawIn, EASE_IN_QUAD, emblem, h, motion, setStyle, setText, toggle } from '../dom';
+import { animateIn, animateOut, drawIn, EASE_IN_QUAD, emblem, h, minus, motion, setStyle, setText, toggle } from '../dom';
 import { layout } from '../layout';
 
 /** Desktop: the name card holds this long after a click, then dries (v4 §7.3: "one second"). */
@@ -121,6 +122,7 @@ export class RotatePill {
 export class NameCard {
   readonly el: HTMLDivElement;
   private title: HTMLDivElement;
+  private hist: HTMLDivElement;
   private cont: HTMLDivElement;
   private owner: HTMLDivElement;
   private ownerName: HTMLSpanElement;
@@ -134,13 +136,15 @@ export class NameCard {
     this.el = h('div', 'name-card hidden');
     this.el.setAttribute('role', 'tooltip');
     this.title = h('div', 'nc-title');
+    this.hist = h('div', 'nc-hist num hidden');
+    this.hist.dataset.testid = 'name-card-history';
     this.cont = h('div', 'nc-cont num');
     this.owner = h('div', 'nc-owner');
     this.emb = h('span', 'nc-emb');
     this.ownerName = h('span', 'nc-name');
     this.armies = h('span', 'nc-armies num');
     this.owner.append(this.emb, this.ownerName, this.armies);
-    this.el.append(this.title, this.cont, this.owner, h('i', 'nc-nub'));
+    this.el.append(this.title, this.hist, this.cont, this.owner, h('i', 'nc-nub'));
   }
 
   /** Desktop: the card dries out by itself after its second (the controller's clear never cuts it short). */
@@ -177,6 +181,12 @@ export class NameCard {
     this.key = vm.key;
     this.el.dataset.testid = 'name-card';
     setText(this.title, vm.territory);
+    const hist = vm.history ? minus(vm.history) : '';
+    toggle(this.hist, 'hidden', !hist);
+    if (hist !== this.hist.textContent) {
+      setText(this.hist, hist);
+      if (hist && !fresh) drawIn(this.hist, 300);
+    }
     setText(this.cont, `${vm.continent} · +${vm.bonus}`);
     this.emb.textContent = '';
     if (vm.owner) this.emb.append(emblem(vm.owner.color));

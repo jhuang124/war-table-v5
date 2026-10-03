@@ -88,6 +88,24 @@ export class Cup {
     this.body = h('div', 'cup-body');
     this.body.innerHTML = cupSvg(null);
     this.el.append(this.body);
+    // v5 F3: the cup answers a tap (never required): it rattles in place, tier 0.
+    this.body.addEventListener('click', (e) => {
+      e.stopPropagation();
+      this.rattle();
+      this.onTap?.();
+    });
+  }
+
+  /** v5 F3: a tap on the cup. */
+  onTap: (() => void) | null = null;
+
+  /** A short rattle in place (≈ 280 ms): the cup is shaken, never moved. */
+  rattle(): void {
+    if (this.tipped || motion.reduced || typeof this.body.animate !== 'function') return;
+    this.body.animate(
+      [{ transform: 'rotate(0deg)' }, { transform: 'rotate(-7deg)', offset: 0.2 }, { transform: 'rotate(6deg)', offset: 0.45 }, { transform: 'rotate(-4deg)', offset: 0.7 }, { transform: 'rotate(0deg)' }],
+      { duration: 280, easing: 'ease-in-out' },
+    );
   }
 
   /** Sit at (x, y) in the container (the cup's base centre). A slide (400 ms) unless `cut`. */

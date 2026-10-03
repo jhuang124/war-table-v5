@@ -4,6 +4,8 @@
 // standings line, then Rematch (the one gold: the word in a gold brush ring) · New setup · Title as bare
 // words, and Full stats folded away (fitted to the sheet: no sideways scroll).
 // Nothing makes anyone wait: Enter / a click finishes the drawing at once.
+// v5 C (turning points): above the awards, the game's three named moments in the serif, one plain sentence
+// each ('Round 6: Siberia changed hands three times'), the round in a quieter ink.
 
 import type { PlayerStats } from '../../engine/types';
 import type { UiIntent, VictoryVM } from '../../game/viewModel';
@@ -118,6 +120,7 @@ export class VictoryScreen {
   private title: HTMLHeadingElement;
   private sub: HTMLParagraphElement;
   private awards: HTMLDivElement;
+  private moments: HTMLDivElement;
   private chart = new TerritoryChart();
   private standings: HTMLOListElement;
   private stats: HTMLDivElement;
@@ -136,6 +139,8 @@ export class VictoryScreen {
     this.sub = h('p', 'v-sub num');
     head.append(this.mark, this.title, this.sub);
     this.awards = h('div', 'v-awards');
+    this.moments = h('div', 'v-moments hidden');
+    this.moments.dataset.testid = 'moments';
     const mid = h('div', 'v-mid');
     const chartWrap = h('div', 'v-chart');
     chartWrap.append(this.chart.el);
@@ -151,7 +156,7 @@ export class VictoryScreen {
       h('span', 'v-spacer'),
       this.statsBtn,
     );
-    this.scroll.append(head, this.awards, mid, actions, this.stats);
+    this.scroll.append(head, this.moments, this.awards, mid, actions, this.stats);
     this.el.append(h('div', 'v-scrim'), this.scroll);
     let rt = 0;
     window.addEventListener('resize', () => {
@@ -177,7 +182,7 @@ export class VictoryScreen {
     }
   }
 
-  update(vm: VictoryVM | null, active: boolean): void {
+  update(vm: VictoryVM | null, active: boolean, moments?: string[] | null): void {
     if (!active || !vm) {
       if (!active && this.vm) {
         this.timers.forEach((t) => clearTimeout(t));
@@ -197,6 +202,19 @@ export class VictoryScreen {
     setEnso(this.mark, seed, { drawable: true });
     this.title.textContent = minus(plain(vm.title));
     this.sub.textContent = minus(vm.subline);
+
+    // Turning points (v5 C): the story of the war in three sentences, above the awards.
+    this.moments.textContent = '';
+    const told = (vm.moments ?? moments ?? []).filter(Boolean).slice(0, 3);
+    for (const m of told) {
+      const line = h('p', 'mo-line num');
+      const t = minus(m);
+      const at = /^(Round \d+)(:\s*)(.*)$/.exec(t);
+      if (at) line.append(h('span', 'mo-round', `${at[1]}:`), document.createTextNode(` ${at[3]}`));
+      else line.textContent = t;
+      this.moments.append(line);
+    }
+    toggle(this.moments, 'hidden', told.length === 0);
 
     // Awards: three lines. Nemesis first — the grudge is the story of the evening.
     this.awards.textContent = '';
@@ -265,7 +283,9 @@ export class VictoryScreen {
     drawEnso(this.mark, 900, 120);
     drawIn(this.title, 360, 420);
     drawIn(this.sub, 280, 620);
-    [...this.awards.children].forEach((c, i) => drawIn(c as HTMLElement, 260, 760 + i * 120));
+    [...this.moments.children].forEach((c, i) => drawIn(c as HTMLElement, 300, 700 + i * 140));
+    const after = told.length ? 700 + told.length * 140 + 120 : 760;
+    [...this.awards.children].forEach((c, i) => drawIn(c as HTMLElement, 260, after + i * 120));
     for (const el of this.scroll.querySelectorAll<HTMLElement>('.v-mid, .v-actions'))
       if (!motion.reduced) el.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 300, delay: 900, easing: 'ease-out', fill: 'backwards' });
     this.timers.forEach((t) => clearTimeout(t));

@@ -195,6 +195,9 @@ function react(i: UiIntent) {
     case 'handoffAccept':
       if (g) push({ ...vm, game: { ...g, handoff: null } });
       return;
+    case 'skipReplay':
+      if (g?.replay) push({ ...vm, game: { ...g, replay: null } });
+      return;
     case 'dismissReceipt':
       if (g?.receipt) push({ ...vm, game: { ...g, receipt: null } });
       return;

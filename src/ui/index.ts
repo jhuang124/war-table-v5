@@ -4,6 +4,8 @@
 // top; at the bottom the one line, the gold rule with the game's ensō, and the Turn Track pill with the
 // action pills; during a fight, the dice tray's header words. The breath line, the cards sheet, the
 // hand-off cover and the menu sheets come and go.
+// v5: on victory the replay strip (the war re-soaked round by round) comes first and the recap waits for it;
+// the holding dab sits beside the seat mark; grudge ticks and voice lines live on the seat rings.
 //
 // Rendering: each component keeps its elements and patches them; every level short-circuits on
 // ViewModel identity (the controller keeps unchanged subtrees identical), so an idle frame costs a few
@@ -32,6 +34,7 @@ import { effectiveUiScale, isFitted } from './uiScale';
 import { installLayout, layout, onLayout } from './layout';
 import { NameCard, RotatePill } from './hud/mobile';
 import { Receipt } from './hud/receipt';
+import { Replay } from './hud/replay';
 import { resetSheet, sheetDrop, sheetLift } from './sheet';
 
 /**
@@ -150,11 +153,13 @@ export const mountUi: MountUi = (host, api) => {
   const confirm = new Confirm(send);
   // "While you were away" (v4 A3): a paper sheet on the board over the HUD (and over a hand-off cover).
   const receipt = new Receipt(send);
+  // The war in ink (v5 C): the end-of-game time-lapse's paper strip; the recap is held back while it plays.
+  const replay = new Replay(send);
   // A lost WebGL context (mobile GPUs drop it under memory pressure): a quiet pill while the board rebuilds.
   const lost = h('div', 'board-lost hidden', 'Reloading the board…');
   lost.setAttribute('role', 'status');
   lost.dataset.testid = 'board-lost';
-  root.append(hud, title.el, newGame.el, victory.el, handoff.el, receipt.el, overlays.el, confirm.el, lost);
+  root.append(hud, title.el, newGame.el, victory.el, handoff.el, receipt.el, replay.el, overlays.el, confirm.el, lost);
   current = { newGame, victory };
 
   const screens: Partial<Record<Screen, HTMLElement>> = { title: title.el, newGame: newGame.el, victory: victory.el };
@@ -353,6 +358,18 @@ export const mountUi: MountUi = (host, api) => {
 
   let vm: ViewModel | null = null;
   let gameSeed = -1;
+  // The game's turning points, kept from the replay for the recap when VictoryVM doesn't carry its own.
+  let lastMoments: string[] | null = null;
+  /** The recap waits while the replay plays: it is laid on the board once the replay ends or is skipped. */
+  const syncVictory = (v: ViewModel) => {
+    const playing = replay.active;
+    toggle(root, 'is-replay', playing);
+    const shown = v.screen === 'victory' && !playing;
+    toggle(victory.el, 'replay-hold', v.screen === 'victory' && playing);
+    victory.update(v.victory, shown, lastMoments);
+    setAttr(victory.el, 'data-testid', shown ? 'victory' : null);
+  };
+  replay.onChange = () => vm && syncVictory(vm);
   const render = (next: ViewModel) => {
     const prev = vm;
     vm = next;
@@ -369,8 +386,11 @@ export const mountUi: MountUi = (host, api) => {
 
     if (next.screen === 'title' || next.overlay || prev?.screen === 'title') title.update(next);
     if (next.screen === 'newGame') newGame.update(next.newGame);
-    victory.update(next.victory, next.screen === 'victory');
-    setAttr(victory.el, 'data-testid', next.screen === 'victory' ? 'victory' : null);
+    const rp = next.game?.replay ?? null;
+    if (rp) lastMoments = rp.moments;
+    else if (next.screen !== 'victory' && prev?.screen === 'victory') lastMoments = null;
+    replay.update(rp);
+    syncVictory(next);
 
     const g = next.game;
     if (g && (!prev || prev.game !== g)) {
@@ -389,6 +409,7 @@ export const mountUi: MountUi = (host, api) => {
       // Once the world is held nothing on the track is 'now': the gold leaves it for the victory beat.
       strip.update(stripFor(g), worldHolder(g) ? null : g.gold);
       strip.setEvents(g.events, g.round, !!g.updateReady);
+      strip.setHolding(g.holding);
       // Ambient motion yields to the strike (INK A1): the rule's glint and breath rest while dice roll.
       toggle(root, 'is-striking', !!g.battle?.rolling);
       // The cup pours as the dice leave it (PLAN §2): toward the ink ring, under the fight header.
@@ -404,6 +425,7 @@ export const mountUi: MountUi = (host, api) => {
       receipt.update(next.screen === 'game' ? g.receipt : null);
       confirm.update(g.confirm);
     } else if (!g && prev?.game) {
+      strip.setHolding(null);
       receipt.update(null);
       battle.update(null);
       announce.update(null);
@@ -481,6 +503,8 @@ export const mountUi: MountUi = (host, api) => {
       e.stopPropagation();
     };
     if (e.repeat && (e.key === 'Enter' || e.key === ' ')) return stop();
+    // The replay: any key skips it (and does nothing else).
+    if (replay.active && !v.overlay && !['Shift', 'Control', 'Alt', 'Meta', 'Tab', 'CapsLock'].includes(e.key)) return void (stop(), replay.skip());
     if (g?.confirm && v.screen === 'game') {
       if (e.key === 'Escape') (stop(), send({ type: 'confirm', yes: false }));
       else if (e.key === 'Enter' && !focusedCtl) (stop(), send({ type: 'confirm', yes: true }));
