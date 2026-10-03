@@ -64,6 +64,11 @@ export const V4_CUES: readonly V4Cue[] = ['sheet', 'cupSlide', 'cupSet', 'bone',
  *   tick      a paper tick: tap a territory, the deal's flips, the round numeral re-inking
  */
 export type V4Cue = 'sheet' | 'cupSlide' | 'cupSet' | 'bone' | 'tick';
+/**
+ * v5 cues (PROPOSAL §4): ripple (tap open water), splash (a losing die takes ink), rattle (the cup before an AI's
+ * first attack; tap the cup), glint (a sea lane glints), pour (reinforcements pour into the holding dab).
+ */
+export type V5Cue = 'ripple' | 'splash' | 'rattle' | 'glint' | 'pour';
 
 export interface PlayOptions {
   /** Per-play gain, 0..2 (1 = designed level). */
@@ -160,7 +165,7 @@ export interface AudioEngine {
   /** extra: fade out every playing/scheduled SFX voice (use with skipAnimations). Music is untouched. */
   stopAll(): void;
   /** v4: play a V4Cue (see the type). Absent on older engines; callers use `audio.cue?.(…)`. */
-  cue?(name: V4Cue, opts?: PlayOptions): void;
+  cue?(name: V4Cue | V5Cue, opts?: PlayOptions): void;
   /**
    * v4 (PLAN §4 B3 "the score breathes"): the turn passed. The score takes its next chord change now (the
    * walk keeps its weights; only the moment moves). `toHuman` adds the +2 dB swell over 2 s.

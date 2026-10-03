@@ -150,6 +150,13 @@ export interface SeatChipVM {
   eliminated: boolean;
   territories: number;
   /**
+   * Additive (v5 C "grudges that last"): territories this seat has taken from the reader this game, net of any
+   * taken back: one small tick per territory under the ring (Pillar 4). Absent / 0 = none.
+   */
+  grudgeTicks?: number;
+  /** Additive (v5 D): the one plain line this AI said last ('Sage remembers that'), shown in its light tint. */
+  voiceLine?: string | null;
+  /**
    * Additive (ink overhaul, docs/INK.md A5 "your seat ring dims for 300 ms"): bumps each time this seat
    * loses a territory on the displayed board (as the conquest plays), so the UI can re-run the dim. 0 = never.
    */
@@ -423,6 +430,30 @@ export interface GameVM {
    * begins so the board can pulse its territories; any tap sends 'dismissReceipt'.
    */
   receipt?: ReceiptVM | null;
+  /**
+   * Additive (v5 C "the war in ink"): on victory, before the recap, the board replays the game as a time-lapse.
+   * The UI drives the board through `__risk`/controller (`replayRound` intents) and shows one ledger sentence per
+   * round; any tap sends 'skipReplay'. null / absent = none.
+   */
+  replay?: ReplayVM | null;
+  /**
+   * Additive (v5 E "the turn ritual"): the current human's reinforcements as a thing to spend: a holding dab
+   * beside the seat mark with `armies` stones that empties as they are placed; `breakdown` writes under the turn
+   * line for a second ('3 territories · Asia +4'). null / absent = none.
+   */
+  holding?: { seat: SeatRef; armies: number; breakdown: string } | null;
+}
+
+/** v5: the end-of-game time-lapse. */
+export interface ReplayVM {
+  key: number;
+  winner: SeatRef;
+  /** One frame per round, oldest first: who held what at the round's end, and the round's one sentence. */
+  rounds: { round: number; owners: Partial<Record<TerritoryId, PlayerColorId | 'neutral'>>; line: string }[];
+  /** The three named turning points for the recap ('Round 6: Siberia changed hands three times'). */
+  moments: string[];
+  /** ms per round at 1× (the whole replay ≈ 15–20 s). */
+  msPerRound: number;
 }
 
 /**
@@ -548,6 +579,16 @@ export type UiIntent =
   /** v4 receipt: line `index` began writing (the board pulses its territories) · any tap dismisses. */
   | { type: 'receiptLine'; index: number }
   | { type: 'dismissReceipt' }
+  /** v5 replay: the UI reached round `index` of GameVM.replay (the board re-soaks to it) · any tap skips. */
+  | { type: 'replayRound'; index: number }
+  | { type: 'skipReplay' }
+  /** v5 clickables (board-native, tier 0, never required). */
+  | { type: 'tapContinent'; id: ContinentId }
+  | { type: 'tapCup' }
+  | { type: 'tapEnso' }
+  | { type: 'tapLane'; from: TerritoryId; to: TerritoryId }
+  | { type: 'hoverSeat'; player: PlayerId | null }
+  | { type: 'stoneHistory'; territory: TerritoryId | null }
   // victory
   | { type: 'rematch' }
   // settings

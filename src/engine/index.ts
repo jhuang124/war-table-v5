@@ -2,6 +2,7 @@
 
 export * from './types';
 export * from './mapData';
+export { MISSIONS, missionText, missionComplete, type Mission, type MissionId } from './missions';
 
 export { createGame, defaultConfig, validateConfig, sanitizeConfig } from './setup';
 export { applyAction, validateAction, cloneState, truceTargets, truceOffersTo } from './reducer';

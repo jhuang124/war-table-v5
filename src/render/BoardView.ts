@@ -36,6 +36,11 @@ export interface BoardHighlights {
    * does not hold any state for it.
    */
   pulse?: TerritoryId[];
+  /**
+   * Additive (v5 B "front lines"): draw borders between two different owners at medium weight as a split stroke
+   * in both pigments; borders inside one owner's land stay hairlines. Default on when absent in v5 builds.
+   */
+  frontLines?: boolean;
 }
 
 export interface TerritoryPointerInfo {
@@ -96,6 +101,11 @@ export interface PlayEventOptions {
    * own default for the event type (the v3 numbers).
    */
   tier?: 0 | 1 | 2 | 3;
+  /**
+   * Additive (v5 A "the fight is a moment"): ms between dice landing in a full roll (60–90). The renderer
+   * lands them one at a time, each with its own bone click, inside the existing roll budget. Absent = at once.
+   */
+  stagger?: number;
   /**
    * For consecutive diceRolled events of one engagement (blitz or repeated rolls): 0-based index and
    * total count, so the renderer can compress to the blitz cap and slow the final roll.
@@ -218,6 +228,13 @@ export interface BoardView {
    * is its box in container CSS px so the HUD's fight header can ride on it; absent = the fixed band.
    */
   onTrayChange?(cb: (visible: boolean, rect?: { x: number; y: number; w: number; h: number }) => void): void;
+  /**
+   * Additive (v5 A): lean the camera toward `territories` (eased, at most `amount` board widths, default 0.15,
+   * never a cut) and cool the paper around them a shade for the fight; `leanBack()` returns both over ~600 ms.
+   * No-ops when the user has moved the camera. Reduced motion: the paper cools, the camera stays.
+   */
+  leanTo?(territories: TerritoryId[], o?: { amount?: number }): void;
+  leanBack?(): void;
 
   /**
    * Additive (renderer, mobile pass; docs/MOBILE.md §3): a touch long-press (400 ms, one finger, not moved)

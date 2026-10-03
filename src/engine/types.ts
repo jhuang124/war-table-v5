@@ -102,6 +102,8 @@ export interface GameConfig {
   setupMode: 'random' | 'draft';
   /** 'manual': players place remaining starting armies in batches. 'auto': engine places them. */
   initialPlacement: 'manual' | 'auto';
+  /** Additive (v5 G): secret missions house rule. One mission per seat, dealt at setup (src/engine/missions.ts). */
+  missions?: boolean;
   /** Armies placed per setup-place turn (last batch may be smaller). Default 5. */
   setupBatch: number;
   /** Override starting armies per player. Default: 2p 40, 3p 35, 4p 30. */
@@ -175,6 +177,8 @@ export interface PlayerState {
   name: string;
   color: PlayerColorId;
   kind: PlayerKind;
+  /** Additive (v5 G): this seat's secret mission id (config.missions), see src/engine/missions.ts. */
+  mission?: string;
   difficulty?: AiDifficulty;
   cards: Card[];
   eliminated: boolean;
