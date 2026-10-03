@@ -20,9 +20,9 @@ void INK_COAST;
  * its bonus are Layer 1 with the outline they name (≥ 60 % against the paper; v3's were ≈ 25 %).
  */
 const tintOf = (ci: number): RGB => hexToRgb(continentInk(ci, 0.72));
-/** Label opacity: unheld labels are Layer 1; a held one is full. */
-const LABEL_A = 0.9;
-const HELD_LABEL_A = 1;
+/** Label opacity: unheld labels are Layer 1 at rest (lead round 2: a touch quieter); a held one a little stronger. */
+const LABEL_A = 0.8;
+const HELD_LABEL_A = 0.9;
 
 interface Cont {
   id: ContinentId;

@@ -993,24 +993,27 @@ export async function buildInk(g: BoardGeometry, opt: InkOptions): Promise<InkLa
   const streakMs = Math.round(performance.now() - t0);
   const sb: StreakBrush | null = streakBrush;
   const streaked = !!sb;
-  const oneBrush = (r: { pts: Vec2[]; closed: boolean }, width: number, passes: number) => {
+  const oneBrush = (r: { pts: Vec2[]; closed: boolean }, width: number, passes: number, dry = 0.5, taper = 0) => {
     const sdn = seed++;
     dryBrush(ctx, flatOf(r.pts), r.closed, {
       width,
       passes,
       alpha: 0.62,
       jitter: width * 0.15,
-      dry: 0.5,
+      dry,
       seed: sdn,
       spacing,
-      endTaper: 0,
+      endTaper: taper,
       streak: sb ? streakFor(sb, sdn, width, spacing) : undefined,
     });
   };
-  // R: coasts, the Heavy weight (an island speck a little finer, or its stroke scribbles over it).
+  // R: coasts, the Heavy weight (an island speck a little finer, or its stroke scribbles over it). v4 round 2: a
+  // brush, not an outline: drier bristles (more breaks along the stroke) and an open run's ends lift off (taper
+  // over ~2.5 widths), so the line breaks where one coast run meets the next.
   for (const r of coastRuns) {
     const small = r.closed && ringLen(r.pts) < 3;
-    oneBrush(r, (small ? 0.75 : 1) * EDGE_PX.heavy * (u / EDGE_REF_PPU), small ? 6 : 10);
+    const w = (small ? 0.75 : 1) * EDGE_PX.heavy * (u / EDGE_REF_PPU);
+    oneBrush(r, w, small ? 6 : 10, small ? 0.3 : 0.66, r.closed ? 0 : w * 2.5);
   }
   grab(0);
   await yieldFrame();

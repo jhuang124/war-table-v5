@@ -137,7 +137,7 @@ export function tileRgb(state: GameState | null, owner: PlayerId): RGB {
   return hexToRgb(p.base);
 }
 
-/** An owner's WASH (v4 E4): the seat's tint, lighter and 35 % desaturated, laid on the territories it holds. */
+/** An owner's WASH (v4 E4): the seat's tint (its pigment desaturated, never lighter), laid on the territories it holds. */
 export function washRgb(state: GameState | null, owner: PlayerId): RGB {
   if (owner < 0 || !state || !state.players[owner]) return unclaimedRgb();
   return hexToRgb(washOf(PLAYER_COLORS[state.players[owner].color]));

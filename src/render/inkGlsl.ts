@@ -31,8 +31,8 @@ export const GLOW_PERIODS: [number, number] = [11.0, 13.7];
 export const VIG_WARM = 0.2;
 export const VIG_DARK = 0.07;
 /** E3 / E2: the coast stroke's opacity at rest (Layer 2), its glow, and the territory border's opacity. */
-export const COAST_A = 0.62;
-export const COAST_BLOOM = 0.12;
+export const COAST_A = 0.82;
+export const COAST_BLOOM = 0.2;
 export const TERR_A = 0.75;
 /** The continents' paper tints: src/shared/palette.ts CONTINENT_TINTS. */
 export const CONT_TINTS = CONTINENT_TINTS;
@@ -308,6 +308,12 @@ float vignette() {
 float brushJit(vec2 bp) {
   return 0.84 + 0.16 * smoothstep(0.3, 0.62, nz(bp / 1.3 + 0.61).a);
 }
+// The coast's pressure (v4 round 2): the same pen (brushJit) plus a slower swell along the shore, every ~3 units the
+// brush loads and runs drier, so the heavy line reads as a brush, never as a vector outline. The bloom swells with it.
+float coastJit(vec2 bp) {
+  float sw = smoothstep(0.28, 0.72, nz(bp / 3.1 + 0.37).g);
+  return brushJit(bp) * (0.4 + 0.6 * sw);
+}
 // The coast's ink at rest (E3 Layer 2: 30–60 % against its paper; the continent outline is the Layer 1 line) and
 // its glow's strength. A territory's phase glow takes the stroke to full ivory.
 const float COAST_A = ${COAST_A.toFixed(3)};
@@ -460,7 +466,8 @@ void main() {
     // decorative (non-playable) land: raw paper, a shade lighter
     if (f.a > 0.5 && id < 0.5) c = mix(c, uUnclaimed, 0.55);
     // the coast glow: the heavy stroke's own bloom bleeding into the sea, drifting slowly (E2: one brush)
-    c = mix(c, uInkCoast, COAST_BLOOM * smoothstep(0.03, 0.55, coastSoft(bp)) * (1.0 - f.a));
+    float cj = coastJit(bp);
+    c = mix(c, uInkCoast, COAST_BLOOM * (0.6 + 0.4 * cj) * smoothstep(0.03, 0.55, coastSoft(bp)) * (1.0 - f.a));
     vec4 k = inkAt(bp);
     float glow;
     vec3 cc = coastColor(id, bp, glow);
@@ -468,7 +475,7 @@ void main() {
     // the decorative coasts: the Hair weight, Layer 3
     c = mix(c, uInkCoast * 0.96, k.b * 0.4 * jit);
     // the coast: the Heavy weight, Layer 2 (30–60 % against its paper), full ivory only when it glows
-    c = mix(c, cc, clamp(k.r * jit * (COAST_A + (1.0 - COAST_A) * glow), 0.0, 1.0));
+    c = mix(c, cc, clamp(k.r * mix(cj, 1.0, glow) * (COAST_A + (1.0 - COAST_A) * glow), 0.0, 1.0));
     // the tint: a thin shore band only (~0.3 units out); water the outline encloses stays paper
     c = continentInk(c, bp, (1.0 - f.a) * (1.0 - smoothstep(0.15, 0.32, seaD)));
     float sh = max(liftShadow(bp, uLiftA, -1.0), liftShadow(bp, uLiftB, -1.0));
@@ -601,8 +608,7 @@ void main() {
   // (v4 E10: the wash no longer breathes at rest; only the mist, the coast glow and the lamp move)
   wash *= 1.0 - 0.08 * uBreath;
 
-  // (v4: the tint is laid at 0.95 over the paper, v3's base at 0.92: the lighter wash lets less indigo through)
-  vec3 c = mix(paper, wash, 0.95);
+  vec3 c = mix(paper, wash, 0.92);
   c = mix(c, mix(paper, uUnclaimed, 0.6), uDry);
   // recede toward the paper
   c = mix(c, paper, 0.3 * uDim) * (1.0 - 0.05 * uDim);
@@ -614,7 +620,8 @@ void main() {
 
   // the coast glow bleeding into the wash (the heavy stroke's own bloom, drifting; uneven with the grain)
   float cs = coastSoft(bp);
-  c = mix(c, uInkCoast, COAST_BLOOM * smoothstep(0.03, 0.55, cs) * (0.75 + 0.5 * gr));
+  float cj = coastJit(bp);
+  c = mix(c, uInkCoast, COAST_BLOOM * 0.8 * (0.6 + 0.4 * cj) * smoothstep(0.03, 0.55, cs) * (0.75 + 0.5 * gr));
 
   // ink (v4 E2): the territory border is the Light weight in the paper's deep tone, a crack of indigo between
   // washes; the coast is the Heavy weight in ivory (Layer 2 at rest, full when the territory glows)
@@ -624,7 +631,8 @@ void main() {
   glow = max(glow, uGlow);
   float jit = brushJit(bp);
   c = mix(c, uTerrInk, clamp(k.g * jit * TERR_A * (1.0 - 0.3 * uLight), 0.0, 1.0));
-  c = mix(c, cc, clamp(k.r * jit * (COAST_A + (1.0 - COAST_A) * max(glow, 0.3 * uLight)), 0.0, 1.0));
+  float gl = max(glow, 0.3 * uLight);
+  c = mix(c, cc, clamp(k.r * mix(cj, 1.0, gl) * (COAST_A + (1.0 - COAST_A) * gl), 0.0, 1.0));
   // a continent's border across land (Ural, the isthmus, Suez) is the printed outline too
   c = continentInk(c, bp, 0.0);
 
