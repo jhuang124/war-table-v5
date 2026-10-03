@@ -517,6 +517,37 @@ export class AttackArrow {
     for (const r of this.bodies) r.u.uTail.value = Math.max(r.u.uTail.value, v);
   }
 
+  /**
+   * [fight v5] A repulse (PROPOSAL §4 A "verdict"): the stroke dries back toward home, the tip withdrawing
+   * along the line to the source figure as the ink pales (tier 1, ~450 ms). Fire and forget; a new show()
+   * wins.
+   */
+  retract(ms = 450): Promise<void> {
+    if (!this.group.visible) return Promise.resolve();
+    this.key = '';
+    const ver = ++this.ver;
+    if (this.anim.instant || this.reduced) {
+      this.hide(true);
+      return Promise.resolve();
+    }
+    const from = Math.min(1, this.progress);
+    return this.anim.tween({
+      ms,
+      ease: ease.inOutQuad,
+      update: (v) => {
+        if (ver !== this.ver) return;
+        this.setProgress(from * (1 - v));
+        this.setDry(0, 1 - 0.55 * v * v);
+      },
+      done: () => {
+        if (ver === this.ver) {
+          this.group.visible = false;
+          this.progress = 0;
+        }
+      },
+    });
+  }
+
   /** Dry out from the tail (140 ms). */
   hide(immediate = false): void {
     if (!this.group.visible) return;
@@ -847,5 +878,85 @@ export class FortifyRoute {
 
   dispose(): void {
     this.line.dispose();
+  }
+}
+
+// ---------------------------------------------------------------------------
+// [fight v5] The room goes cold for a breath (PROPOSAL §4 A "anticipation", SOUL "Feel")
+// ---------------------------------------------------------------------------
+
+const CHILL_VERT = /* glsl */ `
+void main() {
+  gl_Position = vec4(position.xy, 0.0, 1.0);
+}
+`;
+const CHILL_FRAG = /* glsl */ `
+uniform vec2 uRes;
+uniform vec3 uCool;
+uniform float uAmt;
+uniform vec2 uFocus;
+uniform float uFocusR;
+void main() {
+  vec2 px = gl_FragCoord.xy;
+  vec2 q = px / uRes - 0.5;
+  q.x *= uRes.x / max(1.0, uRes.y) * 0.62;
+  // the lamp's warm margins pull in and go cool: a tighter vignette than the cozy one (inkGlsl vigMask 0.24–0.8)
+  float m = smoothstep(0.16, 0.7, length(q));
+  // the paper right around the fight keeps its light (the fight is what you look at); the rest cools a shade
+  float f = uFocusR > 0.0 ? smoothstep(uFocusR * 0.55, uFocusR * 1.6, distance(px, uFocus)) : 1.0;
+  float a = uAmt * (0.06 * f + 0.2 * m);
+  if (a < 0.002) discard;
+  gl_FragColor = vec4(uCool, a);
+}
+`;
+
+/**
+ * A screen-space veil drawn over the board (after it, before the dice): during a fight the margins cool and
+ * tighten and the paper away from the fight goes a shade colder. Paint only: an alpha wash of cold indigo,
+ * never a light. `amt` 0..1 is driven by the board's lean (index.ts).
+ */
+export class ChillVeil {
+  scene = new THREE.Scene();
+  camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+  private mat: THREE.ShaderMaterial;
+  private mesh: THREE.Mesh;
+  amt = 0;
+  constructor() {
+    this.mat = new THREE.ShaderMaterial({
+      uniforms: {
+        uRes: { value: new THREE.Vector2(1, 1) },
+        uCool: { value: new THREE.Vector3(0.012, 0.035, 0.1) },
+        uAmt: { value: 0 },
+        uFocus: { value: new THREE.Vector2(0, 0) },
+        uFocusR: { value: 0 },
+      },
+      vertexShader: CHILL_VERT,
+      fragmentShader: CHILL_FRAG,
+      transparent: true,
+      depthWrite: false,
+      depthTest: false,
+      toneMapped: false,
+    });
+    this.mesh = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), this.mat);
+    this.mesh.frustumCulled = false;
+    this.scene.add(this.mesh);
+  }
+  get visible(): boolean {
+    return this.amt > 0.002;
+  }
+  /** Drawing-buffer size and the fight's centre and radius in buffer px (y up, GL convention). */
+  set(bufW: number, bufH: number, focus: [number, number] | null, radius: number): void {
+    const u = this.mat.uniforms;
+    (u.uRes.value as THREE.Vector2).set(bufW, bufH);
+    u.uAmt.value = this.amt;
+    if (focus) (u.uFocus.value as THREE.Vector2).set(focus[0], focus[1]);
+    u.uFocusR.value = focus ? radius : 0;
+  }
+  get material(): THREE.Material {
+    return this.mat;
+  }
+  dispose(): void {
+    this.mat.dispose();
+    this.mesh.geometry.dispose();
   }
 }

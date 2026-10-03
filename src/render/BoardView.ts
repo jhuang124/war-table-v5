@@ -227,7 +227,7 @@ export interface BoardView {
    * The dice tray showed / hid. Additive (v4): when visible on desktop the ring sits beside the fight, and `rect`
    * is its box in container CSS px so the HUD's fight header can ride on it; absent = the fixed band.
    */
-  onTrayChange?(cb: (visible: boolean, rect?: { x: number; y: number; w: number; h: number }) => void): void;
+  onTrayChange?(cb: (visible: boolean, rect?: { x: number; y: number; w: number; h: number; header?: 'above' | 'below' }) => void): void;
   /**
    * Additive (v5 A): lean the camera toward `territories` (eased, at most `amount` board widths, default 0.15,
    * never a cut) and cool the paper around them a shade for the fight; `leanBack()` returns both over ~600 ms.
@@ -235,6 +235,13 @@ export interface BoardView {
    */
   leanTo?(territories: TerritoryId[], o?: { amount?: number }): void;
   leanBack?(): void;
+  /**
+   * Additive (v5 A, fight builder): `rect.header` on onTrayChange is the side of the ring the fight header should
+   * ride ('above' | 'below'), chosen with the ring so neither covers a name, numeral or stone; absent = the HUD's
+   * own rule. And `onFightCount`: the fight's counts as each compared pair's verdict lands in a full roll (and
+   * once at a blitz roll's verdict), so the header can tick down with the dice instead of at the roll's end.
+   */
+  onFightCount?(cb: (c: { from: TerritoryId; to: TerritoryId; attackerArmies: number; defenderArmies: number }) => void): void;
 
   /**
    * Additive (renderer, mobile pass; docs/MOBILE.md §3): a touch long-press (400 ms, one finger, not moved)
