@@ -82,6 +82,17 @@ export class BattleHeader {
       if (!noTray) drawIn(this.el, 220);
     }
     toggle(this.el, 'no-tray', noTray);
+    // v4: on desktop the ring sits beside the fight; the header rides on its top rim
+    const r = vm.trayRect;
+    if (r) {
+      this.el.style.left = `${r.x + r.w / 2}px`;
+      this.el.style.top = `${Math.max(8, r.y - this.el.offsetHeight - 4)}px`;
+      this.el.style.bottom = 'auto';
+    } else if (this.el.style.top) {
+      this.el.style.left = '';
+      this.el.style.top = '';
+      this.el.style.bottom = '';
+    }
     this.att.update(vm.attacker);
     this.def.update(vm.defender);
     const cap = vm.captured;

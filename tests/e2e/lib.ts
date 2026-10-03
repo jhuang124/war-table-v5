@@ -176,7 +176,11 @@ export async function answerOffer(page: Page, accept = false): Promise<boolean> 
   const id = accept ? 'btn-acceptTruce' : 'btn-declineTruce';
   let answered = false;
   // several AIs may have asked: one offer at a time, oldest first
-  for (let i = 0; i < 4 && (await ui(page)).buttons.includes('Accept'); i++) {
+  const asked = async () => {
+    const u = (await ui(page)) as { buttons: string[]; offer?: { buttons: string[] } | null };
+    return u.offer?.buttons.includes('Accept') || u.buttons.includes('Accept');
+  };
+  for (let i = 0; i < 4 && (await asked()); i++) {
     const n = (await state(page))?.diplomacy?.offers.length ?? 0;
     await clickBtn(page, id);
     await page.waitForFunction((k) => (window.__risk.getState()?.diplomacy?.offers.length ?? 0) < k && window.__risk.isIdle(), n, { timeout: 3000 }).catch(() => undefined);
@@ -186,7 +190,22 @@ export async function answerOffer(page: Page, accept = false): Promise<boolean> 
 }
 
 /** Place: pick `t`, set the count to `n` (default: all), press Place. (A truce offer showing is declined first.) */
+/** v4: the "While you were away" receipt takes the first tap; put it away through the hook before acting. */
+export async function dismissReceipt(page: Page): Promise<boolean> {
+  const had = await page.evaluate(() => {
+    const r = window.__risk as unknown as { receipt?: () => unknown; dismissReceipt?: () => void };
+    if (r.receipt?.()) {
+      r.dismissReceipt?.();
+      return true;
+    }
+    return false;
+  });
+  if (had) await page.waitForFunction(() => window.__risk.isIdle(), null, { timeout: 3000 }).catch(() => undefined);
+  return had;
+}
+
 export async function place(page: Page, t: string, n?: number): Promise<void> {
+  await dismissReceipt(page);
   await answerOffer(page);
   await clickT(page, t);
   await page.waitForFunction(() => !!window.__risk.ui().count, null, { timeout: 3000 }).catch(async (e) => {

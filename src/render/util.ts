@@ -143,6 +143,13 @@ export function washRgb(state: GameState | null, owner: PlayerId): RGB {
   return hexToRgb(washOf(PLAYER_COLORS[state.players[owner].color]));
 }
 
+/** An owner's stone EDGE ink (v4 E4, paper round 2): `PlayerPalette.edge` when set, else the deep tone of the pigment. */
+export function edgeRgb(state: GameState | null, owner: PlayerId): RGB | null {
+  if (owner < 0 || !state || !state.players[owner]) return null;
+  const p = PLAYER_COLORS[state.players[owner].color] as { edge?: string };
+  return p.edge ? hexToRgb(p.edge) : null;
+}
+
 export function paletteOf(state: GameState | null, owner: PlayerId) {
   if (owner < 0 || !state || !state.players[owner]) return null;
   return PLAYER_COLORS[state.players[owner].color];

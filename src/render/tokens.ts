@@ -900,9 +900,10 @@ export class TokenSystem {
     return deepOf(tile);
   }
 
-  setColor(id: TerritoryId, tileColor: RGB): void {
+  setColor(id: TerritoryId, tileColor: RGB, edgeColor?: RGB | null): void {
     const t = this.toks.get(id)!;
-    const c = { col: lacquer(tileColor), deep: deepOf(tileColor) };
+    // v4 E4: the 1 px edge takes the palette's `edge` ink when the seat has one (≥ 25 % off its wash)
+    const c = { col: lacquer(tileColor), deep: edgeColor ?? deepOf(tileColor) };
     if (t.frozen) t.pendingColor = c;
     else {
       t.col = c.col;

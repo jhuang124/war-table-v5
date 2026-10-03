@@ -549,6 +549,8 @@ class Controller {
   private boardLost = false;
   /** The board's dice tray is showing (onTrayChange). */
   private trayUp = false;
+  /** v4: the tray's box beside the fight (desktop), for the fight header. */
+  private trayRect: { x: number; y: number; w: number; h: number } | null = null;
   private disposers: (() => void)[] = [];
 
   // App
@@ -708,8 +710,9 @@ class Controller {
       this.invalidate();
     });
     // The tray started fading: a decided fight's header fades with it.
-    this.board.onTrayChange?.((visible) => {
+    this.board.onTrayChange?.((visible, rect) => {
       this.trayUp = visible;
+      this.trayRect = visible ? (rect ?? null) : null;
       if (!visible) this.clearLinger();
       this.invalidate();
     });
@@ -2042,7 +2045,7 @@ class Controller {
    * confirm, the receipt. ('lift' is the audio branch's SfxVariant; cast until that type lands here.)
    */
   private sheet(open: boolean): void {
-    this.cue('sheet', open ? undefined : ({ variant: 'lift' } as unknown as PlayOptions));
+    this.cue('sheet', open ? undefined : { variant: 'lift' });
   }
 
   /** A human lost a continent or a seat: the score leans cold for one chord (B3). */
@@ -3805,6 +3808,7 @@ class Controller {
       rolling: this.rolling && useEng,
       captured: decided && g!.conquered ? `${tName(to)} captured` : null,
       tray: this.trayUp,
+      trayRect: this.trayRect,
     };
   }
 

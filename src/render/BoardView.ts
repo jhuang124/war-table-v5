@@ -213,7 +213,11 @@ export interface BoardView {
    * Additive (renderer, round 2): the battle tray became visible (true) or started its fade-out (false),
    * so the HUD's battle header can fade in lockstep (tray fades 300 ms, ~1 s after a decided fight).
    */
-  onTrayChange?(cb: (visible: boolean) => void): void;
+  /**
+   * The dice tray showed / hid. Additive (v4): when visible on desktop the ring sits beside the fight, and `rect`
+   * is its box in container CSS px so the HUD's fight header can ride on it; absent = the fixed band.
+   */
+  onTrayChange?(cb: (visible: boolean, rect?: { x: number; y: number; w: number; h: number }) => void): void;
 
   /**
    * Additive (renderer, mobile pass; docs/MOBILE.md §3): a touch long-press (400 ms, one finger, not moved)

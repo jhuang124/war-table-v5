@@ -298,6 +298,8 @@ export interface BattleVM {
    * header only with the tray (an armed fight's header alone would float mid-board).
    */
   tray?: boolean;
+  /** Additive (v4): the tray's box in container px when it sits beside the fight (desktop); absent = the band. */
+  trayRect?: { x: number; y: number; w: number; h: number } | null;
 }
 
 export interface CardVM {

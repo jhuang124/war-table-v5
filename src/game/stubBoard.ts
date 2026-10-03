@@ -205,7 +205,7 @@ export function createStubBoard(opts: StubBoardOptions): BoardView {
     // The live stroke: a gold line from the source to the pointer.
     if (stroke?.drawing) {
       const [x0, y0] = toScreen(geometry.territories[stroke.from].anchor);
-      ctx.strokeStyle = '#c9a961';
+      ctx.strokeStyle = '#cfa66b';
       ctx.lineWidth = 4;
       ctx.lineCap = 'round';
       ctx.beginPath();

@@ -40,7 +40,7 @@ import {
   pointInRing,
   setBoardSize,
   tileRgb,
-  washRgb,
+  washRgb, edgeRgb,
   toBoard,
   toWorld,
   mixRgb,
@@ -232,14 +232,16 @@ export const createBoardView: CreateBoardView = async (opts: BoardViewOptions): 
   // Listeners: the view left home (Reset view pill) / the battle tray showed or started to fade.
   const displacedCbs: ((d: boolean) => void)[] = [];
   let lastDisplaced = false;
-  const trayCbs: ((v: boolean) => void)[] = [];
+  const trayCbs: ((v: boolean, rect?: { x: number; y: number; w: number; h: number }) => void)[] = [];
   let trayShownEmitted = false;
   const emitTray = (v: boolean) => {
     if (v === trayShownEmitted) return;
     trayShownEmitted = v;
+    // v4: the ring sits beside the fight on desktop; the HUD's fight header follows this rect (container px)
+    const rect = v ? { x: tray.cx - tray.trayW / 2, y: tray.cy - tray.trayH / 2, w: tray.trayW, h: tray.trayH } : undefined;
     for (const cb of trayCbs) {
       try {
-        cb(v);
+        cb(v, rect);
       } catch (err) {
         console.error(err);
       }
@@ -343,7 +345,7 @@ export const createBoardView: CreateBoardView = async (opts: BoardViewOptions): 
     // v4 E4: the land takes the seat's tint, the stone keeps its full pigment
     t.rgb = washRgb(lastState, owner);
     t.dirty = true;
-    tokens.setColor(id, tileRgb(lastState, owner));
+    tokens.setColor(id, tileRgb(lastState, owner), edgeRgb(lastState, owner));
   };
 
   const refreshBadge = (id: TerritoryId, pop = false) => {
@@ -2930,7 +2932,7 @@ export const createBoardView: CreateBoardView = async (opts: BoardViewOptions): 
     onViewDisplacedChange(cb: (displaced: boolean) => void) {
       displacedCbs.push(cb);
     },
-    onTrayChange(cb: (visible: boolean) => void) {
+    onTrayChange(cb: (visible: boolean, rect?: { x: number; y: number; w: number; h: number }) => void) {
       trayCbs.push(cb);
     },
     pulsePhase(phase: 'attack' | 'fortify' | 'end', o?: { player?: PlayerId; territories?: TerritoryId[] }) {
