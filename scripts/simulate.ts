@@ -12,6 +12,9 @@ import {
   applyAction,
   chooseAiAction,
   createGame,
+  missionComplete,
+  missionGoal,
+  missionHeadline,
   TERRITORY_IDS,
   UNCLAIMED,
   validateAction,
@@ -43,6 +46,10 @@ interface GameResult {
   dip: Partial<Record<GameEventType, number>>;
   /** Per seat: main turns, conquests, eliminations made, truces broken, turns started holding a continent. */
   seatStats: SeatStats[];
+  /** v5 G: 'mission' when a secret mission ended it, with the winner's goal kind and the headline. */
+  by?: 'mission';
+  missionKind?: string;
+  headline?: string;
 }
 
 interface SeatStats {
@@ -170,7 +177,15 @@ function playGame(config: GameConfig, label: string): GameResult {
     track();
   }
   if (state.phase.kind !== 'game-over') throw new Error('unreachable');
+  const ph = state.phase;
+  if (ph.by === 'mission') {
+    // Nobody wins by a mission they do not hold, and only by one that is met.
+    if (!missionComplete(state, ph.winner)) throw new Error(`${label}: mission win by ${ph.winner} with the mission unmet`);
+    if (ph.mission !== missionHeadline(state, ph.winner)) throw new Error(`${label}: mission headline mismatch`);
+  }
+  const mk = ph.by === 'mission' ? missionGoal(state, ph.winner)?.kind : undefined;
   return {
+    ...(ph.by ? { by: ph.by, headline: ph.mission, missionKind: mk } : {}),
     winner: state.phase.winner,
     reason: state.phase.reason,
     rounds: state.round,
@@ -414,6 +429,40 @@ const cells2n = THRESHOLDS.map((pc) => {
   return `${pc}%: ${mean.toFixed(1)} / ${median(xs)} / ${xs[Math.floor(xs.length * 0.9)] ?? '—'}`;
 });
 console.log(`  2p+neutral rounds until X% (mean / median / p90, ${L} games): ${cells2n.join('   ')}`);
+
+// --- Missions (v5 G): Evening-length tables, with and without the house rule -----------------------
+// Normal AIs with the default table's personalities (4p: turtle, opportunist, warlord + one classic,
+// rotated; 3p: the three personalities, rotated; 2p+neutral). Evening = 70%. (A 2-player table without the
+// neutral seat plays without missions: sanitizeConfig drops the rule.)
+const MS = Math.max(40, N);
+console.log(`\n=== Missions: Evening length, ${MS} games per table; share ending by mission, rounds (median / p90) with vs without ===`);
+turnBucket = 'missions';
+const evening = (neutral = false) => ({ turnLimit: null, dominationPercent: 70, ...(neutral ? { neutral: true } : {}) });
+const tables: { label: string; seats: (i: number) => PlayerConfig[]; over: Partial<GameConfig> }[] = [
+  { label: '4p', seats: (i) => pSeats(KINDS.map((_, k) => KINDS[(k + i) % 4])), over: evening() },
+  { label: '3p', seats: (i) => pSeats((['turtle', 'opportunist', 'warlord'] as Kind[]).map((_, k, a) => a[(k + i) % 3])), over: evening() },
+  { label: '2p+neutral', seats: (i) => pSeats((['turtle', 'warlord'] as Kind[]).map((_, k, a) => a[(k + i) % 2])), over: evening(true) },
+];
+const p90 = (xs: number[]) => [...xs].sort((a, b) => a - b)[Math.floor(xs.length * 0.9)] ?? 0;
+let mAll = 0;
+let mByMission = 0;
+for (const t of tables) {
+  const on = run(`missions-${t.label}`, MS, (i) => makeConfig(i, t.seats(i), { ...t.over, missions: true }));
+  const off = run(`nomissions-${t.label}`, MS, (i) => makeConfig(i, t.seats(i), t.over));
+  const byM = on.filter((g) => g.by === 'mission');
+  mAll += on.length;
+  mByMission += byM.length;
+  const kinds: Record<string, number> = {};
+  for (const g of byM) kinds[g.missionKind ?? '?'] = (kinds[g.missionKind ?? '?'] ?? 0) + 1;
+  const ron = on.map((g) => g.rounds);
+  const roff = off.map((g) => g.rounds);
+  console.log(
+    `  ${t.label.padEnd(10)} by mission ${String(byM.length).padStart(3)}/${on.length} (${pct(byM.length, on.length).padStart(6)}; ${Object.entries(kinds).map(([k, v]) => `${k} ${v}`).join(', ') || '—'})  rounds ${median(ron)} / ${p90(ron)}  (without: ${median(roff)} / ${p90(roff)})`,
+  );
+  if (t.label === '4p' && byM[0]) console.log(`    e.g. "${byM[0].headline}"`);
+}
+if (mByMission * 3 < mAll) failures.push(`missions ended only ${pct(mByMission, mAll)} of Evening games (target ≥ 33%)`);
+console.log(`  all tables together: ${pct(mByMission, mAll)} end by mission (target ≥ 33%)`);
 
 // --- Timing ---------------------------------------------------------------------------------------
 const sorted = [...decisionTimes].sort((a, b) => a - b);

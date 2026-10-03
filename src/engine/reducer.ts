@@ -26,6 +26,12 @@
 //   fortify: armiesMoved(fortify, with path) → [end of turn]
 //   endTurn: [end of turn]
 //   [end of turn]: cardDrawn? → (turn limit reached: gameOver) | turnStarted → phaseChanged(reinforce)
+//
+// Missions (v5 G, config.missions): the current player's mission is checked after endReinforce
+// (phaseChanged(attack) → gameOver), after a conquest's occupy (in place of the territory win, which is
+// checked first), and before fortify/endTurn hand the turn on (armiesMoved(fortify)? → gameOver, no
+// card drawn). A conquest that meets the mission marches everyone in like a winning conquest.
+// gameOver then carries by: 'mission' and the headline sentence.
 //   setController: controllerChanged
 //
 // Diplomacy (additive; only personality AIs, or humans with config.diplomacy, ever trigger these):
@@ -63,6 +69,7 @@ import {
   emit,
   finishTurn,
   gameOver,
+  missionWin,
   nextSeat,
   setPhase,
   startMainGame,
@@ -71,6 +78,7 @@ import {
   type Draft,
 } from './flow';
 import { ADJACENCY, CONTINENTS, TERRITORIES, TERRITORY_IDS } from './mapData';
+import { missionComplete } from './missions';
 import { rollDie } from './rng';
 import {
   checkWinner,
@@ -443,6 +451,7 @@ function execute(d: Draft, a: Action): void {
     }
     case 'endReinforce':
       setPhase(d, { kind: 'attack' });
+      missionWin(d);
       return;
     case 'attack': {
       breakTruceIfAny(d, a.player, a.from, a.to);
@@ -479,10 +488,12 @@ function execute(d: Draft, a: Action): void {
       s.territories[a.from].armies -= a.count;
       s.territories[a.to].armies += a.count;
       emit(d, { type: 'armiesMoved', player: a.player, from: a.from, to: a.to, count: a.count, reason: 'fortify', path });
+      if (missionWin(d)) return;
       finishTurn(d);
       return;
     }
     case 'endTurn':
+      if (missionWin(d)) return;
       finishTurn(d);
       return;
   }
@@ -654,7 +665,7 @@ function conquer(d: Draft, from: TerritoryId, to: TerritoryId, lastDice: number)
 
   const max = s.territories[from].armies - 1;
   const min = Math.min(lastDice, max);
-  if (checkWinner(s)) {
+  if (checkWinner(s) || missionComplete(s, attacker)) {
     // Winning conquest: no pointless slider before the victory screen — march everyone in.
     completeOccupy(d, from, to, max, prev, false);
     return;
@@ -695,6 +706,7 @@ function completeOccupy(
     gameOver(d, win.winner, win.reason);
     return;
   }
+  if (missionWin(d)) return;
   if (s.players[player].cards.length >= 6) {
     setPhase(d, { kind: 'reinforce', remaining: 0, mustTrade: true, placed: {}, midTurn: true });
     return;

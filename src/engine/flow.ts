@@ -3,6 +3,7 @@
 
 import { decayGrudges, REBUFF_ROUNDS } from './diplomacy';
 import { ADJACENCY, TERRITORY_IDS } from './mapData';
+import { missionComplete, missionHeadline, missionText } from './missions';
 import { random, shuffleInPlace } from './rng';
 import { reinforcementsFor, territoryCount, totalArmies, turnLimitWinner } from './rules';
 import type { GameEvent, GameState, Phase, PlayerId, TerritoryId, TruceOffer } from './types';
@@ -40,10 +41,30 @@ export function recordTimeline(d: Draft): void {
   ];
 }
 
-export function gameOver(d: Draft, winner: PlayerId, reason: 'domination' | 'percent' | 'turnLimit'): void {
-  d.s.phase = { kind: 'game-over', winner, reason };
+export function gameOver(
+  d: Draft,
+  winner: PlayerId,
+  reason: 'domination' | 'percent' | 'turnLimit',
+  mission?: string,
+): void {
+  const extra = mission !== undefined ? { by: 'mission' as const, mission } : {};
+  d.s.phase = { kind: 'game-over', winner, reason, ...extra };
   recordTimeline(d); // final sample so the victory chart ends on the final board
-  emit(d, { type: 'gameOver', winner, reason });
+  emit(d, { type: 'gameOver', winner, reason, ...extra });
+}
+
+/**
+ * v5 G: the current player's secret mission is met → the game ends (reason 'percent', by 'mission').
+ * Called at the end of the current player's own actions only (endReinforce, after a conquest's occupy,
+ * fortify, endTurn), so nobody wins on someone else's turn. True when the game ended.
+ */
+export function missionWin(d: Draft): boolean {
+  const s = d.s;
+  if (!s.config.missions || s.phase.kind === 'game-over') return false;
+  const p = s.currentPlayer;
+  if (!missionComplete(s, p)) return false;
+  gameOver(d, p, 'percent', missionHeadline(s, p) ?? missionText(s, p) ?? '');
+  return true;
 }
 
 /** Next seat after `from` (cyclic) matching `pred`, or null. `wrapped` = the walk passed firstPlayer. */

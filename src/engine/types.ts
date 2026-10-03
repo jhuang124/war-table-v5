@@ -235,6 +235,13 @@ export type Phase =
       kind: 'game-over';
       winner: PlayerId;
       reason: 'domination' | 'percent' | 'turnLimit';
+      /**
+       * Additive (v5 G): 'mission' when the winner met their secret mission (reason is then 'percent', a
+       * goal short of the world, so a v4 reader still sees a board win). Absent for every other win.
+       */
+      by?: 'mission';
+      /** Additive (v5 G): with by 'mission', the headline sentence: 'Vermilion holds Asia and Africa'. */
+      mission?: string;
     };
 
 export type PhaseKind = Phase['kind'];
@@ -416,7 +423,8 @@ export type GameEvent =
   /** `by` attacked `against` while a truce held. Emitted before the attack's first diceRolled. */
   | { type: 'truceBroken'; by: PlayerId; against: PlayerId; from: TerritoryId; to: TerritoryId }
   | { type: 'truceExpired'; from: PlayerId; to: PlayerId; reason: 'time' | 'eliminated' }
-  | { type: 'gameOver'; winner: PlayerId; reason: 'domination' | 'percent' | 'turnLimit' };
+  /** Additive (v5 G): `by: 'mission'` and `mission` (the headline sentence) when a secret mission won it. */
+  | { type: 'gameOver'; winner: PlayerId; reason: 'domination' | 'percent' | 'turnLimit'; by?: 'mission'; mission?: string };
 
 export type GameEventType = GameEvent['type'];
 

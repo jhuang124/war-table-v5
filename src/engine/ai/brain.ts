@@ -11,8 +11,9 @@ import { bonusTerritoryFor, setValueFor, validSets } from '../cards';
 import { ADJACENCY, CONTINENTS, CONTINENT_IDS, TERRITORIES, TERRITORY_IDS } from '../mapData';
 import { blitzOdds, winProbability, winProbabilityStopAt } from '../probability';
 import { hashInts, random, type RngHolder } from '../rng';
+import { missionGoal, type MissionGoal } from '../missions';
 import { fortifyPath, fortifyTargets, reinforcementsFor } from '../rules';
-import { UNCLAIMED, type Action, type ContinentId, type GameState, type Phase, type PlayerId, type TerritoryId, type TerritoryState } from '../types';
+import { UNCLAIMED, type Action, type AiPersonality, type ContinentId, type GameState, type Phase, type PlayerId, type TerritoryId, type TerritoryState } from '../types';
 import { chooseTruceProposal } from './diplomacy';
 import type { Persona } from './persona';
 import { personaFor, TEMPERAMENTS, type Temperament } from './personality';
@@ -64,7 +65,25 @@ interface Ctx {
   grudge: number[];
   /** Personality only: biggest opponent army total (for the opportunist's weak-target pull). */
   maxOppArmies: number;
+  /** v5 G: our secret mission's current goal (config.missions), or null. */
+  mg: MissionGoal | null;
+  /** v5 G: how hard this seat pursues `mg` (its personality's weight for that kind of mission). */
+  mw: number;
+  /** v5 G, continent missions: the continents the mission still needs (a 'plus one' picks its best third). */
+  mCont: Set<ContinentId>;
 }
+
+/**
+ * v5 G: how hard each personality pursues each kind of mission. The Turtle leans into continents, the
+ * Opportunist into cheap territory, the Warlord into knocking a colour out. The classic AI pursues
+ * every mission at 1.
+ */
+const MISSION_WEIGHT: Record<AiPersonality | 'classic', Record<MissionGoal['kind'], number>> = {
+  classic: { continents: 1, territories: 1, destroy: 1 },
+  turtle: { continents: 1.5, territories: 0.8, destroy: 0.7 },
+  opportunist: { continents: 1, territories: 1.5, destroy: 1.1 },
+  warlord: { continents: 1, territories: 1, destroy: 2 },
+};
 
 function mkRng(s: GameState, me: PlayerId): RngHolder {
   const ph = s.phase;
@@ -149,6 +168,9 @@ function buildCtx(s: GameState, me: PlayerId): Ctx {
     pending: NO_SEATS,
     grudge: [],
     maxOppArmies: 1,
+    mg: null,
+    mw: 0,
+    mCont: new Set(),
   };
   if (personality) {
     c.pk = TEMPERAMENTS[personality];
@@ -169,7 +191,71 @@ function buildCtx(s: GameState, me: PlayerId): Ctx {
     for (const pl of s.players) if (pl.id !== me && !pl.eliminated && !pl.neutral) c.maxOppArmies = Math.max(c.maxOppArmies, armies[pl.id]);
   }
   if (p.hunt && !s.phase.kind.startsWith('setup')) c.prey = findPrey(c, huntExtra(c));
+  if (s.config.missions) applyMission(c);
   return c;
+}
+
+/**
+ * v5 G: bend the plan toward our secret mission. Continent missions make the named continents the goal
+ * (and raise their desire); a colour mission hunts that seat whenever a sweep is in reach. The
+ * territory-count missions act in targetValue / bestAttack / placement.
+ */
+function applyMission(c: Ctx): void {
+  const s = c.s;
+  const g = missionGoal(s, c.me);
+  if (!g) return;
+  c.mg = g;
+  c.mw = MISSION_WEIGHT[s.players[c.me].personality ?? 'classic'][g.kind];
+  if (g.kind === 'continents') {
+    for (const k of g.continents) if (c.owner[k] !== c.me) c.mCont.add(k);
+    if (g.plusOne && !CONTINENT_IDS.some((k) => !g.continents.includes(k) && c.owner[k] === c.me)) {
+      // The third continent: the one we'd most like anyway.
+      let third: ContinentId | null = null;
+      for (const k of CONTINENT_IDS) if (!g.continents.includes(k) && (!third || c.desire[k] > c.desire[third])) third = k;
+      if (third) c.mCont.add(third);
+    }
+    let goal: ContinentId | null = null;
+    for (const k of c.mCont) {
+      c.desire[k] = c.desire[k] * (1 + c.mw) + 0.4 * c.mw;
+      if (!goal || c.desire[k] > c.desire[goal]) goal = k;
+    }
+    if (goal) c.goal = goal;
+  } else if (g.kind === 'destroy' && !s.phase.kind.startsWith('setup')) {
+    const t = findPrey(c, huntExtra(c), g.target);
+    if (t >= 0) c.prey = t;
+  }
+}
+
+/** v5 G: what owning enemy territory `n` is worth to our mission (0 without one). */
+function missionValue(c: Ctx, n: TerritoryId): number {
+  const g = c.mg;
+  if (!g) return 0;
+  const s = c.s;
+  switch (g.kind) {
+    case 'continents': {
+      const cont = TERRITORIES[n].continent;
+      if (!c.mCont.has(cont)) return 0;
+      const size = CONTINENTS[cont].territories.length;
+      let v = c.mw * (1.5 + (3 * c.mineIn[cont]) / size);
+      // The last territory of the last continent the mission needs: that conquest wins the game.
+      if (c.mineIn[cont] === size - 1 && c.mCont.size === 1) v += 20;
+      return v;
+    }
+    case 'territories': {
+      const left = g.count - c.terr[c.me];
+      let v = c.mw * 1.1;
+      if (left <= 4) v += c.mw * (5 - Math.max(1, left));
+      return v;
+    }
+    case 'destroy': {
+      const o = s.territories[n].owner;
+      if (o !== g.target) return 0;
+      const vt = Math.max(1, c.terr[o]);
+      let v = c.mw * (1.5 + 6 / vt);
+      if (vt === 1) v += 20; // its last territory: the conquest wins the game
+      return v;
+    }
+  }
 }
 
 /** A neighbouring stack's weight as a threat: a truce partner's counts for less (personality only). */
@@ -197,12 +283,13 @@ function huntExtra(c: Ctx): number {
  * other (so a sweep can reach them), and our adjacent force must cover the expected cost.
  * Value = their cards (captured) + game-ending in 2-player.
  */
-function findPrey(c: Ctx, extra: number): PlayerId {
+function findPrey(c: Ctx, extra: number, only?: PlayerId): PlayerId {
   const s = c.s;
   let best = -1;
   let bestV = 0;
   for (const v of s.players) {
     if (v.id === c.me || v.eliminated || v.neutral) continue;
+    if (only !== undefined && v.id !== only) continue;
     if (c.pk && c.pk.breakBar === Infinity && c.guard.has(v.id)) continue; // never hunts a partner
     const theirs = TERRITORY_IDS.filter((t) => s.territories[t].owner === v.id);
     if (theirs.length === 0 || theirs.length > 9) continue;
@@ -296,8 +383,9 @@ function targetValue(c: Ctx, n: TerritoryId): number {
     }
   }
   // Turtle: wandering off costs, and costs more once the turn's card is in hand.
-  if (c.pk && c.pk.homeBias > 0 && cont !== c.goal && c.mineIn[cont] * 2 < info.territories.length)
+  if (c.pk && c.pk.homeBias > 0 && cont !== c.goal && c.mineIn[cont] * 2 < info.territories.length && !c.mCont.has(cont))
     v -= c.pk.homeBias * (s.conqueredThisTurn ? 1.6 : 1);
+  if (c.mg) v += missionValue(c, n);
   return v;
 }
 
@@ -425,6 +513,21 @@ function choosePlacement(c: Ctx, remaining: number, placedSoFar: number, kind: '
     const t = pool[Math.floor(random(c.rng) * pool.length)];
     const count = Math.max(1, Math.min(remaining, 1 + Math.floor(random(c.rng) * remaining)));
     return mk(t, count);
+  }
+
+  // 0) v5 G, 'territories with 2 armies on each': once we hold enough, top up the thin ones.
+  if (kind === 'reinforce' && c.mg?.kind === 'territories' && c.mg.minArmies > 1 && c.terr[c.me] >= c.mg.count) {
+    const min = c.mg.minArmies;
+    const thin = owned.filter((t) => s.territories[t].armies < min);
+    const short = c.mg.count - (owned.length - thin.length);
+    if (short > 0 && thin.length >= short) {
+      const need = thin.slice(0, short).reduce((a, t) => a + min - s.territories[t].armies, 0);
+      if (need <= remaining) {
+        // Least threatened first: those are the ones that survive the next turn.
+        thin.sort((a, b) => maxThreat(c, a) - maxThreat(c, b));
+        return mk(thin[0], min - s.territories[thin[0]].armies);
+      }
+    }
   }
 
   // 1) Defend borders of continents we hold (and near-complete goal continents on hard).
@@ -590,6 +693,12 @@ function bestAttack(c: Ctx): AttackPlan | null {
         else if (ratio < 1.6) v -= c.pk.fairFightPenalty;
       }
       if (c.pk && c.pk.pressBias > 0 && d >= 3) v += c.pk.pressBias * Math.min(1, d / 8);
+      // v5 G: a territory-count mission wants many cheap conquests, not hard ones.
+      if (c.mg?.kind === 'territories') {
+        const ratio = fs.armies / Math.max(1, d);
+        if (ratio >= 2.5) v += c.mw * 1.2;
+        else if (ratio < 1.4) v -= c.mw * 0.6;
+      }
       let score = p * v - (odds.expectedAttackerLosses / Math.max(4, fs.armies)) * 1.2;
       if (c.p.overextendCare > 0) {
         const left = Number.isFinite(odds.expectedAttackersLeftIfWin) ? odds.expectedAttackersLeftIfWin + stopAt - 1 : 1;
@@ -633,6 +742,13 @@ function chooseOccupy(c: Ctx, ph: Extract<Phase, { kind: 'occupy' }>): Action {
     count = Math.round(min + (max - min) * (wTo / (wTo + wFrom)) * 1.1);
   }
   count = Math.max(min, Math.min(max, count));
+  if (c.mg?.kind === 'territories' && c.mg.minArmies > 1) {
+    // Keep both ends at the mission's two armies where the stack allows it.
+    const k = c.mg.minArmies;
+    const total = c.s.territories[from].armies; // max = total − 1
+    if (total >= 2 * k) count = Math.max(k, Math.min(total - k, count));
+    count = Math.max(min, Math.min(max, count));
+  }
   return { type: 'occupy', player: c.me, count };
 }
 

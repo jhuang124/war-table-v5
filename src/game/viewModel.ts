@@ -89,6 +89,11 @@ export interface HouseRulesDraft {
    * at least one human and one AI with a personality.
    */
   truces?: boolean;
+  /**
+   * Additive (v5 G): "Missions" — config.missions. Default off; applies to 3–4 seats, or 2 with the neutral
+   * seat (the engine drops it otherwise).
+   */
+  missions?: boolean;
 }
 
 /** Additive (v3): one map pack in the New game picker (src/map/registry.ts listMaps). */
@@ -135,6 +140,8 @@ export interface NewGameVM {
   neutralApplies?: boolean;
   /** Additive (v3): the Truces rule applies (a human and a personality AI at the table). */
   trucesApply?: boolean;
+  /** Additive (v5 G): the Missions rule applies (3–4 seats, or 2 with Neutral armies on). */
+  missionsApply?: boolean;
 }
 
 // ---------------------------------------------------------------------------

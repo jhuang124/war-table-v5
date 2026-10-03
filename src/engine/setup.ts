@@ -3,6 +3,7 @@
 import { isPersonality } from './ai/personality';
 import { buildDeck } from './cards';
 import { afterTerritoriesAssigned, emit, setPhase, updatePeak, type Draft } from './flow';
+import { dealMissions } from './missions';
 import { STARTING_ARMIES, TERRITORY_IDS, mapIdOf } from './mapData';
 import { randInt, shuffleInPlace, toSeed } from './rng';
 import {
@@ -90,6 +91,8 @@ export function sanitizeConfig(config: GameConfig): GameConfig {
   // Additive flags: only written when on, so a classic config sanitizes to exactly what it did before.
   if (config.diplomacy === true) out.diplomacy = true;
   if (config.neutral === true && n === 2) out.neutral = true;
+  // Missions need a third seat: two players on 21 territories each meet a mission in round 2 or 3.
+  if (config.missions === true && (n >= 3 || out.neutral)) out.missions = true;
   // Map packs (docs/MAPS.md): keep the map so the save carries it; an unknown id plays classic.
   if (typeof config.mapId === 'string' && config.mapId) out.mapId = mapIdOf(config.mapId);
   return out;
@@ -117,6 +120,8 @@ export function emptyStats(): PlayerStats {
  * With config.neutral (2 players): the neutral seat is appended (id 2) and dealt its third first;
  *   random: its territories are in territoriesDealt, then armiesPlaced(setup) for its extra armies;
  *   draft:  territoryClaimed ×14 (neutral) → armiesPlaced(setup) ×14 → phaseChanged(setup-claim).
+ * With config.missions (v5 G): one secret mission per seat (PlayerState.mission), dealt with state.rng
+ *   after everything above; no event (the mission is secret; missionText reads it).
  */
 export function createGame(inputConfig: GameConfig): { state: GameState; events: GameEvent[] } {
   const problem = validateConfig(inputConfig);
@@ -213,6 +218,8 @@ export function createGame(inputConfig: GameConfig): { state: GameState; events:
     }
     setPhase(d, { kind: 'setup-claim' });
   }
+  // v5 G: secret missions, dealt last so the board and the first turn match the same seed without them.
+  if (config.missions) dealMissions(s);
   return { state: s, events: d.ev };
 }
 

@@ -6,6 +6,7 @@
 // the seats it takes; the picked one's name carries the brush underline); an AI seat's personality as
 // three words, Turtle · Opportunist · Warlord, with the chosen one's line in small text under it (and every
 // word's line as its hover title); two house rules, Neutral armies (2 players) and Truces.
+// v5 G: a third, Missions (off by default): each seat gets a secret mission; completing it wins.
 
 import type { AiDifficulty, AiPersonality, PlayerColorId, PlayerKind } from '../../engine/types';
 import type { HouseRulesDraft, LengthPreset, MapOptionVM, NewGameVM, PersonalityOptionVM, SeatDraft, SetupPreset, UiIntent } from '../../game/viewModel';
@@ -16,6 +17,9 @@ import { isPhone, layout } from '../layout';
 import { dragToDismiss, grabHandle, sheetIn } from '../sheet';
 
 type Send = (i: UiIntent) => void;
+
+/** v5 G: the Missions switch's one line. */
+const MISSIONS_LINE = 'Each seat gets a secret mission; completing it wins';
 
 /** One colour emblem per seat; clicking it opens the six swatches (docs/ROUND2.md §E). */
 class SeatRow {
@@ -291,6 +295,7 @@ export class NewGameScreen {
   private h: {
     neutral: Switch;
     truces: Switch;
+    missions: Switch;
     draft: Switch;
     cards: Segmented<HouseRulesDraft['cardBonus']>;
     fortify: Segmented<HouseRulesDraft['fortifyRule']>;
@@ -335,6 +340,7 @@ export class NewGameScreen {
     const draft = new Switch('Draft territories', (v) => patch({ draft: v }), 'Take turns claiming them · adds ~10 min', 'house-draft');
     const neutral = new Switch('Neutral armies', (v) => patch({ neutral: v }), 'Two players · a third army holds 14 territories', 'house-neutral');
     const truces = new Switch('Truces', (v) => patch({ truces: v }), 'AIs with a personality offer and take them', 'house-truces');
+    const missions = new Switch('Missions', (v) => patch({ missions: v }), MISSIONS_LINE, 'house-missions');
     const cards = new Segmented<HouseRulesDraft['cardBonus']>('seg-row', (v) => patch({ cardBonus: v }), 'Card values', 'house-cards');
     cards.setOptions([
       { value: 'progressive', label: 'Growing', detail: '4, 6, 8, 10 …' },
@@ -367,7 +373,7 @@ export class NewGameScreen {
     seed.addEventListener('keydown', (e) => {
       if (e.key === 'Enter' || e.key === 'Escape') seed.blur();
     });
-    this.h = { neutral, truces, draft, cards, fortify, batch, seed };
+    this.h = { neutral, truces, missions, draft, cards, fortify, batch, seed };
     const hf = (label: string, ctl: HTMLElement, detail?: string) => {
       const f = h('div', 'field');
       const l = h('div', 'field-label');
@@ -380,6 +386,7 @@ export class NewGameScreen {
     hg.append(
       neutral.el,
       truces.el,
+      missions.el,
       draft.el,
       hf('Card sets', cards.el),
       hf('Fortify', fortify.el),
@@ -465,6 +472,8 @@ export class NewGameScreen {
     };
     na(this.h.neutral, vm.neutralApplies !== false, 'Two players · a third army holds 14 territories', 'Two-player games only');
     na(this.h.truces, vm.trucesApply !== false, 'AIs with a personality offer and take them', 'Needs a human and an AI at the table');
+    this.h.missions.set(hr.missions === true);
+    na(this.h.missions, vm.missionsApply !== false, MISSIONS_LINE, 'Three or more players, or two with neutral armies');
     this.h.draft.set(hr.draft);
     this.h.cards.set(hr.cardBonus);
     this.h.fortify.set(hr.fortifyRule);
@@ -478,6 +487,7 @@ export class NewGameScreen {
     if (hr.seed != null) changed.push(`seed ${hr.seed}`);
     if (hr.neutral === false && vm.neutralApplies) changed.push('no neutral armies');
     if (hr.truces === false && vm.trucesApply) changed.push('no truces');
+    if (hr.missions === true && vm.missionsApply !== false) changed.push('missions');
     setText(this.houseBtn.querySelector('.house-sum')!, changed.length ? changed.join(' · ') : 'classic');
 
     setText(this.summary, vm.summary);

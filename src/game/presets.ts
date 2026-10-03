@@ -42,6 +42,11 @@ export function fillPersonalities(seats: SeatDraft[]): SeatDraft[] {
   return out;
 }
 
+/** v5 G Missions apply: a third seat at the table (3–4 players, or 2 with the neutral seat). */
+export function missionsApply(d: NewGameDraft): boolean {
+  return d.seats.length >= 3 || usesNeutral(d);
+}
+
 /** v3 Truces apply: at least one human and one AI with a personality at the table. */
 export function trucesApply(seats: { kind: SeatDraft['kind']; personality?: AiPersonality }[]): boolean {
   return seats.some((s) => s.kind === 'human') && seats.some((s) => s.kind === 'ai' && isPersonality(s.personality));
@@ -57,7 +62,7 @@ export function defaultDraft(): NewGameDraft {
     ],
     length: 'evening',
     setup: 'quickDeal',
-    house: { draft: false, cardBonus: 'progressive', fortifyRule: 'connected', setupBatch: 'auto', seed: null, neutral: true, truces: true },
+    house: { draft: false, cardBonus: 'progressive', fortifyRule: 'connected', setupBatch: 'auto', seed: null, neutral: true, truces: true, missions: false },
     mapId: DEFAULT_MAP_ID,
   };
 }
@@ -99,6 +104,8 @@ export function sanitizeDraft(x: unknown): NewGameDraft {
       // v3 house rules, on unless switched off
       neutral: o.house?.neutral !== false,
       truces: o.house?.truces !== false,
+      // v5 G: off unless switched on
+      missions: o.house?.missions === true,
     },
   };
 }
@@ -148,6 +155,7 @@ export function draftToConfig(d: NewGameDraft, seed: number): GameConfig {
   return {
     ...(neutral ? { neutral: true } : {}),
     ...(diplomacy ? { diplomacy: true } : {}),
+    ...(d.house.missions === true && missionsApply(d) ? { missions: true } : {}),
     mapId: mapIdOf(d.mapId ?? null),
     players,
     setupMode: d.house.draft ? 'draft' : 'random',
@@ -230,12 +238,14 @@ export function draftSummary(d: NewGameDraft): string {
   const deal = d.house.draft ? 'Territories claimed in turn' : 'Territories dealt at random';
   const place = d.setup === 'quickDeal' ? 'armies placed for you' : 'you place your own armies';
   const need = territoriesToWin(dominationPercent);
+  // v5 G: with Missions on, a secret mission is the other way to win.
+  const m = d.house.missions === true && missionsApply(d);
   const goal =
     dominationPercent >= 100
-      ? 'take every territory to win'
+      ? `take every territory${m ? ' or complete your secret mission' : ''} to win`
       : turnLimit
-        ? `first to ${need} territories, or most after ${turnLimit} rounds`
-        : `first to ${need} territories wins`;
+        ? `first to ${need} territories${m ? ' or a secret mission' : ''}, or most after ${turnLimit} rounds`
+        : `first to ${need} territories${m ? ' or a secret mission' : ''} wins`;
   return [deal, place, goal].join(SEP);
 }
 
@@ -264,6 +274,7 @@ export function buildNewGameVM(d: NewGameDraft): NewGameVM {
     problems,
     canAddSeat: n < 4,
     canRemoveSeat: n > 2,
+    missionsApply: missionsApply(d),
   };
 }
 

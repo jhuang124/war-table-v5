@@ -786,3 +786,42 @@ fewer log lines and simpler replays.
     `NewGameVM.maps? / mapId? / personalities? / neutralApplies? / trucesApply?`.
   - `UiIntent`: `{ type: 'map'; id }`, `{ type: 'proposeTruce'; to }`, `{ type: 'reloadForUpdate' }`.
   - Test hooks: `RiskHooks.ledger()`, `RiskHooks.map()` (the booted pack).
+
+### 11.7 Missions (v5 G; a house rule, off by default; all fields optional, old saves load unchanged)
+- **Config.** `GameConfig.missions?: boolean`. `sanitizeConfig` keeps it only for 3–4 seats, or 2 seats with
+  the neutral seat (two players on 21 territories each would meet a mission in round 2 or 3). New game:
+  `HouseRulesDraft.missions?` (default off) → `draftToConfig`; `NewGameVM.missionsApply?` dims the switch
+  for a table it doesn't apply to; the summary line reads "first to 30 territories or a secret mission wins".
+- **The deck** (`MISSIONS` in `src/engine/missions.ts`, each `{ id, text, spec }`): hold North America and
+  Africa; North America and Australia; Asia and South America; Asia and Africa; Europe, South America and
+  one more continent; Europe, Australia and one more continent; 18 territories with at least 2 armies on
+  each; 24 territories; knock out a colour (one card per seat colour at the table, `missionDeckFor`).
+- **Dealing.** At the end of `createGame` (after the deal, placement and first turn, so the board matches
+  the same seed without missions) the table's deck is shuffled with `state.rng` and one card is dealt per
+  seat in seat order, without replacement, into `PlayerState.mission?` (the card id). The neutral seat
+  never gets one. No event: the mission is secret, and it lives in state, so save/restore carries it.
+- **Fallback.** A colour card naming your own colour, or a seat someone else knocked out, reads as "hold 24
+  territories" (`missionGoal` returns the goal after the fallback; `missionText` says why).
+- **Reading it.** `missionText(state, seat)` → 'Vermilion must hold Asia and Africa' / 'Vermilion must knock
+  out Slate' (a seat not called by its colour: 'Ann must knock out Ben (Slate)'); null without one.
+  `missionHeadline(state, seat)` → 'Vermilion holds Asia and Africa' (a 'one more continent' card names
+  the third it holds), 'Vermilion knocked out Slate', 'Vermilion holds 24 territories'.
+  `missionComplete(state, seat)` → met on the current board.
+- **Win.** Checked for the current player only, at the end of their own steps: after `endReinforce`, after
+  a conquest's occupy (the territory win is checked first and keeps priority), and before `fortify` /
+  `endTurn` hand the turn on (no card is drawn). A conquest that meets the mission marches everyone in, as a
+  winning conquest does. The game ends with `phase: { kind: 'game-over', winner, reason: 'percent', by:
+  'mission', mission: <headline> }` and the same fields on the `gameOver` event (`reason` stays inside the
+  v4 union so older readers see a board win; `by` tells them apart). Nobody wins on another seat's turn,
+  and only by the card they hold. The territory-threshold and last-standing wins are unchanged.
+- **AI** (`src/engine/ai/brain.ts`, `applyMission` / `missionValue`). Every AI (classic included) pursues its
+  card, weighted by personality (`MISSION_WEIGHT`): continent cards make the named continents the goal and
+  raise their target value (the Turtle hardest), the count cards value any cheap conquest (attacks at 2.5×
+  odds up, near-even ones down; the Opportunist hardest), and the 2-army card tops up thin territories and
+  occupies leaving 2 behind; a colour card hunts that seat whenever a sweep is in reach (the Warlord
+  hardest). The last territory of a mission is worth +20, so the AI takes the win when it is there.
+- **Sim** (`npm run sim`, "Missions" section; Evening length = 70 %, normal AIs with the default table's
+  personalities, with vs without the rule; 200 games per table, 2026-10-03): 4p 76.5 % end by mission,
+  rounds median 7 / p90 12 (without: 9 / 14); 3p 67 %, 5 / 8 (7 / 14); 2p+neutral 62.5 %, 6 / 11 (8 / 13);
+  68.7 % overall. A missions game runs about two rounds shorter than the same table without it. The soak
+  fails if fewer than a third end by mission, or if a mission win is ever unmet or mis-headlined.

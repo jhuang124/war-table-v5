@@ -2,7 +2,21 @@
 
 export * from './types';
 export * from './mapData';
-export { MISSIONS, missionText, missionComplete, type Mission, type MissionId } from './missions';
+export {
+  MISSIONS,
+  missionText,
+  missionComplete,
+  missionHeadline,
+  missionGoal,
+  missionById,
+  missionDeckFor,
+  MISSION_TERRITORIES,
+  MISSION_TERRITORIES_HELD,
+  type Mission,
+  type MissionId,
+  type MissionSpec,
+  type MissionGoal,
+} from './missions';
 
 export { createGame, defaultConfig, validateConfig, sanitizeConfig } from './setup';
 export { applyAction, validateAction, cloneState, truceTargets, truceOffersTo } from './reducer';
