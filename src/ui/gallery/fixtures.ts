@@ -382,6 +382,47 @@ export function fixtures(_W: number, _H: number): Fixture[] {
   add('log', 'Menu', 'Log', game({ strip: STRIPS.attack, cards: null }, { overlay: 'log' }));
   add('confirm-end', 'Menu', 'Confirm: End game now', game({ confirm: { kind: 'endGame', text: 'End the game now? John wins on territories (14 of 42).' }, strip: STRIPS.attack, cards: null }));
   add('title-rules', 'Menu', 'Rules from the title', root({ screen: 'title', game: null, overlay: 'rules' }));
+  // v5 · the war in ink, the turn ritual, details (fixtures to build against before the controller lands)
+  const hold = (armies: number, breakdown = '3 territories · Asia +4') => ({ seat: JOHN, armies, breakdown });
+  const placeLine = (n: number) => ({ ...STRIPS.place, line: `Place ${n} ${n === 1 ? 'army' : 'armies'} · click a territory` });
+  add('holding-7', 'v5', 'Holding dab · 7 to place', game({ strip: placeLine(7), holding: hold(7) }));
+  add('holding-2', 'v5', 'Holding dab · 2 left', game({ strip: { ...STRIPS['place-some'], line: 'Place on Ukraine', count: { control: 'stepper', value: 2, min: 1, max: 2 }, buttons: [btn('undo', 'Undo'), btn('place', 'Place 2', true)] }, holding: hold(2) }));
+  add('holding-15', 'v5', 'Holding dab · 15 (a numeral)', game({ strip: placeLine(15), holding: hold(15, '9 territories · Asia +7 · cards +8') }));
+  add('holding-reduced', 'v5', 'Holding dab · reduced motion', game({ strip: placeLine(7), holding: hold(7) }, { reducedMotion: true, settings: { ...SETTINGS, reduceMotion: true } }));
+  const grudgeSeats = chips(0, {
+    0: { continents: ['australia'], cards: 3 },
+    1: { grudgeTicks: 3, continents: ['europe'], cards: 2, personality: { name: 'Warlord', line: 'Attacks first' }, voiceLine: 'Slate holds Europe · it will keep it' },
+    2: { grudgeTicks: 11, cards: 4, personality: { name: 'Turtle', line: 'Keeps its word' } },
+    3: { grudgeTicks: 1, continents: ['south_america', 'africa'], personality: { name: 'Opportunist', line: 'Takes what is loose' }, voiceLine: 'Sage remembers that' },
+  });
+  add('grudge-ticks', 'v5', 'Grudge ticks · voice lines', game({ seats: grudgeSeats, strip: STRIPS.attack, cards: null }));
+  const REPLAY_LINES = [
+    'The deal: John, Slate, Ochre and Sage take the world',
+    'Slate takes Ukraine from Sage',
+    'Ochre holds Australia',
+    'John takes Ural and Siberia',
+    'Sage loses South America',
+    'Siberia changes hands three times',
+    'John takes Asia',
+    'Ochre breaks into Africa',
+    'Sage is out · taken by John',
+    'Slate is pushed out of Europe',
+    'John takes Africa from Ochre',
+    'John holds 28 territories',
+    'John holds the world',
+  ];
+  const MOMENTS = ['Round 6: Siberia changed hands three times', 'Round 9: Sage was knocked out by John', 'Round 4: John took Asia and held it to the end'];
+  const REPLAY: NonNullable<GameVM['replay']> = {
+    key: 1,
+    winner: JOHN,
+    rounds: REPLAY_LINES.map((line, i) => ({ round: i + 1, owners: {}, line })),
+    moments: MOMENTS,
+    msPerRound: 1300,
+  };
+  add('replay', 'v5', 'Replay · the war in ink', root({ screen: 'victory', game: { ...BASE_GAME, cards: null, replay: REPLAY }, victory: VICTORY }));
+  add('victory-moments', 'v5', 'Recap · turning points', root({ screen: 'victory', game: null, victory: { ...VICTORY, moments: MOMENTS } }), { after: 'skipVictoryIntro' });
+  add('name-card-history', 'v5', 'Name card · a stone\'s history', game({ strip: STRIPS.attack, cards: null, nameCard: { territory: 'Ural', continent: 'Asia', bonus: 7, owner: JOHN, armies: 19, x: Math.round(_W * 0.62), y: Math.round(_H * 0.42), key: 1, history: 'Held since round 3 · taken from Sage' } }));
+  add('handoff-mission', 'v5', 'Hand-off cover · secret mission', game({ strip: STRIPS.handoff, handoff: { seat: SAM, subline: '+9 armies waiting · 3 cards · set ready', mission: 'Your mission: hold Asia and Africa' }, cards: null }));
   add('reduced', 'Menu', 'Reduced motion on', game({ strip: STRIPS['attack-armed'], battle: ARMED, cards: null }, { reducedMotion: true, settings: { ...SETTINGS, reduceMotion: true } }), { dice: null });
   return F;
 }

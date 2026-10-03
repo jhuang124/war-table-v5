@@ -950,3 +950,73 @@
 .rc-line.stings { color: color-mix(in oklab, var(--seat) 82%, var(--ivory)); font-weight: 600; }
 .rc-line.stings .rc-name { color: inherit; }
 .rc-summary { margin-top: 1.2rem; padding-top: 0.9rem; border-top: 1px solid var(--ivory-12); font-size: 1.5rem; font-weight: 600; line-height: 1.25; color: var(--ivory); }
+
+
+/* ---- v5 (_claude/v5/PROPOSAL.md §4 C, E, F) ---------------------------------------------------------- */
+/* C · The replay: the board re-soaks round by round; a thin paper strip at the bottom carries the round,
+   its one sentence and a hairline in the one gold that runs as the rounds pass. The whole screen is the
+   skip target (a tap anywhere). The HUD steps aside while it plays; the recap waits. */
+.replay { position: absolute; inset: 0; z-index: 50; pointer-events: auto; cursor: default; }
+.rp-strip {
+  position: absolute; left: 0; right: 0; bottom: 0; padding: 1rem 2.5rem calc(1.1rem + env(safe-area-inset-bottom, 0px));
+  background-color: #0e1830;
+  background-image: linear-gradient(rgba(13, 21, 42, 0.86), rgba(13, 21, 42, 0.86)), linear-gradient(#1a2a4c, #1a2a4c), var(--paper-tex, none);
+  background-size: auto, auto, 512px 512px;
+  background-blend-mode: normal, color, normal;
+  border-top: 1px solid var(--ivory-20);
+  box-shadow: 0 -0.6rem 1.8rem rgba(3, 5, 12, 0.35);
+}
+.rp-words { position: relative; display: flex; align-items: baseline; justify-content: center; min-height: 1.9rem; }
+.rp-round { position: absolute; left: 0; bottom: 0.15rem; font-size: 1.125rem; font-weight: 600; letter-spacing: 0.04em; color: var(--ivory-70); white-space: nowrap; }
+.rp-line { max-width: calc(100% - 16rem); font-size: 1.5rem; font-weight: 500; line-height: 1.25; color: var(--ivory-90); text-align: center; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.rp-rule { position: relative; height: 1px; margin-top: 0.75rem; background: var(--ivory-12); }
+.rp-fill { position: absolute; inset: 0; background: var(--gold); transform-origin: left center; transform: scaleX(0); }
+.is-replay .hud { visibility: hidden; opacity: 0; transition: opacity 240ms var(--dry), visibility 0ms linear 240ms; }
+.victory-screen.replay-hold { display: none; }
+
+/* C · The recap's turning points: three sentences in the serif above the awards, the round quieter. */
+.v-moments { display: flex; flex-direction: column; align-items: center; gap: 0.35rem; text-align: center; }
+/* The sheet makes room for them, so Rematch stays on the first screen at 1440 × 900. */
+.v-scroll:has(> .v-moments:not(.hidden)) { gap: 1.2rem; }
+.v-scroll:has(> .v-moments:not(.hidden)) .v-enso { width: 4.75rem; height: 4.75rem; margin-bottom: 0.3rem; }
+.v-scroll:has(> .v-moments:not(.hidden)) .tl-row { height: 2.5rem; }
+.mo-line { font-size: 1.125rem; line-height: 1.35; color: var(--ivory-90); }
+.mo-round { color: var(--ivory-55); font-weight: 600; }
+
+/* C · Grudge ticks: one hairline per territory a seat has taken from you, in its own pigment, beside the
+   held-continent ticks; 12 px tall, like them (v5: both at the 12 px floor). */
+.sc-tick { height: 0.75rem; width: 0.4rem; }
+.sc-grudges { display: inline-flex; align-items: center; gap: 0.12rem; margin-right: 0.18rem; }
+.sc-grudges.hidden { display: none !important; }
+.gt-tick { display: block; width: 0.25rem; height: 0.75rem; transform-origin: 50% 100%; }
+.gt-tick svg { display: block; width: 100%; height: 100%; overflow: visible; }
+.gt-more { font-size: 0.875rem; font-weight: 600; line-height: 1; margin-left: 0.06rem; }
+
+/* D · An AI's last voice line, faint and italic under its name for one turn (in place of its personality). */
+.sc-voice { max-width: 13rem; font-size: 0.875rem; line-height: 1.1; font-style: italic; font-weight: 500; color: color-mix(in oklab, var(--seat-light) 70%, transparent); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 0.12rem; }
+
+/* E · The holding dab: a painted dab in the seat's pigment beside the seat mark, the turn's armies on it as
+   tiny ink stones (light pigment, a deep hairline edge, the lamp's painted shadow lower right). */
+.st-hold { position: relative; flex: none; width: 4.4rem; height: 2.6rem; margin-left: 0.3rem; color: var(--hold); pointer-events: auto; }
+.st-hold.hidden { display: none; }
+.hd-dab { position: absolute; left: 0; right: 0; bottom: 0; width: 100%; height: 2.1rem; overflow: visible; opacity: 0.92; }
+.hd-stones { position: absolute; left: 0.5rem; right: 0.5rem; top: 0.25rem; bottom: 0.55rem; }
+.hd-stone {
+  position: absolute; width: 0.7rem; height: 0.5rem; border-radius: 50%; transform: translate(-50%, -100%);
+  background: var(--hold-stone); border: 1px solid var(--hold-deep);
+  box-shadow: 0.08rem 0.1rem 0 rgba(3, 5, 12, 0.45);
+}
+.hd-num { position: absolute; left: 0; right: 0; bottom: 0.55rem; text-align: center; font-size: 1.125rem; font-weight: 600; line-height: 1; color: var(--ivory); text-shadow: 0 0 0.3em rgba(11, 18, 36, 0.8); }
+
+/* E · The breakdown under the one line as the turn starts: it writes, holds and dries (~1.5 s). */
+.st-break { position: absolute; left: 0; right: 0; top: calc(100% + 0.05rem); z-index: 2; text-align: center; font-size: 0.875rem; font-style: italic; font-weight: 500; line-height: 1.1; color: var(--ivory-90); text-shadow: 0 0 0.35em rgba(11, 18, 36, 0.9), 0 0 0.12em rgba(11, 18, 36, 0.9); white-space: nowrap; pointer-events: none; }
+.st-break.hidden { display: none; }
+
+/* F · Clickables (never required): the cup and the ensō on the rule answer a tap. */
+.ts-cup .cup-body { pointer-events: auto; cursor: pointer; }
+.sr-enso { pointer-events: auto; cursor: pointer; }
+.ts-cup.hidden .cup-body { pointer-events: none; }
+
+/* G · The hand-off cover's secret mission: one line under the armies line, in the seat's light tint. */
+.ho-mission { font-size: 1.125rem; font-weight: 500; font-style: italic; color: var(--seat-light); margin: -0.5rem 0 0.8rem; }
+.ho-box.has-mission .ho-sub { margin-bottom: 0; }

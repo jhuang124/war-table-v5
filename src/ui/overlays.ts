@@ -26,6 +26,7 @@ export class Handoff {
   readonly el: HTMLDivElement;
   private title: HTMLHeadingElement;
   private sub: HTMLParagraphElement;
+  private mission: HTMLParagraphElement;
   private btnLabel: HTMLSpanElement;
   private emb: HTMLDivElement;
   private ring: SVGSVGElement;
@@ -50,10 +51,13 @@ export class Handoff {
     this.emb.append(this.ring, this.cupEl);
     this.title = h('h1', 'ho-title');
     this.sub = h('p', 'ho-sub num');
+    // v5 G: the seat's secret mission, one line in its light tint (only behind the cover).
+    this.mission = h('p', 'ho-mission num hidden');
+    this.mission.dataset.testid = 'handoff-mission';
     // The words `I'm Sam · start turn` inside a gold brush ring: the cover's own gold (GoldVM 'handoff').
     const btn = uiButton('', 'brass role-primary big', () => send({ type: 'handoffAccept' }), undefined, 'handoff-accept');
     this.btnLabel = btn.querySelector('.btn-label')!;
-    box.append(this.emb, this.title, this.sub, btn);
+    box.append(this.emb, this.title, this.sub, this.mission, btn);
     this.el.append(box);
   }
 
@@ -89,6 +93,10 @@ export class Handoff {
     this.title.append(titleText(`Pass the cup to ${vm.seat.name}`));
     this.cupEl.innerHTML = cupSvg(vm.seat.color);
     setText(this.sub, vm.subline);
+    const mission = vm.mission ? minus(vm.mission) : '';
+    setText(this.mission, mission);
+    toggle(this.mission, 'hidden', !mission);
+    toggle(this.box, 'has-mission', !!mission);
     setText(this.btnLabel, `I'm ${vm.seat.name} · start turn`);
   }
 }

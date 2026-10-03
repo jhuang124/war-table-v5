@@ -14,8 +14,13 @@
 // The receipt and the Ledger carry the record. "Round 6" is written at the left of the line's row
 // (desktop) and is the way into the Ledger (a click opens it, by round). The ledger's latest sentence
 // stays only for screen readers (a polite live region), never as ink.
+// v5 E (the turn ritual): beside the seat mark, a holding dab in the seat's pigment carries the turn's
+// reinforcements as a small stack of ink stones (GameVM.holding) that empties one by one as they are placed;
+// as the turn starts, the breakdown ('3 territories · Asia +4') writes under the line and dries (~1.5 s).
+// Phones: the dab sits in the action row. v5 F4: the ensō on the rule answers a tap ('tapEnso').
 
-import type { ButtonVM, CountVM, GoldVM, LogLineVM, StripVM, TrackSegId, TrackVM, UiIntent } from '../../game/viewModel';
+import type { ButtonVM, CountVM, GameVM, GoldVM, LogLineVM, StripVM, TrackSegId, TrackVM, UiIntent } from '../../game/viewModel';
+import { layout, onLayout } from '../layout';
 import { PLAYER_COLORS } from '../../shared/palette';
 import { ActionButton } from '../controls';
 import { brushMark } from '../../shared/enso';
@@ -336,6 +341,156 @@ class SeatMark {
   }
 }
 
+type HoldingVM = NonNullable<GameVM['holding']>;
+
+/** Stones drawn at most; more reads as a numeral on the dab. */
+const HOLD_STONES = 12;
+/** The stack: rows from the bottom, stones per row (4 · 3 · 3 · 2 = 12). */
+const HOLD_ROWS = [4, 3, 3, 2];
+
+/**
+ * The holding dab (v5 E): a painted dab in the seat's pigment with the turn's armies on it as tiny ink stones,
+ * stacked bottom row first. A stone placed on the board leaves the dab (it shrinks away, tier 0); a trade's
+ * armies arrive as new stones (they swell in). More than 12, or reduced motion: the count as a numeral.
+ */
+class Holding {
+  readonly el: HTMLDivElement;
+  private dab: SVGSVGElement;
+  private stones: HTMLDivElement;
+  private num: HTMLSpanElement;
+  private n = -1;
+  private seatKey = '';
+
+  constructor() {
+    this.el = h('div', 'st-hold hidden');
+    this.el.dataset.testid = 'holding';
+    this.dab = svg('svg', { viewBox: '0 0 64 30', class: 'hd-dab', 'aria-hidden': 'true' });
+    this.stones = h('div', 'hd-stones');
+    this.stones.setAttribute('aria-hidden', 'true');
+    this.num = h('span', 'hd-num num hidden');
+    this.el.append(this.dab, this.stones, this.num);
+  }
+
+  /** Where stone `i` sits on the dab, in % of the stones box (bottom row first, each row centred). */
+  private spot(i: number): { x: number; y: number } {
+    let row = 0;
+    let k = i;
+    while (row < HOLD_ROWS.length - 1 && k >= HOLD_ROWS[row]) k -= HOLD_ROWS[row++];
+    const inRow = HOLD_ROWS[row];
+    const x = 50 + (k - (inRow - 1) / 2) * 24;
+    const y = 100 - row * 30;
+    return { x, y };
+  }
+
+  private stone(i: number): HTMLElement {
+    const st = h('i', 'hd-stone');
+    const p = this.spot(i);
+    st.style.left = `${p.x}%`;
+    st.style.top = `${p.y}%`;
+    st.style.zIndex = String(10 + i);
+    return st;
+  }
+
+  update(vm: HoldingVM | null): void {
+    toggle(this.el, 'hidden', !vm);
+    if (!vm) {
+      this.n = -1;
+      this.seatKey = '';
+      this.stones.textContent = '';
+      return;
+    }
+    const pal = PLAYER_COLORS[vm.seat.color];
+    const seatKey = `${vm.seat.id}:${vm.seat.color}`;
+    const fresh = seatKey !== this.seatKey;
+    if (fresh) {
+      this.seatKey = seatKey;
+      // A wider, wetter dab than the seat mark's: the stones rest on it.
+      const seed = hashSeed(`hold:${seatKey}`);
+      let s = seed;
+      const r = () => ((s = (Math.imul(s ^ (s >>> 13), 1274126177) + 0x6d2b79f5) >>> 0) / 4294967296);
+      const pts: [number, number][] = [];
+      const lift = 1.5 + r() * 2;
+      for (let i = 0; i <= 8; i++) {
+        const t = i / 8;
+        pts.push([5 + t * 54, 18 - t * lift + Math.sin(Math.PI * t) * 0.8]);
+      }
+      this.dab.textContent = '';
+      this.dab.append(svg('path', { d: brushMark(pts, { seed, width: 21, samples: 48, bristles: 6 }), fill: 'currentColor' }));
+      setStyle(this.el, '--hold', pal.base);
+      setStyle(this.el, '--hold-deep', pal.deep);
+      setStyle(this.el, '--hold-stone', pal.light);
+      this.stones.textContent = '';
+      this.n = -1;
+    }
+    const n = Math.max(0, vm.armies);
+    this.el.setAttribute('aria-label', `${n} ${n === 1 ? 'army' : 'armies'} to place`);
+    this.el.title = `${n} to place`;
+    const asNumber = motion.reduced || n > HOLD_STONES;
+    toggle(this.num, 'hidden', !asNumber);
+    toggle(this.stones, 'hidden', asNumber);
+    if (asNumber) {
+      if (n !== this.n && this.n >= 0) pop(this.num, 1.1, 200);
+      setText(this.num, String(n));
+      this.stones.textContent = '';
+      this.n = n;
+      return;
+    }
+    const animate = this.n >= 0 && !fresh;
+    const live = [...this.stones.querySelectorAll<HTMLElement>('.hd-stone:not(.leaving)')];
+    if (n > live.length) {
+      for (let i = live.length; i < n; i++) {
+        const st = this.stone(i);
+        this.stones.append(st);
+        // a trade pours in: each stone swells onto the dab, a few ms after the last (tier 0)
+        if (animate && typeof st.animate === 'function')
+          st.animate([{ transform: 'translate(-50%, -100%) scale(0)', opacity: 0 }, { transform: 'translate(-50%, -100%) scale(1.18)', opacity: 1, offset: 0.6 }, { transform: 'translate(-50%, -100%) scale(1)' }], { duration: 220, delay: (i - live.length) * 40, easing: EASE_BRUSH, fill: 'backwards' });
+      }
+    } else if (n < live.length) {
+      // the top stones leave first: they shrink off the dab (tier 0)
+      for (const st of live.slice(n)) {
+        if (!animate || typeof st.animate !== 'function') {
+          st.remove();
+          continue;
+        }
+        st.classList.add('leaving');
+        const a = st.animate([{ transform: 'translate(-50%, -100%) scale(1)', opacity: 1 }, { transform: 'translate(-50%, -100%) scale(1.15)', opacity: 1, offset: 0.3 }, { transform: 'translate(-50%, -100%) scale(0)', opacity: 0 }], { duration: 200, easing: EASE_IN_QUAD, fill: 'forwards' });
+        a.onfinish = () => st.remove();
+      }
+    }
+    this.n = n;
+  }
+}
+
+/**
+ * The breakdown under the one line as the turn starts (v5 E): '3 territories · Asia +4' writes, holds, and
+ * dries, about 1.5 s in all. It never stacks: a newer one replaces it.
+ */
+class Breakdown {
+  readonly el: HTMLDivElement;
+  private t = 0;
+  private a: Animation | null = null;
+  constructor() {
+    this.el = h('div', 'st-break hidden');
+    this.el.dataset.testid = 'holding-breakdown';
+  }
+  show(text: string): void {
+    window.clearTimeout(this.t);
+    this.a?.cancel();
+    if (!text) return void toggle(this.el, 'hidden', true);
+    setText(this.el, minus(text));
+    toggle(this.el, 'hidden', false);
+    if (!motion.reduced) drawIn(this.el, 380);
+    this.t = window.setTimeout(() => {
+      if (motion.reduced || typeof this.el.animate !== 'function') return void toggle(this.el, 'hidden', true);
+      const a = (this.a = this.el.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 320, easing: EASE_IN_QUAD, fill: 'forwards' }));
+      a.onfinish = () => {
+        toggle(this.el, 'hidden', true);
+        a.cancel();
+      };
+    }, motion.reduced ? 1500 : 1180);
+  }
+}
+
 /** − N + for the Place count. Hold a side to repeat. */
 class Stepper {
   readonly el: HTMLDivElement;
@@ -546,7 +701,14 @@ class GoldRule {
     this.mark = ensoEl(1, 'enso', { small: true });
     c.append(this.mark);
     this.el.append(this.l, this.r, glint, c);
+    // v5 F4: the ensō answers a tap (never required): the controller writes the round, and a second tap
+    // within 2 s opens the Ledger (its call).
+    c.addEventListener('click', (e) => {
+      e.stopPropagation();
+      this.onTap?.();
+    });
   }
+  onTap: (() => void) | null = null;
   setSeed(seed: number): void {
     setEnso(this.mark, seed, { small: true });
   }
@@ -589,6 +751,9 @@ export class BottomStrip {
   private offerButtons: Buttons;
   private zone: HTMLDivElement;
   private seat = new SeatMark();
+  private hold = new Holding();
+  private breakdown = new Breakdown();
+  private holdVm: GameVM['holding'] = null;
   private vm: StripVM | null = null;
   private gold: GoldVM | undefined = undefined;
   private turnKey = '';
@@ -639,6 +804,16 @@ export class BottomStrip {
     this.update$ = h('div', 'st-update hidden');
     this.say.append(this.events, this.update$, this.line.el);
     this.el.append(this.say, this.rule.el, this.seat.el, this.track.el, zone);
+    this.say.append(this.breakdown.el);
+    this.rule.onTap = () => send({ type: 'tapEnso' });
+    // The holding dab: beside the seat mark on the desktop strip; in the action row on the phone dock.
+    const placeHold = () => {
+      const phone = layout.form === 'phone' || layout.stacked;
+      if (phone && this.hold.el.parentElement !== zone) zone.prepend(this.hold.el);
+      else if (!phone && this.hold.el.parentElement !== this.seat.el) this.seat.el.append(this.hold.el);
+    };
+    placeHold();
+    onLayout(placeHold);
     // The ensō follows the current word: on an advance it slides; on a resize (or fonts arriving) it cuts.
     const put = (slide: boolean) => this.rule.place(this.track.currentX(this.rule.el), slide);
     this.track.onPlace = (slide) => put(slide);
@@ -697,6 +872,26 @@ export class BottomStrip {
     setText(this.latest, last ? minus(last.text) : '');
   }
 
+  private holdsInZone(): boolean {
+    return !!this.holdVm && this.hold.el.parentElement === this.zone;
+  }
+
+  /**
+   * v5 E: the current human's reinforcements as a holding dab (null = none). A new seat's holding (the turn
+   * starting) also writes its breakdown under the line.
+   */
+  setHolding(vm: GameVM['holding']): void {
+    vm = vm ?? null;
+    if (vm === this.holdVm) return;
+    const prev = this.holdVm;
+    this.holdVm = vm;
+    this.hold.update(vm);
+    if (vm && (!prev || prev.seat.id !== vm.seat.id)) this.breakdown.show(vm.breakdown);
+    else if (!vm) this.breakdown.show('');
+    const v = this.vm;
+    if (v) toggle(this.zone, 'is-empty', !v.count && v.buttons.length === 0 && !v.offer && !this.holdsInZone());
+  }
+
   /** Another line owns the slot (a breath line, the rotate hint): the strip's line steps aside. */
   setLineAside(on: boolean): void {
     this.line.setAside(on);
@@ -740,7 +935,7 @@ export class BottomStrip {
       this.offerButtons.update(offer.buttons, null);
     } else this.offerButtons.update([], null);
     // The action row folds away when there is nothing to press (portrait docks).
-    toggle(this.zone, 'is-empty', !c && vm.buttons.length === 0 && !offer);
+    toggle(this.zone, 'is-empty', !c && vm.buttons.length === 0 && !offer && !this.holdsInZone());
     this.el.dataset.buttons = String(vm.buttons.length + (c ? 1 : 0) + (offer ? offer.buttons.length : 0));
   }
 }

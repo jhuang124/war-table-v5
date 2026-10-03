@@ -48,6 +48,7 @@
 }
 .nc-title { font-weight: 600; font-size: 1.5rem; color: var(--ivory); line-height: 1.1; }
 .nc-cont { margin-top: 0.1rem; font-size: 1.125rem; color: var(--ivory-55); }
+.nc-hist { margin-top: 0.15rem; font-size: 1.125rem; font-style: italic; line-height: 1.25; color: var(--ivory-78); }
 .nc-owner { display: flex; align-items: center; gap: 0.4rem; margin-top: 0.4rem; font-size: 1.125rem; font-weight: 600; color: var(--ivory-90); }
 .nc-emb .emb { width: 0.85rem; height: 0.85rem; }
 .nc-armies { margin-left: auto; padding-left: 0.9rem; color: var(--ivory); white-space: nowrap; }
@@ -467,3 +468,20 @@
 .form-phone .rc-summary { font-size: 1.125rem; }
 /* The Continue thumbnail is a desktop detail: the phone's ring words fill the width. */
 .form-phone .cont-thumb { display: none; }
+
+/* ---- v5 on phones ---- */
+/* The replay: a bottom sheet strip in the dock's hand (the round above its sentence, both centred). */
+.form-phone .rp-strip { padding: 0.7rem max(1.25rem, var(--sa-r, 0px)) calc(var(--sa-b, 0px) + 0.9rem) max(1.25rem, var(--sa-l, 0px)); }
+.form-phone .rp-words { flex-direction: column; align-items: center; gap: 0.15rem; min-height: 0; }
+.form-phone .rp-round { position: static; font-size: 0.875rem; }
+.form-phone .rp-line { max-width: 100%; font-size: 1.125rem; white-space: normal; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.form-phone .rp-rule { margin-top: 0.55rem; }
+/* The holding dab in the action row (a little smaller); the voice lines stay off the phone strip (no room). */
+.form-phone .st-hold, .dock-stacked .st-hold { width: 3.5rem; height: 2.4rem; margin-left: 0; order: -1; }
+.form-phone .sc-voice { display: none; }
+/* Landscape: the breakdown rises above the line (the row has no room under it). */
+.form-phone.landscape .st-break { top: auto; bottom: calc(100% + 0.1rem); }
+.form-phone .gt-tick, .form-phone .sc-tick { height: 0.75rem; }
+/* Grudge ticks under 400 px wide: the rings sit ~3.4 rem apart and the marks row under each has no room for
+   them beside the continent ticks and the card count (8 ticks ran into the next seat's marks at 390 px). */
+@media (max-width: 399.98px) { .form-phone .sc-grudges { display: none !important; } }

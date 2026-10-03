@@ -405,7 +405,11 @@ export interface GameVM {
    */
   updateReady?: boolean;
   banner: BannerVM | null;
-  handoff: { seat: SeatRef; subline: string } | null; // 'Pass to Sam' cover
+  /**
+   * 'Pass to Sam' cover. `mission` (additive, v5 G): the seat's secret mission as one plain line under the armies
+   * line ('Hold Asia and Africa'), shown only on this cover. Absent / null = none.
+   */
+  handoff: { seat: SeatRef; subline: string; mission?: string | null } | null;
   confirm: { kind: 'endGame' | 'restart'; text: string } | null;
   /** Settings → Seats: hand a human seat to the AI (and back). Empty when there's nothing to offer. */
   seatActions: { seat: SeatRef; label: string; intent: UiIntent }[];
@@ -500,6 +504,11 @@ export interface NameCardVM {
   y: number;
   /** Bumps on every new press. */
   key: number;
+  /**
+   * Additive (v5 F5 "long-press a stone"): the stone's history line, shown as the card's second row
+   * ('Ural · 19 · held since round 3 · taken from Sage'). Set in answer to a 'stoneHistory' intent. Absent = none.
+   */
+  history?: string | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -518,6 +527,11 @@ export interface VictoryVM {
   standings: { seat: SeatRef; place: number; territories: number; stats: PlayerStats }[];
   /** Additive (ink overhaul): the game's seed (state.config.seed), so the scroll's ensō is the one drawn all game. */
   seed?: number;
+  /**
+   * Additive (v5 C "turning points"): the game's three named moments for the recap, plain sentences
+   * ('Round 6: Siberia changed hands three times'). Absent = the UI uses the last `ReplayVM.moments` it saw.
+   */
+  moments?: string[];
 }
 
 // ---------------------------------------------------------------------------
