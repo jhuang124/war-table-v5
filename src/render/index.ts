@@ -16,11 +16,11 @@ import type { GameEvent, GameState, PlayerId, TerritoryId } from '../engine/type
 import { ADJACENCY, TERRITORIES, TERRITORY_IDS } from '../engine/mapData';
 import type { AudioEngine, PlayOptions, SfxName, StrokeHandle } from '../audio/types';
 import { PLAYER_COLORS, type PlayerPalette } from '../shared/palette';
-import { Animator, ease, clamp, type Run } from './anim';
+import { Animator, ease, clamp, READABLE, tierMs, type Run } from './anim';
 import { buildScene } from './scene';
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
 import { TileSet, deepOf, type Tile, type RimMode } from './tiles';
-import { FIG_K, FIG_K_MIN, NUMERAL_MIN, NUMERAL_MIN_PHONE, TokenSystem, pieceEnvelope, type PxBox } from './tokens';
+import { FIG_K, FIG_K_MIN, NUMERAL_MIN, NUMERAL_MIN_PHONE, PULSE_MS, TokenSystem, capBucket, pieceEnvelope, piecesClash, stoneK, type PxBox } from './tokens';
 import { Overlay } from './overlay';
 import { Continents } from './continents';
 import { AttackArrow, FortifyRoute, LiveStroke } from './fx';
@@ -1489,6 +1489,90 @@ export const createBoardView: CreateBoardView = async (opts: BoardViewOptions): 
     ).then(() => undefined);
   };
 
+  // [board-pieces v4] loser rings (A4) and the receipt pulse (A3): rings in the loser's pigment on the stones;
+  // a pulse swells each listed stone once (tier 0, tokens.PULSE_MS) and lifts its wash for the same beat.
+  let lastPulseKey = '';
+  const applyPieceMarks = (h: BoardHighlights, _prev: BoardHighlights) => {
+    tokens.setRings((h.loserRings ?? []).map((r) => ({ id: r.territory, rgb: hexToRgb((PLAYER_COLORS[r.color] ?? PLAYER_COLORS.neutral).base) })));
+    const key = (h.pulse ?? []).join(',');
+    if (key === lastPulseKey) return;
+    lastPulseKey = key;
+    for (const id of h.pulse ?? []) {
+      tokens.pulse(id);
+      const t = tiles.get(id);
+      if (!t || anim.instant || reduced) continue;
+      const ver = (t.ver.flash = (t.ver.flash ?? 0) + 1);
+      void anim.tween({
+        ms: PULSE_MS,
+        ease: ease.linear,
+        update: (v) => {
+          if (t.ver.flash !== ver) return;
+          t.flash = 0.8 * Math.sin(v * Math.PI);
+          t.dirty = true;
+        },
+        done: () => {
+          if (t.ver.flash !== ver) return;
+          t.flash = 0;
+          t.dirty = true;
+        },
+      });
+    }
+  };
+
+  // [board-pieces v4] the ring beside the fight (desktop; phones keep the band): try below, above, right and
+  // left of the attacker → defender midpoint, far enough out to clear both pieces, and take the spot whose
+  // dice cover the fewest pieces (stone, figure, numeral) and stay inside the HUD's insets.
+  const placeTrayNearFight = (from: TerritoryId, to: TerritoryId) => {
+    if (compact) {
+      tray.moveTo(null);
+      return;
+    }
+    const a = overlay.pieceBox(from);
+    const b = overlay.pieceBox(to);
+    if (!a || !b) {
+      tray.moveTo(null);
+      return;
+    }
+    const mx = (a[0] + a[2] + b[0] + b[2]) / 4;
+    const my = (a[1] + a[3] + b[1] + b[3]) / 4;
+    const x0 = Math.min(a[0], b[0]);
+    const x1 = Math.max(a[2], b[2]);
+    const y0 = Math.min(a[1], b[1]);
+    const y1 = Math.max(a[3], b[3]);
+    const hw = tray.trayW / 2;
+    const hh = tray.trayH / 2;
+    const gap = 10;
+    const cands: [number, number][] = [
+      [mx, y1 + gap + hh],
+      [mx, y0 - gap - hh],
+      [x1 + gap + hw, my],
+      [x0 - gap - hw, my],
+      [mx, y1 + gap + hh + 40],
+      [mx, y0 - gap - hh - 40],
+    ];
+    const boxes = TERRITORY_IDS.map((id) => overlay.pieceBox(id)).filter((p): p is [number, number, number, number] => !!p);
+    const top = Math.max(insets.top, ...(insets.rects ?? []).filter((q) => q.y < H / 3).map((q) => q.y + q.h)) + 10;
+    const bot = H - insets.bottom - 8;
+    let best: [number, number] | null = null;
+    let bestScore = Infinity;
+    for (const [cx0, cy0] of cands) {
+      // (the dice sit in the middle of the ring: score the ring's inner box)
+      const cx = clamp(cx0, hw + 8, W - hw - 8);
+      const cy = clamp(cy0, top + hh, bot - hh);
+      const r = [cx - hw * 0.8, cy - hh * 0.8, cx + hw * 0.8, cy + hh * 0.8];
+      let score = 0;
+      for (const p of boxes) if (p[0] < r[2] && p[2] > r[0] && p[1] < r[3] && p[3] > r[1]) score += 1;
+      // (the fight itself must stay in sight: a spot over either fighter is the worst)
+      for (const p of [a, b]) if (p[0] < r[2] && p[2] > r[0] && p[1] < r[3] && p[3] > r[1]) score += 100;
+      score += Math.hypot(cx - cx0, cy - cy0) / 400;
+      if (score < bestScore) {
+        bestScore = score;
+        best = [cx, cy];
+      }
+    }
+    tray.moveTo(best ? { x: best[0], y: best[1] } : null);
+  };
+
   // --- losses at a verdict ---------------------------------------------------------------------
   const applyLosses = (e: Extract<GameEvent, { type: 'diceRolled' }>, fromN: number, toN: number, gen: number, chips: boolean) => {
     if (gen !== syncGen) return;
@@ -1643,10 +1727,38 @@ export const createBoardView: CreateBoardView = async (opts: BoardViewOptions): 
         if (!hlMatches && (arrow.key !== key || !arrow.group.visible)) {
           arrowSource = 'event';
           arrow.ink(true, 0);
-          const p = arrow.show(e.from, e.to, tileRgb(lastState, owners[e.from]), run, style === 'brief' ? 150 : 240);
+          // [board-pieces v4] the readable beat's stroke draws in ≈ 300 ms
+          const p = arrow.show(e.from, e.to, tileRgb(lastState, owners[e.from]), run, style === 'brief' ? 150 : style === 'readable' ? READABLE.STROKE : 240);
           if (idx === 0) await p;
         } else if (idx === 0) arrow.ink(true, 120); // the dice decide: the arrow inks gold (the HUD steps down)
         const last = idx >= count - 1;
+        if (style === 'readable') {
+          // [board-pieces v4] the readable beat (PLAN §8a Q7): no dice tray, ever. One short bone click stands in
+          // for the roll; each roll's casualties tick on the loser's stone inside one shared, compressed window
+          // (READABLE.TICKS for the whole engagement); a stopped attack ends on the attacker's recoil.
+          if (tray.visible) tray.hide(120);
+          if (idx === 0) {
+            readableBeat = { key, t0: blitzT0, conquered: false };
+            tokens.face(e.from, e.to);
+            tokens.face(e.to, e.from);
+            sfx('diceLand', { volume: 0.6 * vol, pan: panOf(e.to) });
+          }
+          if (e.defenderLosses > 0 || e.attackerLosses > 0) sfx('hit', { volume: (idx === 0 ? 0.55 : 0.3) * vol, pan: panOf(e.defenderLosses >= e.attackerLosses ? e.to : e.from) });
+          applyLosses(e, fromN, toN, gen, false);
+          await anim.wait(Math.max(16, READABLE.TICKS / Math.max(1, count)), run);
+          if (last && toN > 0) {
+            // the attack stops: the attacker's figure breathes out a little ink and the stroke dries
+            tokens.puff(e.from, READABLE.RECOIL, run);
+            arrow.ink(false, 200);
+            await anim.wait(READABLE.RECOIL, run);
+            if (arrowSource === 'event') {
+              arrow.hide();
+              arrowSource = null;
+            }
+            closeReadable(key);
+          }
+          return;
+        }
         if (style === 'brief') {
           tray.hide(120);
           if (idx === 0) {
@@ -1667,6 +1779,8 @@ export const createBoardView: CreateBoardView = async (opts: BoardViewOptions): 
         }
         // full: the battle tray. The two figures face each other; the attacker leans in while the dice roll.
         // The ring brushes on and the rest of the board recedes with it (INK2 §2.2 t = 0).
+        // [board-pieces v4] desktop: the ring lands beside the fight, clear of every stone and numeral
+        if (idx === 0 && !tray.showing) placeTrayNearFight(e.from, e.to);
         recede([e.from, e.to], 180);
         tokens.lean(e.from, e.to, true);
         rolling++;
@@ -1745,7 +1859,10 @@ export const createBoardView: CreateBoardView = async (opts: BoardViewOptions): 
         // A5: a human's territory falling is the sting (the dry brush snap), whoever took it.
         const somber = o.sting ?? isHuman(prevOwner);
         sfx('conquer', { volume: isHuman(e.player) || isHuman(prevOwner) ? 1 : 0.5, pan: panOf(to), variant: somber ? 'somber' : undefined });
-        const ms = style === 'brief' ? 250 : 600;
+        // [board-pieces v4] the readable beat's verdict flood (650) and the tier band, when the controller sends one
+        const ms = tierMs(style === 'brief' ? 250 : style === 'readable' ? READABLE.FLOOD : 600, o.tier);
+        noteMotion(ms);
+        if (style === 'readable' && readableBeat) readableBeat.conquered = true;
         // A human's territory falling: the rim tears (docs/INK.md A5).
         const torn = (o.sting ?? isHuman(prevOwner)) && style !== 'brief';
         const f = flood(e.from, to, e.player, ms, null, torn).then(() => {
@@ -1754,7 +1871,7 @@ export const createBoardView: CreateBoardView = async (opts: BoardViewOptions): 
         // The march starts +150 ms into the flood (full) / +100 ms into the flip (brief); the rest of
         // the color change keeps running while the token moves.
         void f;
-        await anim.wait(style === 'brief' ? 100 : 150, run);
+        await anim.wait(style === 'brief' ? 100 : style === 'readable' ? READABLE.CONQUER_WAIT : 150, run);
         return;
       }
 
@@ -1776,8 +1893,11 @@ export const createBoardView: CreateBoardView = async (opts: BoardViewOptions): 
           // inlineMarch = the conquest's own march (AI occupy / auto-occupy): 500 ms from +150.
           // A manual occupy count after a pause is a 400 ms move.
           const inline = o.inlineMarch ?? (lastConquered === to && performance.now() - lastConquestAt < 1500);
-          ms = style === 'brief' ? 200 : inline ? 500 : 400;
+          ms = style === 'brief' ? 200 : style === 'readable' ? READABLE.MARCH : inline ? 500 : 400;
         }
+        // [board-pieces v4] the tier band, when the controller sends one
+        ms = tierMs(ms, o.tier);
+        noteMotion(ms);
         // the count is chosen: its ghost goes as the real stack sets off
         if (countPreview) {
           countPreview = null;
@@ -1812,6 +1932,7 @@ export const createBoardView: CreateBoardView = async (opts: BoardViewOptions): 
           arrow.hide();
           arrowSource = null;
         }
+        if (e.reason === 'occupy' && style === 'readable' && readableBeat?.conquered) closeReadable(readableBeat.key);
         return;
       }
 
@@ -1846,6 +1967,32 @@ export const createBoardView: CreateBoardView = async (opts: BoardViewOptions): 
     }
   }
 
+  // [board-pieces v4] test hooks for the motion audit (E5) and the readable beat (Q7), read via __debug.
+  interface MotionEntry {
+    type: string;
+    style: string;
+    tier: number | null;
+    /** The motion duration the renderer chose at 1× (flood, march), when the event has one. */
+    motionMs: number | null;
+    /** Wall-clock, at the speed it ran. */
+    ms: number;
+    speed: number;
+  }
+  const motionLog: MotionEntry[] = [];
+  let currentMotion: MotionEntry | null = null;
+  const noteMotion = (ms: number) => {
+    if (currentMotion) currentMotion.motionMs = ms;
+  };
+  /** The readable engagement in flight (opened by its first roll, closed after its recoil or its march). */
+  let readableBeat: { key: string; t0: number; conquered: boolean } | null = null;
+  const readableBeats: { key: string; ms: number; conquered: boolean; speed: number }[] = [];
+  const closeReadable = (key: string) => {
+    if (!readableBeat || readableBeat.key !== key) return;
+    readableBeats.push({ key, ms: Math.round(performance.now() - readableBeat.t0), conquered: readableBeat.conquered, speed: anim.speed });
+    if (readableBeats.length > 100) readableBeats.shift();
+    readableBeat = null;
+  };
+
   const NON_BLOCKING = new Set(['armiesPlaced', 'territoryClaimed', 'setupTurn', 'phaseChanged', 'cardDrawn', 'controllerChanged']);
 
   const playEvent = (e: GameEvent, stateAfter: GameState, o: PlayEventOptions = {}): Promise<void> => {
@@ -1856,11 +2003,19 @@ export const createBoardView: CreateBoardView = async (opts: BoardViewOptions): 
     const nb = NON_BLOCKING.has(e.type);
     inflight++;
     invalidate();
+    // [board-pieces v4] the motion audit (E5): each event's style, tier, chosen motion ms and wall-clock ms
+    const t0 = performance.now();
+    const entry: MotionEntry = { type: e.type, style: o.style ?? 'full', tier: o.tier ?? null, motionMs: null, ms: 0, speed: anim.speed };
+    currentMotion = entry;
     return new Promise<void>((resolve) => {
       let settled = false;
       const finish = () => {
         if (settled) return;
         settled = true;
+        entry.ms = Math.round(performance.now() - t0);
+        motionLog.push(entry);
+        if (motionLog.length > 300) motionLog.splice(0, motionLog.length - 300);
+        if (currentMotion === entry) currentMotion = null;
         inflight--;
         invalidate();
         clearTimeout(dog);
@@ -2130,6 +2285,9 @@ export const createBoardView: CreateBoardView = async (opts: BoardViewOptions): 
     return top;
   };
   let bigKey = '';
+  // [board-pieces v4] the caps follow the counts' buckets (tokens.capBucket): refit when a stone crosses one
+  let bucketKey = '';
+  const bucketsNow = () => TERRITORY_IDS.map((id) => capBucket(Math.max(1, armies[id] ?? 1))).join(',');
   let capsTangled: string[] = [];
   let capsFigSmaller = 0;
   let capsNumLeft = 0;
@@ -2144,19 +2302,11 @@ export const createBoardView: CreateBoardView = async (opts: BoardViewOptions): 
     const ss = tokens.sizeScale;
     const dmin = tokens.dminPx * ss;
     const dmax = tokens.dmaxPx * ss;
-    const caps = TERRITORY_IDS.map((id, i) => {
-      const ti = tiles.get(id);
-      let land = Infinity;
-      TERRITORY_IDS.forEach((o, j) => {
-        if (j === i) return;
-        const tj = tiles.get(o);
-        // (only territories whose box comes near this anchor)
-        const [x0, y0, x1, y1] = tj.bbox;
-        const gap = Math.max(x0 - ti.anchor[0], 0, ti.anchor[0] - x1, y0 - ti.anchor[1], 0, ti.anchor[1] - y1);
-        if (gap * ppu < dmax) for (const ring of tj.rings) land = Math.min(land, distToRing(ti.anchor[0], ti.anchor[1], ring) * ppu);
-      });
-      return Math.max(dmin, Math.min(dmax, 2 * land));
-    });
+    // [board-pieces v4] No land cap: a big stone may cross a neighbour's border (decision Q9); the caps below
+    // only keep every numeral clear (tokens.piecesClash).
+    void ppu;
+    // (each cap starts at the stone its count's bucket draws, so "which is larger" means the army on the board)
+    const caps = TERRITORY_IDS.map((id) => Math.min(dmax, stoneK(capBucket(Math.max(1, armies[id] ?? 1)), dmin, dmax)));
     // the pieces' parts at their caps, placed at their anchors
     type Parts = { stone: PxBox; fig: PxBox; num: PxBox };
     // (a crowded layout's second lever, once a stone is at its floor: its figure is drawn smaller, to FIG_K_MIN)
@@ -2164,7 +2314,8 @@ export const createBoardView: CreateBoardView = async (opts: BoardViewOptions): 
     // (and last, a numeral at the lower-left edge instead)
     const side = TERRITORY_IDS.map(() => 1);
     const at = (i: number): Parts => {
-      const e = pieceEnvelope(caps[i], dmin, dmax, ss, figK[i], side[i], tokens.numMin);
+      // [board-pieces v4] fitted for the counts on the board now (up to the top of each count's bucket)
+      const e = pieceEnvelope(caps[i], dmin, dmax, ss, figK[i], side[i], tokens.numMin, capBucket(Math.max(1, armies[TERRITORY_IDS[i]] ?? 1)));
       const [x, y] = pts[i];
       const mv = (b: PxBox): PxBox => [b[0] + x, b[1] + y, b[2] + x, b[3] + y];
       return { stone: mv(e.stone), fig: mv(e.fig), num: mv(e.num) };
@@ -2175,8 +2326,8 @@ export const createBoardView: CreateBoardView = async (opts: BoardViewOptions): 
       const h = Math.min(a[3], b[3]) - Math.max(a[1], b[1]) + 1;
       return w > 0 && h > 0;
     };
-    const tangled = (A: Parts, B: Parts) =>
-      hit(A.fig, B.fig) || hit(A.fig, B.num) || hit(A.fig, B.stone) || hit(A.num, B.fig) || hit(A.num, B.num) || hit(A.num, B.stone) || hit(A.stone, B.fig) || hit(A.stone, B.num);
+    // [board-pieces v4] a clash is a hidden numeral or two figures on each other (tokens.piecesClash)
+    const tangled = (A: Parts, B: Parts) => piecesClash(A, B);
     // (one of the three largest against a neighbour: only the numerals must stay clear — the big piece may
     // stand over the neighbour's shrunken figure, never over its count)
     const numTangled = (A: Parts, B: Parts) => hit(A.fig, B.num) || hit(A.num, B.fig) || hit(A.num, B.num) || hit(A.num, B.stone) || hit(A.stone, B.num);
@@ -2186,6 +2337,7 @@ export const createBoardView: CreateBoardView = async (opts: BoardViewOptions): 
       for (let j = i + 1; j < pts.length; j++) if (Math.abs(pts[i][0] - pts[j][0]) < reach && Math.abs(pts[i][1] - pts[j][1]) < reach) near.push([i, j]);
     const bigIds = bigThree();
     bigKey = bigIds.join(',');
+    bucketKey = bucketsNow();
     const big = TERRITORY_IDS.map((id) => bigIds.includes(id));
     const lost = new Set<number>();
     let parts = TERRITORY_IDS.map((_, i) => at(i));
@@ -2248,41 +2400,39 @@ export const createBoardView: CreateBoardView = async (opts: BoardViewOptions): 
             continue;
           }
         } else if (!tangled(parts[i], parts[j])) continue;
-        // the larger piece gives way (both when level); a pair at the floor stays as it is
-        const k = caps[i] > caps[j] + 0.01 ? [i] : caps[j] > caps[i] + 0.01 ? [j] : [i, j];
+        // [board-pieces v4] the smaller army gives way first (its stone, its figure, its numeral's side), the
+        // larger last, so size keeps meaning strength; a pair at the floor stays as it is
+        const ai = armies[TERRITORY_IDS[i]] ?? 0;
+        const aj = armies[TERRITORY_IDS[j]] ?? 0;
+        const order = ai < aj ? [i, j] : aj < ai ? [j, i] : [i, j];
         let moved = false;
-        for (const x of k)
+        for (const x of order) {
           if (caps[x] > dmin + 1e-6) {
             caps[x] = Math.max(dmin, caps[x] * 0.96);
             parts[x] = at(x);
             moved = true;
-          }
-        if (!moved)
-          for (const x of [i, j])
-            if (figK[x] > FIG_K_MIN + 1e-6) {
-              figK[x] = Math.max(FIG_K_MIN, figK[x] * 0.95);
-              parts[x] = at(x);
-              moved = true;
-            }
-        if (!moved)
-          for (const x of [i, j]) {
-            if (side[x] < 0) continue;
+          } else if (figK[x] > FIG_K_MIN + 1e-6) {
+            figK[x] = Math.max(FIG_K_MIN, figK[x] * 0.95);
+            parts[x] = at(x);
+            moved = true;
+          } else if (side[x] > 0) {
             side[x] = -1;
             const P = at(x);
-            const o = x === i ? parts[j] : parts[i];
-            if (tangled(P, o)) side[x] = 1;
+            if (tangled(P, x === i ? parts[j] : parts[i])) side[x] = 1;
             else {
               parts[x] = P;
               moved = true;
-              break;
             }
           }
+          if (moved) break;
+        }
         if (moved) changed = true;
       }
       if (!changed) break;
     }
     parts = TERRITORY_IDS.map((_, i) => at(i));
-    capsTangled = near.filter(([i, j]) => (big[i] !== big[j] ? numTangled : tangled)(parts[i], parts[j])).map(([i, j]) => `${TERRITORY_IDS[i]}/${TERRITORY_IDS[j]}`);
+    // (reported at the 1 px standard of a real overlap; the fit itself keeps tokens.PIECE_AIR of air where it can)
+    capsTangled = near.filter(([i, j]) => (big[i] !== big[j] ? numTangled : (A: Parts, B: Parts) => piecesClash(A, B, 1))(parts[i], parts[j])).map(([i, j]) => `${TERRITORY_IDS[i]}/${TERRITORY_IDS[j]}`);
     capsFloored = caps.filter((c) => c <= dmin + 1e-6).length;
     capsLowered = caps.filter((c) => c < dmax - 1e-6).length;
     capsFigSmaller = figK.filter((k) => k < FIG_K - 1e-6).length;
@@ -2320,9 +2470,10 @@ export const createBoardView: CreateBoardView = async (opts: BoardViewOptions): 
     // (Landscape phones: the numeral now sits at the stone's edge, so the floor no longer has to hold an 11 px
     // numeral inside; a smaller floor lets the crowded pieces clear each other.)
     const phoneLandNow = compact && W > H;
-    tokens.dminPx = phoneLandNow ? 12.5 : compact ? 15.5 : 14;
+    // [board-pieces v4] the stone scale law (tokens.stoneK): 10 → 44 px at 1440; phones a flatter pair.
+    tokens.dminPx = phoneLandNow ? 8.5 : compact ? 9 : 10;
     tokens.numMin = compact ? NUMERAL_MIN_PHONE : NUMERAL_MIN;
-    tokens.dmaxPx = compact ? 26 : 36;
+    tokens.dmaxPx = phoneLandNow ? 28 : compact ? 30 : 44;
     for (let it = 0; it < 3; it++) {
       setPieceExtents();
       rig.recomputeHome();
@@ -2501,7 +2652,7 @@ export const createBoardView: CreateBoardView = async (opts: BoardViewOptions): 
     syncLifts();
     const tokensMoving = tokens.animating;
     // the board's three largest stacks changed: they keep their size (fitCaps)
-    if (W > 1 && bigThree().join(',') !== bigKey) fitCaps();
+    if (W > 1 && (bigThree().join(',') !== bigKey || bucketsNow() !== bucketKey)) fitCaps();
     tokens.setView(rig.cur.az, rig.cur.pitch);
     tokens.update();
     tray.tick(now);
@@ -2734,6 +2885,7 @@ export const createBoardView: CreateBoardView = async (opts: BoardViewOptions): 
       const prev = lastHl;
       lastHl = { ...h, targets: h.targets ? [...h.targets] : undefined };
       applyHighlights(h, prev);
+      applyPieceMarks(h, prev);
     },
     onTerritoryClick(cb) {
       clickCbs.push(cb);
@@ -2976,6 +3128,18 @@ export const createBoardView: CreateBoardView = async (opts: BoardViewOptions): 
     touchPick: (x: number, y: number) => touchPick(x, y, clickable),
     homePxPerUnit,
     tokens,
+    /** [board-pieces v4] every played event: style, tier, chosen motion ms (1×), wall-clock ms (last 300). */
+    get motionLog() {
+      return motionLog;
+    },
+    /** [board-pieces v4] readable AI engagements: wall-clock from the first roll to the end of the beat. */
+    get readableBeats() {
+      return readableBeats;
+    },
+    /** [board-pieces v4] the last dice roll's wall-clock ms and mode (dice.ts). */
+    get lastRoll() {
+      return tray.lastRoll;
+    },
     get capsFloored() {
       return capsFloored;
     },

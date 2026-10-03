@@ -530,11 +530,12 @@ export class Overlay {
   }
   /**
    * The numeral's font size from its height on screen (tokens.numeralSize, projected): small, at the stone's
-   * edge, never under 13 px (the couch read, lead review 2026-09-30; phones 11: tokens.numMin) × the text size.
+   * edge, never under 18 px (v4 numeral floor, PLAN §5b E6; phones 12: tokens.numMin) × the text size, never
+   * squashed (no scaleY anywhere on a numeral).
    */
   private numeralPx(h: number): number {
     const soft = 1 + (this._ui - 1) * 0.8;
-    return Math.max(this.tokens.numMin * soft, Math.min(h, 22 * soft));
+    return Math.max(this.tokens.numMin * soft, Math.min(h, 28 * soft));
   }
   /** A disc's diameter on screen (px) at a base point, from its world radius. */
   private discPx(base: THREE.Vector3, r: number, camera: THREE.Camera): number {
