@@ -306,7 +306,7 @@ export interface BattleVM {
    */
   tray?: boolean;
   /** Additive (v4): the tray's box in container px when it sits beside the fight (desktop); absent = the band. */
-  trayRect?: { x: number; y: number; w: number; h: number } | null;
+  trayRect?: { x: number; y: number; w: number; h: number; /** Additive (v5 A): the side the header rides. */ header?: 'above' | 'below' } | null;
 }
 
 export interface CardVM {

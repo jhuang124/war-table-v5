@@ -1004,7 +1004,23 @@ export class CameraRig {
         this.cur[key] = Math.abs(d) < 1e-4 ? this.goal[key] : this.cur[key] + d * k;
       }
     }
-    this.place(this.cur);
+    // [fight v5] the fight's lean rides on top of the pose (never written into cur/goal/home)
+    if (this.lean.x || this.lean.z) this.place({ ...this.cur, tx: this.cur.tx + this.lean.x, tz: this.cur.tz + this.lean.z });
+    else this.place(this.cur);
+  }
+
+  // --- [fight v5] the fight's lean (PROPOSAL §4 A "anticipation") --------------------------------
+  /**
+   * An additive offset of the look-at point, world units, that the board eases toward a fight and back
+   * (index.ts tweens it). It is never part of the pose: home, goal, `displaced` and every framing solve
+   * ignore it, so a lean can't move the home view or light the Reset view pill.
+   */
+  lean = { x: 0, z: 0 };
+  /** A copy of the live camera placed as it will be with `lean` = (dx, dz) (for predicting the leaned frame). */
+  leanedCamera(dx: number, dz: number): THREE.PerspectiveCamera {
+    const cam = this.camera.clone();
+    this.place({ ...this.cur, tx: this.cur.tx + dx, tz: this.cur.tz + dz }, cam);
+    return cam;
   }
 
   /** Finish an automatic move immediately. */

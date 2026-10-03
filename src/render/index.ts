@@ -23,7 +23,7 @@ import { TileSet, deepOf, type Tile, type RimMode } from './tiles';
 import { FIG_K, FIG_K_MIN, NUMERAL_MIN, NUMERAL_MIN_PHONE, PULSE_MS, TokenSystem, capBucket, pieceEnvelope, piecesClash, stoneK, type PxBox } from './tokens';
 import { Overlay } from './overlay';
 import { Continents } from './continents';
-import { AttackArrow, FortifyRoute, LiveStroke } from './fx';
+import { AttackArrow, ChillVeil, FortifyRoute, LiveStroke } from './fx';
 import { SeaLanes } from './lanes';
 import { EDGE_PX, buildInk } from './ink';
 import { makeSharedUniforms, paperDriftCPU } from './inkGlsl';
@@ -232,13 +232,16 @@ export const createBoardView: CreateBoardView = async (opts: BoardViewOptions): 
   // Listeners: the view left home (Reset view pill) / the battle tray showed or started to fade.
   const displacedCbs: ((d: boolean) => void)[] = [];
   let lastDisplaced = false;
-  const trayCbs: ((v: boolean, rect?: { x: number; y: number; w: number; h: number }) => void)[] = [];
+  type TrayRect = { x: number; y: number; w: number; h: number; header?: 'above' | 'below' };
+  const trayCbs: ((v: boolean, rect?: TrayRect) => void)[] = [];
   let trayShownEmitted = false;
   const emitTray = (v: boolean) => {
     if (v === trayShownEmitted) return;
     trayShownEmitted = v;
     // v4: the ring sits beside the fight on desktop; the HUD's fight header follows this rect (container px)
-    const rect = v ? { x: tray.cx - tray.trayW / 2, y: tray.cy - tray.trayH / 2, w: tray.trayW, h: tray.trayH } : undefined;
+    // [fight v5] with the side the header takes (scored with the ring: placeTrayNearFight)
+    const rect: TrayRect | undefined = v ? { x: tray.cx - tray.trayW / 2, y: tray.cy - tray.trayH / 2, w: tray.trayW, h: tray.trayH } : undefined;
+    if (rect && tray.placedAt && trayHeader) rect.header = trayHeader;
     for (const cb of trayCbs) {
       try {
         cb(v, rect);
@@ -272,7 +275,11 @@ export const createBoardView: CreateBoardView = async (opts: BoardViewOptions): 
       fightDimMs = null;
     }
   };
-  tray.onHide = (ms) => recede(null, Math.max(ms, 300));
+  // [fight v5] aftermath: as the ring dries the view leans back and the paper warms (leanBack, 600 ms)
+  tray.onHide = (ms) => {
+    recede(null, Math.max(ms, 300));
+    leanBack();
+  };
   const pal = (p: PlayerId): PlayerPalette | null => paletteOf(lastState, p);
   const isHuman = (p: PlayerId) => !!lastState?.players[p] && lastState.players[p].kind === 'human';
   const isAi = (p: PlayerId) => !!lastState?.players[p] && lastState.players[p].kind === 'ai';
@@ -1523,73 +1530,316 @@ export const createBoardView: CreateBoardView = async (opts: BoardViewOptions): 
     }
   };
 
-  // [board-pieces v4] the ring beside the fight (desktop; phones keep the band): try below, above, right and
-  // left of the attacker → defender midpoint, far enough out to clear both pieces, and take the spot whose
-  // dice cover the fewest pieces (stone, figure, numeral) and stay inside the HUD's insets.
-  const placeTrayNearFight = (from: TerritoryId, to: TerritoryId) => {
+  // [fight v5] the ring beside the fight (desktop; phones keep the band). v4 scored only the pieces; v5 also keeps
+  // the ring AND the fight header off every territory name on screen, every continent label, every numeral and
+  // the HUD, and scores the spot in the frame the fight's lean is heading for (`shift`, container px), since
+  // the ring holds still on screen while the board leans under it. The header rides above the ring when it
+  // fits there clear, else below (`trayHeader`, sent with the rect).
+  let trayHeader: 'above' | 'below' | null = null;
+  type Box4 = [number, number, number, number];
+  const hit4 = (p: Box4, r: Box4) => p[0] < r[2] && p[2] > r[0] && p[1] < r[3] && p[3] > r[1];
+  /** The fight header's words, CSS px: measured from the HUD when it is laid out (an armed fight), else estimated. */
+  const headerSize = (from: TerritoryId, to: TerritoryId): [number, number] => {
+    let w = 0;
+    let h = 0;
+    document.querySelectorAll<HTMLElement>('[data-testid="battle"] .bt-head > *').forEach((k) => {
+      if (k.classList.contains('hidden')) return;
+      w += k.offsetWidth;
+      h = Math.max(h, k.offsetHeight);
+    });
+    const ui = uiScale;
+    if (w > 20) return [w + 2 * 14.4 * ui + 16, Math.max(h, 24 * ui) + 8];
+    const chars = (TERRITORIES[from]?.name.length ?? 10) + (TERRITORIES[to]?.name.length ?? 10);
+    return [chars * 11.5 * ui + 110 * ui, 32 * ui];
+  };
+  /** Every territory name and continent label on screen now, container px. */
+  const labelBoxes = (): Box4[] => {
+    const out: Box4[] = [];
+    const cr = container.getBoundingClientRect();
+    overlay.root.querySelectorAll<HTMLElement>('.rb-label.on').forEach((el) => {
+      const r = el.getBoundingClientRect();
+      if (r.width > 0) out.push([r.left - cr.left - 2, r.top - cr.top - 2, r.right - cr.left + 2, r.bottom - cr.top + 2]);
+    });
+    const v = new THREE.Vector3();
+    for (const m of continents.group.children) {
+      const g = (m as THREE.Mesh).geometry as THREE.PlaneGeometry | undefined;
+      if (!g?.parameters || !m.visible) continue;
+      const hw = (g.parameters.width / 2) * 0.9 * m.scale.x;
+      const hd = (g.parameters.height / 2) * 0.8 * m.scale.y;
+      let x0 = Infinity;
+      let y0 = Infinity;
+      let x1 = -Infinity;
+      let y1 = -Infinity;
+      for (const [dx, dz] of [
+        [-hw, -hd],
+        [hw, -hd],
+        [-hw, hd],
+        [hw, hd],
+      ]) {
+        v.set(m.position.x + dx, m.position.y, m.position.z + dz).project(camera);
+        const x = (v.x * 0.5 + 0.5) * W;
+        const y = (-v.y * 0.5 + 0.5) * H;
+        x0 = Math.min(x0, x);
+        x1 = Math.max(x1, x);
+        y0 = Math.min(y0, y);
+        y1 = Math.max(y1, y);
+      }
+      out.push([x0, y0, x1, y1]);
+    }
+    return out;
+  };
+  /** Test hook: what the ring was scored against at its last placement (container px, the leaned frame). */
+  let lastPlacement: { ring: Box4; header: Box4; side: 'above' | 'below'; covers: string[]; shift: [number, number] } | null = null;
+  const placeTrayNearFight = (from: TerritoryId, to: TerritoryId, shift: [number, number] = [0, 0]) => {
+    trayHeader = null;
+    lastPlacement = null;
     if (compact) {
       tray.moveTo(null);
       return;
     }
-    const a = overlay.pieceBox(from);
-    const b = overlay.pieceBox(to);
-    if (!a || !b) {
+    const sx = shift[0];
+    const sy = shift[1];
+    const mv = (p: Box4): Box4 => [p[0] + sx, p[1] + sy, p[2] + sx, p[3] + sy];
+    const ra = overlay.pieceRects(from);
+    const rb = overlay.pieceRects(to);
+    if (!ra || !rb) {
       tray.moveTo(null);
       return;
     }
+    const uni = (r: NonNullable<typeof ra>): Box4 =>
+      mv([Math.min(r.box[0], r.plaque[0]), Math.min(r.box[1], r.plaque[1]), Math.max(r.box[2], r.plaque[2]), Math.max(r.box[3], r.plaque[3])]);
+    const a = uni(ra);
+    const b = uni(rb);
     const mx = (a[0] + a[2] + b[0] + b[2]) / 4;
     const my = (a[1] + a[3] + b[1] + b[3]) / 4;
     const x0 = Math.min(a[0], b[0]);
     const x1 = Math.max(a[2], b[2]);
     const y0 = Math.min(a[1], b[1]);
     const y1 = Math.max(a[3], b[3]);
-    const hw = tray.trayW / 2;
-    const hh = tray.trayH / 2;
-    const gap = 10;
-    const cands: [number, number][] = [
-      [mx, y1 + gap + hh],
-      [mx, y0 - gap - hh],
-      [x1 + gap + hw, my],
-      [x0 - gap - hw, my],
-      [mx, y1 + gap + hh + 40],
-      [mx, y0 - gap - hh - 40],
-    ];
-    const boxes = TERRITORY_IDS.map((id) => overlay.pieceBox(id)).filter((p): p is [number, number, number, number] => !!p);
-    const top = Math.max(insets.top, ...(insets.rects ?? []).filter((q) => q.y < H / 3).map((q) => q.y + q.h)) + 10;
+    // the ring as drawn (its brush overshoots the tray box 6 % on the long axis) and the header's words
+    const rx = tray.trayW * 0.53 + 3;
+    const hh = tray.trayH / 2 + 3;
+    const [hw0, hH] = headerSize(from, to);
+    const hw = Math.min(hw0, W - 16) / 2;
+    const pieces: { id: TerritoryId; box: Box4 }[] = [];
+    for (const id of TERRITORY_IDS) {
+      if (id === from || id === to) continue;
+      const r = overlay.pieceRects(id);
+      if (r)
+        pieces.push({
+          id,
+          box: mv([Math.min(r.box[0], r.plaque[0]) - 2, Math.min(r.box[1], r.plaque[1]) - 2, Math.max(r.box[2], r.plaque[2]) + 2, Math.max(r.box[3], r.plaque[3]) + 2]),
+        });
+    }
+    const labels = labelBoxes().map(mv);
+    // the fighters' own names: the board writes them beside their pieces wherever there is room, so the ring
+    // and the header keep a name's width and height of air around both pieces
+    const nameZone = (p: Box4): Box4 => [p[0] - 54 * uiScale, p[1] - 30 * uiScale, p[2] + 54 * uiScale, p[3] + 30 * uiScale];
+    const zones = [nameZone(a), nameZone(b)];
+    const hud: Box4[] = (insets.rects ?? []).map((q) => [q.x - 6, q.y - 6, q.x + q.w + 6, q.y + q.h + 6]);
+    const top = Math.max(insets.top, ...(insets.rects ?? []).filter((q) => q.y < H / 3).map((q) => q.y + q.h)) + 8;
     const bot = H - insets.bottom - 8;
-    let best: [number, number] | null = null;
-    let bestScore = Infinity;
+    const gap = 10;
+    const cands: [number, number][] = [];
+    for (const dy of [0, 36, 80])
+      for (const ox of [0, -0.3, 0.3, -0.6, 0.6]) {
+        cands.push([mx + ox * rx, y1 + gap + hh + dy]);
+        cands.push([mx + ox * rx, y0 - gap - hh - dy]);
+      }
+    for (const dx of [0, 50, 110])
+      for (const oy of [0, -1.4, 1.4]) {
+        cands.push([x1 + gap + rx + dx, my + oy * hh]);
+        cands.push([x0 - gap - rx - dx, my + oy * hh]);
+      }
+    // and open paper further out (a grid within reach of the fight): a crowded corner of the board can leave no
+    // clear spot right beside it, and a ring a little further off beats one over a stone or a name
+    const reach = Math.max(W, H) * 0.7;
+    for (let gy = top + hh; gy <= bot - hh; gy += 24)
+      for (let gx = rx + 8; gx <= W - rx - 8; gx += 32) if (Math.hypot(gx - mx, gy - my) <= reach) cands.push([gx, gy]);
+    let best: { c: [number, number]; side: 'above' | 'below'; score: number; covers: string[]; ring: Box4; head: Box4 } | null = null;
     for (const [cx0, cy0] of cands) {
-      // (the dice sit in the middle of the ring: score the ring's inner box)
-      const cx = clamp(cx0, hw + 8, W - hw - 8);
+      const cx = clamp(cx0, rx + 8, W - rx - 8);
       const cy = clamp(cy0, top + hh, bot - hh);
-      const r = [cx - hw * 0.8, cy - hh * 0.8, cx + hw * 0.8, cy + hh * 0.8];
-      let score = 0;
-      for (const p of boxes) if (p[0] < r[2] && p[2] > r[0] && p[1] < r[3] && p[3] > r[1]) score += 1;
-      // (the fight itself must stay in sight: a spot over either fighter is the worst)
-      for (const p of [a, b]) if (p[0] < r[2] && p[2] > r[0] && p[1] < r[3] && p[3] > r[1]) score += 100;
-      score += Math.hypot(cx - cx0, cy - cy0) / 400;
-      if (score < bestScore) {
-        bestScore = score;
-        best = [cx, cy];
+      const ring: Box4 = [cx - rx, cy - hh, cx + rx, cy + hh];
+      const above: Box4 = [cx - hw, cy - hh - 4 - hH, cx + hw, cy - hh - 4];
+      const below: Box4 = [cx - hw, cy + hh + 4, cx + hw, cy + hh + 4 + hH];
+      for (const [side, head] of [
+        ['above', above],
+        ['below', below],
+      ] as const) {
+        let score = 0;
+        const covers: string[] = [];
+        // (the header's words may run down to the strip's own edge: its box carries its own air)
+        if (head[1] < top - 4 || head[3] > H - insets.bottom + 2) score += 500;
+        // the ring is an ellipse (its box's corners are open paper); the header is its words' box
+        const inRing = (p: Box4) => {
+          const qx = clamp(cx, p[0], p[2]) - cx;
+          const qy = clamp(cy, p[1], p[3]) - cy;
+          return (qx * qx) / (rx * rx) + (qy * qy) / (hh * hh) < 1;
+        };
+        for (const hit of [inRing, (p: Box4) => hit4(p, head)]) {
+          // the fight itself must stay in sight: a spot over either fighter is the worst
+          for (const p of [a, b]) if (hit(p)) score += 1000;
+          for (const z of zones) if (hit(z)) score += 12;
+          for (const q of hud) if (hit(q)) score += 1000;
+          for (const p of pieces)
+            if (hit(p.box)) {
+              score += 30;
+              covers.push(p.id);
+            }
+          for (const l of labels)
+            if (hit(l)) {
+              score += 30;
+              covers.push('label');
+            }
+        }
+        // near the fight, the header above by preference (it reads first), and little clamping
+        score += Math.hypot(cx - mx, cy - my) / 120 + (side === 'below' ? 0.5 : 0) + Math.hypot(cx - cx0, cy - cy0) / 400;
+        if (!best || score < best.score) best = { c: [cx, cy], side, score, covers, ring, head };
       }
     }
-    tray.moveTo(best ? { x: best[0], y: best[1] } : null);
+    if (!best) {
+      tray.moveTo(null);
+      return;
+    }
+    trayHeader = best.side;
+    lastPlacement = { ring: best.ring, header: best.head, side: best.side, covers: best.covers, shift: [sx, sy] };
+    tray.moveTo({ x: best.c[0], y: best.c[1] });
+  };
+
+  // --- [fight v5] the lean and the cold (PROPOSAL §4 A "anticipation" and "aftermath") ----------------------
+  // As the dice start, the view leans toward the fight (a fraction of the way from the free region's centre,
+  // never more than 0.15 board widths, eased, never a cut) and the paper cools: the warm margins pull in and go
+  // cold, the paper away from the fight a shade colder (ChillVeil). Both come back over 600 ms as the ring
+  // dries. The lean is an offset on top of the camera pose, so home, `displaced` and the Reset view pill never
+  // see it. No lean if the player has moved the view; reduced motion: the paper only.
+  const chill = new ChillVeil();
+  const chillBuf = new THREE.Vector2();
+  const LEAN_IN_MS = 260;
+  const LEAN_OUT_MS = 600;
+  /** How much of the way from the view's centre to the fight the lean goes. */
+  const LEAN_FRAC = 0.28;
+  let leanKey = '';
+  let leanVer = 0;
+  let chillVer = 0;
+  let leanGoal = { x: 0, z: 0 };
+  let chillPair: TerritoryId[] | null = null;
+  const fightMid = (ids: TerritoryId[]): THREE.Vector3 => {
+    const m = new THREE.Vector3();
+    for (const id of ids) m.add(tiles.get(id).anchorW);
+    return m.multiplyScalar(1 / Math.max(1, ids.length));
+  };
+  const projPx = (p: THREE.Vector3, cam: THREE.Camera): [number, number] => {
+    const v = p.clone().project(cam);
+    return [(v.x * 0.5 + 0.5) * W, (-v.y * 0.5 + 0.5) * H];
+  };
+  const leanGoalFor = (ids: TerritoryId[], amount: number): { x: number; z: number } | null => {
+    // (phones: the ring sits in a fixed band the home view keeps clear; a lean would slide pieces under it)
+    if (!ids.length || compact || reduced || anim.instant || rig.displaced || rig.userMoved || rig.attract) return null;
+    const r = rig.region();
+    const g = new THREE.Vector3();
+    if (!rig.groundAt((r.x0 + r.x1) / 2, (r.y0 + r.y1) / 2, g)) return null;
+    const M = fightMid(ids);
+    // (the centre's ground point without the lean already applied)
+    let dx = (M.x - (g.x - rig.lean.x)) * LEAN_FRAC;
+    let dz = (M.z - (g.z - rig.lean.z)) * LEAN_FRAC;
+    const cap = clamp(amount, 0, 0.15) * rig.boardW;
+    const L = Math.hypot(dx, dz);
+    if (L > cap) {
+      dx *= cap / L;
+      dz *= cap / L;
+    }
+    return { x: dx, z: dz };
+  };
+  const tweenLean = (to: { x: number; z: number }, ms: number) => {
+    leanGoal = { ...to };
+    const ver = ++leanVer;
+    const from = { ...rig.lean };
+    if (Math.hypot(to.x - from.x, to.z - from.z) < 1e-4) return;
+    void anim.tween({
+      ms,
+      ease: ease.inOutSine,
+      update: (v) => {
+        if (ver !== leanVer) return;
+        rig.lean.x = from.x + (to.x - from.x) * v;
+        rig.lean.z = from.z + (to.z - from.z) * v;
+      },
+    });
+  };
+  const tweenChill = (to: number, ms: number) => {
+    const ver = ++chillVer;
+    const from = chill.amt;
+    if (Math.abs(to - from) < 1e-3) return;
+    void anim.tween({
+      ms,
+      ease: to > from ? ease.outQuad : ease.inOutSine,
+      update: (v) => {
+        if (ver === chillVer) chill.amt = from + (to - from) * v;
+      },
+    });
+  };
+  /** Start the lean (idempotent per pair); returns how far the fight will move on screen, container px. */
+  const leanTo = (ids: TerritoryId[], amount = 0.15): [number, number] => {
+    const key = ids.join('>');
+    if (!key) return [0, 0];
+    const M = fightMid(ids);
+    if (key !== leanKey) {
+      leanKey = key;
+      chillPair = [...ids];
+      tweenChill(1, LEAN_IN_MS);
+      const goal = leanGoalFor(ids, amount);
+      if (goal) tweenLean(goal, LEAN_IN_MS);
+    }
+    const a = projPx(M, camera);
+    const b = projPx(M, rig.leanedCamera(leanGoal.x, leanGoal.z));
+    return [b[0] - a[0], b[1] - a[1]];
+  };
+  const leanBack = () => {
+    leanKey = '';
+    tweenLean({ x: 0, z: 0 }, LEAN_OUT_MS);
+    tweenChill(0, LEAN_OUT_MS);
+  };
+  /** Test hook: the lean now and where it is heading, in board widths and in screen px at the fight. */
+  const leanInfo = () => {
+    const now = Math.hypot(rig.lean.x, rig.lean.z);
+    const goal = Math.hypot(leanGoal.x, leanGoal.z);
+    let px = 0;
+    if (chillPair) {
+      const M = fightMid(chillPair);
+      const a = projPx(M, rig.leanedCamera(0, 0));
+      const b = projPx(M, camera);
+      px = Math.hypot(b[0] - a[0], b[1] - a[1]);
+    }
+    return { boardWidths: now / rig.boardW, goalBoardWidths: goal / rig.boardW, px, chill: chill.amt, key: leanKey };
   };
 
   // --- losses at a verdict ---------------------------------------------------------------------
+  // [fight v5] the fight's counts as each pair's verdict lands (BoardView.onFightCount): the HUD's header can
+  // tick down with the dice instead of at the end of the roll.
+  const fightCountCbs: ((c: { from: TerritoryId; to: TerritoryId; attackerArmies: number; defenderArmies: number }) => void)[] = [];
+  const emitFightCount = (e: Extract<GameEvent, { type: 'diceRolled' }>, a: number, d: number) => {
+    for (const cb of fightCountCbs) {
+      try {
+        cb({ from: e.from, to: e.to, attackerArmies: a, defenderArmies: d });
+      } catch (err) {
+        console.error(err);
+      }
+    }
+  };
   const applyLosses = (e: Extract<GameEvent, { type: 'diceRolled' }>, fromN: number, toN: number, gen: number, chips: boolean) => {
     if (gen !== syncGen) return;
+    // [fight v5] a side whose stone already ticked to its total (an earlier pair's verdict) keeps its chip only
+    const fromHit = armies[e.from] !== fromN;
+    const toHit = armies[e.to] !== toN;
     armies[e.from] = fromN;
     armies[e.to] = toN;
     if (e.attackerLosses > 0) {
-      tokens.setArmies(e.from, fromN, 'hit', null, e.to);
+      if (fromHit) tokens.setArmies(e.from, fromN, 'hit', null, e.to);
       refreshBadge(e.from, true);
       if (chips) overlay.lossChip(e.from, e.attackerLosses, -1);
-      const t = tiles.get(e.from);
-      hitFlash(t);
+      if (fromHit) hitFlash(tiles.get(e.from));
     }
-    if (e.defenderLosses > 0) {
+    if (e.defenderLosses > 0 && toHit) {
       // Emptied: the top disc slides off; if this was the seat's last territory, its last stack topples and
       // dissolves disc by disc (PLAN §1 "elimination"), inside the elimination's own sweep.
       const last = toN <= 0 && !TERRITORY_IDS.some((t) => t !== e.to && owners[t] === e.defender) && !!lastState?.players[e.defender]?.eliminated;
@@ -1597,6 +1847,9 @@ export const createBoardView: CreateBoardView = async (opts: BoardViewOptions): 
       refreshBadge(e.to, true);
       if (chips) overlay.lossChip(e.to, e.defenderLosses, 1);
       hitFlash(tiles.get(e.to));
+    } else if (e.defenderLosses > 0) {
+      refreshBadge(e.to, true);
+      if (chips) overlay.lossChip(e.to, e.defenderLosses, 1);
     }
     if (toN <= 0) overlay.hideBadge(e.to);
   };
@@ -1783,8 +2036,13 @@ export const createBoardView: CreateBoardView = async (opts: BoardViewOptions): 
         }
         // full: the battle tray. The two figures face each other; the attacker leans in while the dice roll.
         // The ring brushes on and the rest of the board recedes with it (INK2 §2.2 t = 0).
-        // [board-pieces v4] desktop: the ring lands beside the fight, clear of every stone and numeral
-        if (idx === 0 && !tray.showing) placeTrayNearFight(e.from, e.to);
+        // [fight v5] anticipation: the view leans toward the fight and the paper cools as the ring brushes on;
+        // the ring is placed in the leaned frame (desktop: beside the fight, clear of every name, numeral and
+        // stone, with the header's side chosen with it).
+        if (idx === 0) {
+          const shift = leanTo([e.from, e.to]);
+          if (!tray.showing) placeTrayNearFight(e.from, e.to, shift);
+        }
         recede([e.from, e.to], 180);
         tokens.lean(e.from, e.to, true);
         rolling++;
@@ -1793,7 +2051,27 @@ export const createBoardView: CreateBoardView = async (opts: BoardViewOptions): 
           const now = performance.now();
           if (count <= 1) mode = lastPairKey === key && now - lastRollEnd < 3000 ? 'repeat' : 'single';
           else mode = idx === 0 ? 'first' : last ? 'final' : 'middle';
+          const fullVerdict = mode === 'single' || mode === 'repeat' || mode === 'final';
           let hitPlayed = false;
+          // [fight v5] the verdict pair by pair (full rolls): each pair's loss ticks on its stone as its gold
+          // hairline arrives, with an ink splash on the losing die; the totals and chips land on the last pair.
+          const a0 = armies[e.from];
+          const d0 = armies[e.to];
+          let aLost = 0;
+          let dLost = 0;
+          const pairs = Math.min(e.attackDice.length, e.defendDice.length);
+          // the loser's figure takes the hit and breathes out ink: tier 1 for a full roll (PROPOSAL §4 A)
+          const puffMs = mode === 'middle' ? 160 : mode === 'first' ? 200 : tierMs(440, 1);
+          const finish = () => {
+            applyLosses(e, fromN, toN, gen, mode !== 'middle' || count <= 6);
+            // The losing figure puffs (INK2 §2.2): each side that lost a die and still stands breathes
+            // out a little ink over the verdict beat (a defender at 0 starts its full dissolve instead).
+            if (gen === syncGen && (mode !== 'middle' || count <= 6)) {
+              if (e.attackerLosses > 0 && fromN > 0) tokens.puff(e.from, puffMs, run);
+              if (e.defenderLosses > 0 && toN > 0) tokens.puff(e.to, puffMs, run);
+            }
+            emitFightCount(e, fromN, toN);
+          };
           await tray.roll({
             attack: e.attackDice,
             defend: e.defendDice,
@@ -1803,28 +2081,55 @@ export const createBoardView: CreateBoardView = async (opts: BoardViewOptions): 
             durMs: mode === 'middle' ? blitzMidMs(idx, count) : undefined,
             reduced,
             run,
+            // [fight v5] one die at a time (60–90 ms; the controller's stagger, else 70 for a full roll)
+            stagger: o.stagger ?? 70,
             onShake: (ms) => sfx('diceShake', { duration: Math.max(0.06, ms / 1000), volume: vol }),
             onLand: (side, i) => {
               if (mode === 'middle' || (reduced && i === 0)) {
-                sfx('diceLand', { volume: vol, rate: Math.min(1.4, 1 + 0.08 * idx) });
-              } else sfx('diceLand', { volume: vol, pan: side * 0.3, rate: count > 1 ? Math.min(1.4, 1 + 0.08 * idx) : 1 });
+                // the blitz drum: each middle roll's clicks a touch higher as the rolls quicken
+                sfx('diceLand', { volume: vol * (side < 0 ? 1 : 0.8), pan: side * 0.25, rate: Math.min(1.45, 1 + 0.06 * idx) });
+              } else if (fullVerdict) {
+                // [fight v5] one click per die; the engine varies timbre and rate per die and hears landings within
+                // 200 ms as one pour, so no rate here (a blitz's final roll plays exactly like a single roll)
+                sfx('diceLand', { volume: vol, pan: side * 0.3 });
+              } else sfx('diceLand', { volume: vol, pan: side * 0.3, rate: Math.min(1.4, 1 + 0.08 * idx) });
             },
             // The verdict beat (A6/B4): nothing new sounds while the dice sit still, and the score dips.
             // A hair shorter than the beat so the verdict's own 'hit' is never the thing it swallows.
             onSilence: (ms) => audio?.hush?.(Math.max(0, ms - 30)),
             onVerdict: () => {
-              if (!hitPlayed) {
+              // [fight v5] full rolls: the hit plays per matched pair (onPair), not here
+              if (!hitPlayed && !fullVerdict) {
                 hitPlayed = true;
                 const loserSide = e.defenderLosses >= e.attackerLosses ? 0.3 : -0.3;
                 sfx('hit', { volume: (mode === 'middle' ? 0.5 : 1) * vol, pan: loserSide });
               }
-              applyLosses(e, fromN, toN, gen, mode !== 'middle' || count <= 6);
-              // The losing figure puffs (INK2 §2.2): each side that lost a die and still stands breathes
-              // out a little ink over the verdict beat (a defender at 0 starts its full dissolve instead).
-              if (gen === syncGen && (mode !== 'middle' || count <= 6)) {
-                const pm = mode === 'middle' ? 160 : mode === 'first' ? 200 : mode === 'final' ? 220 : 260;
-                if (e.attackerLosses > 0 && fromN > 0) tokens.puff(e.from, pm, run);
-                if (e.defenderLosses > 0 && toN > 0) tokens.puff(e.to, pm, run);
+              // [fight v5] the one gold moves off the board's stroke onto the verdict's hairlines
+              if (fullVerdict) arrow.ink(false, 120);
+              if (!fullVerdict) finish();
+            },
+            onPair: (k, attackerWins) => {
+              if (!fullVerdict || gen !== syncGen) return;
+              if (k >= pairs - 1) {
+                finish();
+              } else {
+                if (attackerWins) dLost++;
+                else aLost++;
+                const id = attackerWins ? e.to : e.from;
+                const n = attackerWins ? Math.max(toN, d0 - dLost) : Math.max(fromN, a0 - aLost);
+                armies[id] = n;
+                tokens.setArmies(id, n, 'hit', null, attackerWins ? e.from : e.to);
+                refreshBadge(id, true);
+                hitFlash(tiles.get(id));
+                emitFightCount(e, armies[e.from], armies[e.to]);
+              }
+              // the pair's hit, toward its loser, and the ink splash on the losing die
+              const loserPan = attackerWins ? 0.3 : -0.3;
+              sfx('hit', { volume: vol, pan: loserPan, variant: 'pair' as PlayOptions['variant'] });
+              try {
+                audio?.cue?.('splash', { volume: vol, pan: loserPan });
+              } catch {
+                /* a bank without the cue */
               }
             },
           });
@@ -1841,7 +2146,11 @@ export const createBoardView: CreateBoardView = async (opts: BoardViewOptions): 
           // undecided single roll keeps the tray for the next roll.
           const decided = toN <= 0 || fromN <= 1 || count > 1;
           tray.linger(decided ? TRAY_DECIDED_MS : 2500, performance.now());
-          if (toN > 0 && arrowSource === 'event') {
+          if (toN > 0 && fromN <= 1) {
+            // [fight v5] a repulse: the attacker's stroke dries back toward home (tier 1)
+            void arrow.retract(tierMs(450, 1));
+            arrowSource = null;
+          } else if (toN > 0 && arrowSource === 'event') {
             arrow.hide();
             arrowSource = null;
           }
@@ -2709,6 +3018,19 @@ export const createBoardView: CreateBoardView = async (opts: BoardViewOptions): 
       needShadow = false;
     }
     renderer.render(scene, camera);
+    // [fight v5] the room goes cold for a breath: the chill veil over the board, under the dice
+    if (chill.visible) {
+      const buf = renderer.getDrawingBufferSize(chillBuf);
+      const k = buf.x / Math.max(1, W);
+      let focus: [number, number] | null = null;
+      if (chillPair) {
+        const [fx, fy] = projPx(fightMid(chillPair), camera);
+        focus = [fx * k, buf.y - fy * k];
+      }
+      chill.set(buf.x, buf.y, focus, Math.min(W, H) * 0.22 * k);
+      renderer.clearDepth();
+      renderer.render(chill.scene, chill.camera);
+    }
     if (tray.visible) {
       renderer.clearDepth();
       renderer.shadowMap.needsUpdate = true;
@@ -2932,8 +3254,20 @@ export const createBoardView: CreateBoardView = async (opts: BoardViewOptions): 
     onViewDisplacedChange(cb: (displaced: boolean) => void) {
       displacedCbs.push(cb);
     },
-    onTrayChange(cb: (visible: boolean, rect?: { x: number; y: number; w: number; h: number }) => void) {
+    onTrayChange(cb: (visible: boolean, rect?: TrayRect) => void) {
       trayCbs.push(cb);
+    },
+    // [fight v5] the lean and the cold, for the controller (the board also leans on its own as a full roll starts)
+    leanTo(territories: TerritoryId[], o?: { amount?: number }) {
+      leanTo(territories, o?.amount ?? 0.15);
+      invalidate();
+    },
+    leanBack() {
+      leanBack();
+      invalidate();
+    },
+    onFightCount(cb: (c: { from: TerritoryId; to: TerritoryId; attackerArmies: number; defenderArmies: number }) => void) {
+      fightCountCbs.push(cb);
     },
     pulsePhase(phase: 'attack' | 'fortify' | 'end', o?: { player?: PlayerId; territories?: TerritoryId[] }) {
       pulsePhase(phase, o);
@@ -3042,6 +3376,7 @@ export const createBoardView: CreateBoardView = async (opts: BoardViewOptions): 
       live.dispose();
       lanes.dispose();
       tray.dispose();
+      chill.dispose();
       overlay.dispose();
       parts.waves.dispose();
       for (const t of [ink.ink, ink.field, ink.cont, ink.noise, ink.waves, shared.uTerr.value]) t.dispose();
@@ -3164,6 +3499,12 @@ export const createBoardView: CreateBoardView = async (opts: BoardViewOptions): 
     /** [board-pieces v4] readable AI engagements: wall-clock from the first roll to the end of the beat. */
     get readableBeats() {
       return readableBeats;
+    },
+    /** [fight v5] the lean now / its goal (board widths), the fight's shift on screen (px), the chill (0..1). */
+    lean: () => leanInfo(),
+    /** [fight v5] the ring's last placement: its box, the header's box and side, what it covers (should be none). */
+    get trayPlacement() {
+      return lastPlacement;
     },
     /** [board-pieces v4] the last dice roll's wall-clock ms and mode (dice.ts). */
     get lastRoll() {
