@@ -35,6 +35,7 @@ import {
   PERSONALITIES,
   PERSONALITY_IDS,
   grudgesOf,
+  missionText,
   isPersonality,
   truceOffersTo,
   truceSentence,
@@ -42,6 +43,7 @@ import {
   type Action,
   type AiPersonality,
   type ActionResult,
+  type ContinentId,
   type GameConfig,
   type GameEvent,
   type GameState,
@@ -53,9 +55,24 @@ import {
 } from '../engine';
 import { truceReason } from '../engine/ai/diplomacy';
 import { DEFAULT_MAP_ID, activeMapId, isKnownMap, listMaps } from '../map/registry';
-import type { AudioEngine, PlayOptions, SfxName, V4Cue } from '../audio/types';
+import type { AudioEngine, PlayOptions, SfxName, V4Cue, V5Cue } from '../audio/types';
 import type { BoardHighlights, BoardView, PlayEventOptions, TerritoryPointerInfo, ViewportInsets } from '../render/BoardView';
-import { buildStrip, buildTrack, emptySel, placeLeft, placeValue, selectionTargets, stagedTotal, tookLine, trackLockReason, withOffer, type Placement, type Sel } from './strip';
+import { attackLine, buildStrip, buildTrack, emptySel, placeLeft, placeValue, selectionTargets, stagedTotal, tookLine, trackLockReason, withOffer, type Placement, type Sel } from './strip';
+import {
+  buildReplay,
+  emptyStory,
+  grudgeTicks,
+  holdingBreakdown,
+  noteConquest,
+  noteOut,
+  noteRoundStart,
+  rematchFirst,
+  replayBoard,
+  restoreStory,
+  stoneHistory,
+  type StoryLedger,
+} from './story';
+import { Voices, type VoiceEntry, type VoiceKind, type VoiceVars } from './voice';
 import { SEP, armies, attackBegins, attackTakes, attackThrownBack, cName, click, goesFirst, pName, pct, poss, seatRef, setTouchCopy, tName, upper } from './copy';
 import { eventTier } from './timingModel';
 import { createHaptics, type Haptics } from './haptics';
@@ -130,6 +147,7 @@ import type {
   VictoryVM,
   NewGameVM,
   ReceiptVM,
+  ReplayVM,
   SaveSketchVM,
 } from './viewModel';
 
@@ -276,6 +294,12 @@ export interface RiskHooks {
   dismissReceipt(): void;
   /** Additive (v4 A4): the loser's rings on the board now. */
   loserRings(): NonNullable<BoardHighlights['loserRings']>;
+  /** Additive (v5 C): the end-of-game replay (kept after it is skipped), or null before a game ends. */
+  replay(): ReplayVM | null;
+  /** Additive (v5 E): the current human's holding dab (GameVM.holding), or null. */
+  holding(): GameVM['holding'] | null;
+  /** Additive (v5 D): every AI voice line said this game, oldest first. */
+  voiceLines(): VoiceEntry[];
 }
 
 export interface GameController extends ControllerApi {
@@ -351,6 +375,10 @@ interface AiTurnCtx {
   beats: number;
   /** 1 = full beats; < 1 = every beat shortened by this factor (≥ AI_MIN_SCALE). */
   scale: number;
+  /** v5 D5: the dry run found an attack this turn (the opening think gives the rattle its time). */
+  attacks?: boolean;
+  /** v5 D5: the cup has rattled this turn. */
+  rattled?: boolean;
 }
 
 interface GameMeta {
@@ -372,6 +400,11 @@ interface GameMeta {
   rings?: Record<number, TerritoryId[]>;
   /** v4 A5: someone has made the game's first move (the 'Sage goes first' beat is spent). */
   firstMoved?: boolean;
+  /**
+   * v5 C: the game's memory (src/game/story.ts): a board per round start, every conquest, every knockout. The
+   * replay, the grudge ticks and a stone's history all read it.
+   */
+  story?: StoryLedger;
 }
 
 interface UiFile {
@@ -416,6 +449,16 @@ const REJECT_MS = 2000;
 /** A decided fight's tray header ('Siberia captured') stays this long, then fades (docs/ROUND2.md §E). */
 const LINGER_MS = 1000;
 const LOG_CAP = 300;
+/** v5 D5: the cup rattles this long before an AI's first attack of a turn (taken from the turn's opening think). */
+const RATTLE_MS = 300;
+/** v5 D4: an AI's voice line holds the one line this long against its own placement narration. */
+const VOICE_HOLD_MS = 1200;
+/** v5 F: a clickable's line (a continent, the cup, the ensō, a lane, a stone) holds this long. */
+const FLASH_MS = 1400;
+/** v5 F4: a second tap on the ensō this soon opens the Ledger. */
+const ENSO_DOUBLE_MS = 2000;
+/** v5 A9: how far an AI's readable fight leans the camera (a human's leans the board's default). */
+const AI_LEAN = 0.08;
 
 function freshMeta(id: string): GameMeta {
   return {
@@ -428,6 +471,7 @@ function freshMeta(id: string): GameMeta {
     finalRoundShown: false,
     sel: emptySel(),
     lastTurnKind: null,
+    story: emptyStory(),
   };
 }
 
@@ -458,6 +502,7 @@ function restoreMeta(id: string, saved: Partial<GameMeta> | undefined): GameMeta
     for (const [k, v] of Object.entries(saved.rings)) if (Array.isArray(v)) m.rings[Number(k)] = v.filter((t) => (TERRITORY_IDS as readonly string[]).includes(t));
   }
   m.firstMoved = !!saved.firstMoved;
+  m.story = restoreStory(saved.story);
   return m;
 }
 
@@ -483,6 +528,11 @@ function restoreSel(x: unknown): Sel {
 
 /** Optional renderer extension: the resulting totals drawn on the pieces while a count is chosen. */
 type PreviewBoard = BoardView & { setCountPreview?: (totals: Partial<Record<TerritoryId, number>> | null) => void };
+
+/** v5 E6: the pour follows the armies: 85 ms a stone, 0.25–0.6 s. */
+function pourSeconds(armies: number): number {
+  return Math.min(0.6, Math.max(0.25, 0.085 * armies));
+}
 
 function isAttackAction(a: Action): a is Extract<Action, { type: 'attack' | 'blitz' }> {
   return a.type === 'attack' || a.type === 'blitz';
@@ -635,6 +685,37 @@ class Controller {
   private resumedTitle = false;
   private idleOn = false;
   private lastActive = 0;
+  // v5: the replay, voices, the holding dab, clickables, the camera lean
+  /** The end-of-game replay showing now (GameVM.replay), and the last one built (the hook keeps it). */
+  private replay: ReplayVM | null = null;
+  /** The e2e build (VITE_E2E) never holds the recap for the replay; the hook still builds it. */
+  private noReplay = (() => {
+    try {
+      return !!(import.meta as unknown as { env?: { VITE_E2E?: string } }).env?.VITE_E2E;
+    } catch {
+      return false;
+    }
+  })();
+  private lastReplay: ReplayVM | null = null;
+  private replayKey = 0;
+  private replayTimer: unknown = null;
+  private voices = new Voices();
+  /** The voice line on the strip now, and how long it holds against placement narration. */
+  private voiceNow: { text: string; seat: PlayerId } | null = null;
+  private voiceHoldUntil = 0;
+  /** The current human turn's armies as they arrived (turnStarted's breakdown) plus card trades since. */
+  private turnArmies: { turn: number; player: PlayerId; b: import('../engine').ReinforcementBreakdown; cards: number } | null = null;
+  /** A clickable's line on the strip for a moment (a continent, the cup, the ensō, a lane, a stone). */
+  private flash: { text: string; until: number; kind: 'tap' | 'stone' | 'mission' } | null = null;
+  /** The enemy tile under the pointer while a source is picked (the hover odds line, desktop). */
+  private hoverTile: TerritoryId | null = null;
+  /** The seat ring under the pointer (its territories lift, the rest rest). */
+  private hoverSeatId: PlayerId | null = null;
+  /** A tapped continent's territories, pulsed once. */
+  private tapPulse: TerritoryId[] = [];
+  private ensoAt = -Infinity;
+  /** What the camera leans toward now ('' = home), so the board hears each change once. */
+  private leanKey = '';
   /** The engine moved the armies in itself after the driver's conquest: the line says so (A5). */
   private autoMoved: { to: TerritoryId; n: number; chain: TerritoryId | null; turn: number; until: number } | null = null;
 
@@ -717,7 +798,19 @@ class Controller {
       this.invalidate();
     });
     // Only to tell an ocean click from a click on land (the board names hovered tiles itself).
-    this.board.onTerritoryHover((info) => (this.overTile = info?.territory ?? null));
+    this.board.onTerritoryHover((info) => {
+      this.overTile = info?.territory ?? null;
+      // v5 E8: the hover odds line follows the pointer (desktop); only a change the line cares about redraws.
+      const t = info?.territory ?? null;
+      if (t === this.hoverTile) return;
+      const was = this.hoverTile;
+      this.hoverTile = t;
+      const s = this.state;
+      if (!this.touch && s && s.phase.kind === 'attack' && this.sel.selected && !this.sel.target) {
+        const ts = attackTargets(s, this.sel.selected);
+        if ((t && ts.includes(t)) || (was && ts.includes(was))) this.invalidate();
+      }
+    });
     (this.board as BoardView & TouchBoard).onTerritoryLongPress?.((info) => this.onLongPress(info));
     (this.board as BoardView & TouchBoard).onContextLoss?.((lost) => {
       this.boardLost = lost;
@@ -979,6 +1072,7 @@ class Controller {
     this.board.skipAnimations();
     this.board.setAttractMode(false);
     this.board.syncState(blank);
+    this.setEvening(1);
     this.screen = 'game';
     this.overlay = null;
     this.victory = null;
@@ -1027,6 +1121,18 @@ class Controller {
     this.bannerAfterReceipt = null;
     this.resumedTitle = false;
     this.autoMoved = null;
+    this.endReplay(false);
+    this.lastReplay = null;
+    this.voices = new Voices();
+    this.voiceNow = null;
+    this.voiceHoldUntil = 0;
+    this.turnArmies = null;
+    this.flash = null;
+    this.hoverTile = null;
+    this.hoverSeatId = null;
+    this.tapPulse = [];
+    this.ensoAt = -Infinity;
+    this.syncLean(null);
     this.lastActive = this.now();
     this.setIdle(false);
   }
@@ -1049,6 +1155,7 @@ class Controller {
     this.board.skipAnimations();
     this.board.setAttractMode(false);
     this.board.syncState(s);
+    this.setEvening(Math.max(1, s.round));
     this.screen = 'game';
     this.overlay = null;
     this.victory = null;
@@ -1213,6 +1320,8 @@ class Controller {
       const e: Entry = { ...x, beat, ai: opts.ai, skip: opts.skip && !keep };
       if (x.ev.type === 'diceRolled') {
         e.opts = { style: opts.style ?? 'full', seq: { index: rollIndex++, count: rolls } };
+        // v5 A: a human's full roll lands its dice one at a time.
+        if (!opts.ai && (opts.style ?? 'full') === 'full') e.opts.stagger = 70;
       } else if (opts.style) {
         e.opts = { style: opts.style };
       }
@@ -1483,6 +1592,22 @@ class Controller {
         this.narrPlaced = 0;
         this.aiHighlights = null;
         this.aiPreview = null;
+        this.voiceNow = null;
+        this.voiceHoldUntil = 0;
+        this.hoverTile = null;
+        // v5 C1: the board as this round starts (the replay's frames).
+        if (this.meta && ev.round > d.round) noteRoundStart(this.story(), e.after, ev.round);
+        // v5 D4: a seat's last line is spent as its turn begins; a grievance it carried is said now.
+        const grievance = this.voices.turnBegins(ev.player);
+        if (grievance && aiTurn) {
+          const by = pName(d, grievance.by);
+          this.say(ev.player, grievance.kind, { by }, ev.turn, d);
+        }
+        // v5 E6: the turn's armies arrive as a thing to spend (the holding dab), with a pour.
+        this.turnArmies = human ? { turn: ev.turn, player: ev.player, b: ev.reinforcements, cards: 0 } : null;
+        if (human && !skip) this.cue('pour', { delay: 0.6, duration: pourSeconds(ev.reinforcements.total) });
+        // v5 B: the evening deepens with the rounds (score and paper from one place).
+        if (ev.round !== d.round) this.setEvening(ev.round);
         let recap: string | null = null;
         if (this.meta && this.isHumanSeat(ev.player) && ev.round >= 2) {
           // The grudge line stays in the Ledger; v4 the receipt replaces it on screen.
@@ -1539,11 +1664,15 @@ class Controller {
         // The AI's narration says what happened, as it lands (docs/ROUND2.md §E).
         if (e.ai && ev.count > 0 && ev.source !== 'undo') {
           this.narrPlaced += ev.count;
-          this.narration = `${pName(d, ev.player)} places ${armies(this.narrPlaced)}`;
+          if (!this.voiceHolding()) this.narration = `${pName(d, ev.player)} places ${armies(this.narrPlaced)}`;
         }
         break;
       case 'diceRolled':
         this.onRollStart(ev, e);
+        // v5 D4: a human attacked an AI seat: it remembers (said as its next turn begins).
+        if (!e.ai && !this.autoplayOn && ev.defender >= 0 && this.isHumanSeat(ev.player) && d.players[ev.defender]?.kind === 'ai') {
+          this.voices.aggrieve(ev.defender, ev.player, 'attacked');
+        }
         if (e.ai) {
           // v4 A1: the line begins with the stroke and completes with the verdict.
           const begun = attackBegins(pName(d, ev.player), tName(ev.to));
@@ -1552,6 +1681,7 @@ class Controller {
         }
         break;
       case 'territoryConquered':
+        if (this.meta) noteConquest(this.story(), d.round, ev.to, ev.player, ev.previousOwner);
         this.lastConquest = { attacker: ev.player, victim: ev.previousOwner };
         if (ev.previousOwner >= 0) this.lostKeys[ev.previousOwner] = (this.lostKeys[ev.previousOwner] ?? 0) + 1;
         if (e.ai) this.narration = attackTakes(this.narrBegun ?? attackBegins(pName(d, ev.player), tName(ev.to)));
@@ -1576,11 +1706,15 @@ class Controller {
         const lc = this.lastConquest;
         const involved = this.isHumanSeat(ev.player) || (!!lc && lc.attacker === ev.player && this.isHumanSeat(lc.victim));
         if (involved) {
+          // v5 E7: a human's continent says what it's worth to them: 'John holds Asia · +7 next turn'.
+          const worth = this.isHumanSeat(ev.player) ? `+${bonus} next turn` : `+${bonus}`;
           this.announce('continent', `${upper(name)} HOLDS ${upper(cName(c))}${SEP}+${bonus}`, ev.player, {
             name: 'continent',
             opts: aiFar([ev.player]),
-          }, `${name} holds ${cName(c)}${SEP}+${bonus}`);
+          }, `${name} holds ${cName(c)}${SEP}${worth}`);
         } else this.play('continent', { distance: 0.6 });
+        // v5 D4: an AI that takes a continent on its own turn says so.
+        if (e.ai && d.currentPlayer === ev.player && d.players[ev.player]?.kind === 'ai') this.say(ev.player, 'continent', { continent: cName(c) }, d.turn, d);
         this.log('continent', ev.player, `${name} holds ${cName(c)}${SEP}+${bonus} a turn`);
         break;
       }
@@ -1598,6 +1732,10 @@ class Controller {
       }
       case 'playerEliminated': {
         if (e.ai) this.narration = `${pName(d, ev.by)} knocks out ${pName(d, ev.player)}`;
+        if (this.meta) noteOut(this.story(), Math.max(1, d.round), ev.player, ev.by);
+        // v5 D4: a knocked-out AI blames who did it; an AI that knocks out a human says so.
+        if (d.players[ev.player]?.kind === 'ai') this.say(ev.player, 'out', { by: pName(d, ev.by) }, d.turn, d);
+        else if (d.players[ev.by]?.kind === 'ai') this.say(ev.by, 'eliminates', { victim: pName(d, ev.player) }, d.turn, d);
         if (this.meta) this.meta.out = { ...(this.meta.out ?? {}), [ev.player]: { by: ev.by, round: d.round } };
         if (this.meta?.rings) delete this.meta.rings[ev.player];
         if (this.isHumanSeat(ev.player) && !this.autoplayOn) this.lean();
@@ -1609,6 +1747,11 @@ class Controller {
       case 'cardsTraded': {
         const v = ev.armies;
         if (e.ai) this.narration = `${pName(d, ev.player)} trades cards for +${v}`;
+        // v5 E6: a trade pours its armies into the holding dab.
+        if (this.turnArmies && this.turnArmies.player === ev.player && this.turnArmies.turn === d.turn) {
+          this.turnArmies = { ...this.turnArmies, cards: this.turnArmies.cards + v };
+          if (!skip) this.cue('pour', { delay: 0.2, duration: pourSeconds(v) });
+        }
         const rate = v >= 20 ? 0.72 : 1 - ((Math.max(4, v) - 4) / 16) * 0.28;
         this.play('cardTrade', { rate, volume: v > 10 ? 1.26 : 1, ...aiFar([ev.player]) });
         break;
@@ -1633,6 +1776,8 @@ class Controller {
           this.log('truce', actor, text);
           if (e.ai) this.narration = text;
         }
+        // v5 D4: a truce broken against an AI seat: it says so as its next turn begins.
+        if (ev.type === 'truceBroken' && d.players[ev.against]?.kind === 'ai') this.voices.aggrieve(ev.against, ev.by, 'truceBroken');
         // A broken truce against a human stings like a lost continent: the ring dims, the somber bowl.
         if (ev.type === 'truceBroken' && this.isHumanSeat(ev.against) && !this.autoplayOn && !skip) {
           this.lostKeys[ev.against] = (this.lostKeys[ev.against] ?? 0) + 1;
@@ -1648,6 +1793,7 @@ class Controller {
         this.play('victory');
         this.clearSave();
         this.victory = this.buildVictory(e.after, ev.winner, null);
+        this.startReplay(e.after, ev.winner);
         this.screen = 'victory';
         this.turnBanner = null;
         this.banner = null;
@@ -2031,8 +2177,8 @@ class Controller {
   // v4: cues, the score's lean and idle, the receipt (PLAN §3 A2–A3, §4 B3, §7)
   // =========================================================================
 
-  /** A v4 cue; engines without `cue` stay silent. */
-  private cue(name: V4Cue, opts?: PlayOptions): void {
+  /** A v4 / v5 cue; engines without `cue` stay silent. */
+  private cue(name: V4Cue | V5Cue, opts?: PlayOptions): void {
     try {
       this.audio.cue?.(name, opts);
     } catch {
@@ -2087,6 +2233,186 @@ class Controller {
       }
       this.cue('tick', { delay: i * span, ...(pan !== undefined ? { pan } : {}) });
     });
+  }
+
+  // =========================================================================
+  // v5: the game's memory, the voices, the replay, the camera lean (_claude/v5/PROPOSAL.md §4 C, D, A9)
+  // =========================================================================
+
+  /** A territory's stereo position, −1..1 from its screen x (null without a window or a position). */
+  private panOf(t: TerritoryId): number | null {
+    const w = typeof window !== 'undefined' && window.innerWidth ? window.innerWidth : 0;
+    const p = w ? this.board.getScreenPosition(t) : null;
+    return p ? Math.max(-1, Math.min(1, (p.x / w) * 2 - 1)) : null;
+  }
+
+  /** v5 B "the evening deepens": dusk at round 1, night by round 12; the score and the paper both hear it. */
+  private setEvening(round: number): void {
+    const t = Math.min(1, Math.max(0, (round - 1) / 11));
+    try {
+      (this.audio as AudioEngine & { setEvening?: (t: number) => void }).setEvening?.(t);
+      (this.board as BoardView & { setEvening?: (t: number) => void }).setEvening?.(t);
+    } catch (err) {
+      console.error(err);
+    }
+  }
+
+  private story(): StoryLedger {
+    const m = this.meta!;
+    return (m.story ??= emptyStory());
+  }
+
+  /**
+   * An AI seat says one line (at most one per turn, src/game/voice.ts). The chip keeps it; on an AI's turn it is
+   * also the strip's one line (narration, in the seat's tint) and holds a moment against its placement count.
+   */
+  private say(seat: PlayerId, kind: VoiceKind, vars: VoiceVars, turn: number, d: GameState): void {
+    const e = this.voices.say(d, seat, kind, vars, turn);
+    if (!e) return;
+    if (this.isAiDriven(d.currentPlayer)) {
+      this.narration = e.text;
+      this.voiceNow = { text: e.text, seat };
+      this.voiceHoldUntil = this.now() + VOICE_HOLD_MS;
+    }
+    this.invalidate();
+  }
+
+  private voiceHolding(): boolean {
+    return !!this.voiceNow && this.now() < this.voiceHoldUntil && this.narration === this.voiceNow.text;
+  }
+
+  /**
+   * v5 C1: the game is won: build the replay from the ledger. It shows before the recap unless the board plays at
+   * instant speed (the logic lane, Skip players); any tap or 'skipReplay' ends it, and it ends itself after its
+   * last round has dried.
+   */
+  private startReplay(final: GameState, winner: PlayerId): void {
+    if (!this.meta) return;
+    try {
+      const r = buildReplay(this.story(), final, winner, ++this.replayKey);
+      // v5 G: a mission win's last round says the mission's headline.
+      const head = this.missionHeadline(final);
+      const n = r.rounds.length;
+      this.lastReplay = head && n ? { ...r, rounds: r.rounds.map((x, j) => (j === n - 1 ? { ...x, line: head } : x)) } : r;
+    } catch (err) {
+      console.error('[risk] replay failed', err);
+      this.lastReplay = null;
+      return;
+    }
+    if (this.victory) this.victory = { ...this.victory, moments: this.lastReplay.moments };
+    if (this.settings.animationSpeed === 0 || !this.lastReplay.rounds.length || this.noReplay) return;
+    this.replay = this.lastReplay;
+    const total = this.replay.rounds.length * this.replay.msPerRound + 1500;
+    const key = this.replay.key;
+    if (this.replayTimer) this.clock.clearTimeout(this.replayTimer);
+    this.replayTimer = this.timer(() => {
+      this.replayTimer = null;
+      if (this.replay?.key === key) this.endReplay(true);
+    }, total);
+  }
+
+  /** The UI reached round `index` of the replay: the board re-soaks to that round's end, the numeral re-inks. */
+  private replayTo(index: number): void {
+    const r = this.replay;
+    const s = this.state;
+    if (!r || !s || !this.meta) return;
+    const b = replayBoard(this.story(), s, index);
+    if (!b) return;
+    if (index === 0) this.board.setAttractMode(false);
+    this.board.syncState(b);
+    this.cue('tick');
+  }
+
+  /** The replay ends (a tap, 'skipReplay', its own timer, a new game): the final board, then the recap. */
+  private endReplay(restore: boolean): void {
+    if (this.replayTimer) {
+      this.clock.clearTimeout(this.replayTimer);
+      this.replayTimer = null;
+    }
+    if (!this.replay) return;
+    this.replay = null;
+    if (restore && this.state) {
+      this.board.syncState(this.state);
+      this.board.setAttractMode(true);
+    }
+    this.invalidate();
+  }
+
+  /**
+   * v5 A9: the camera leans toward a fight: a human's armed or rolling pair (the board's default lean), an AI's
+   * readable fight (lighter). Called on every highlight push; the board hears each change once.
+   */
+  private syncLean(target: { ts: TerritoryId[]; amount?: number } | null): void {
+    const key = target ? `${target.ts.join('>')}|${target.amount ?? ''}` : '';
+    if (key === this.leanKey) return;
+    this.leanKey = key;
+    try {
+      if (target) this.board.leanTo?.(target.ts, target.amount !== undefined ? { amount: target.amount } : undefined);
+      else this.board.leanBack?.();
+      // The room goes cold for the fight's breath, and warms back with the camera.
+      (this.audio as AudioEngine & { fightCold?: (on: boolean) => void }).fightCold?.(!!target);
+    } catch (err) {
+      console.error(err);
+    }
+  }
+
+  private leanTarget(): { ts: TerritoryId[]; amount?: number } | null {
+    const s = this.state;
+    const d = this.disp;
+    if (!s || !d || this.screen !== 'game' || this.replay) return null;
+    const g = this.eng;
+    const live = g && !g.endedAt ? g : null;
+    if (live) return this.isAiDriven(live.attacker) ? { ts: [live.from, live.to], amount: AI_LEAN } : { ts: [live.from, live.to] };
+    const interactive = this.interactive() && d.currentPlayer === s.currentPlayer;
+    if (interactive) {
+      const sel = this.viewSel();
+      if (d.phase.kind === 'attack' && sel.selected && sel.target && d.territories[sel.selected].owner === d.currentPlayer && d.territories[sel.target].owner !== d.currentPlayer) {
+        return { ts: [sel.selected, sel.target] };
+      }
+      return null;
+    }
+    const a = this.aiHighlights?.arrow;
+    if (a && a.kind === 'attack') return { ts: [a.from, a.to], amount: AI_LEAN };
+    return null;
+  }
+
+  /** A clickable's line holds the strip a moment (v5 F). */
+  private flashLine(text: string, kind: 'tap' | 'stone' | 'mission' = 'tap', ms = FLASH_MS): void {
+    this.flash = { text, until: this.now() + ms, kind };
+    this.lineKey++;
+    const until = this.flash.until;
+    this.timer(() => {
+      if (this.flash && this.flash.until === until) {
+        this.flash = null;
+        this.lineKey++;
+        this.invalidate();
+      }
+    }, ms + 5);
+    this.invalidate();
+  }
+
+  /** The human the grudge ticks are read for: the driver on a human turn, else the next human to get the cup. */
+  private grudgeReader(d: GameState): PlayerId | null {
+    if (this.autoplayOn) return null;
+    const n = d.players.length;
+    for (let k = 0; k < n; k++) {
+      const p = d.players[(d.currentPlayer + k) % n];
+      if (p && p.kind === 'human' && !p.eliminated) return p.id;
+    }
+    return null;
+  }
+
+  /** v5 E6: the holding dab: the current human's armies still to place this turn, and where they came from. */
+  private buildHolding(d: GameState): GameVM['holding'] {
+    const s = this.state;
+    if (!s || this.handoff || this.screen !== 'game' || this.autoplayOn) return null;
+    const ph = d.phase;
+    const me_ = d.currentPlayer;
+    if (ph.kind !== 'reinforce' || ph.remaining <= 0 || !this.isHumanSeat(me_) || this.isAiDriven(me_) || d.currentPlayer !== s.currentPlayer) return null;
+    const t = this.turnArmies && this.turnArmies.player === me_ && this.turnArmies.turn === d.turn ? this.turnArmies : null;
+    const b = t?.b ?? reinforcementsFor(d, me_);
+    const breakdown = ph.midTurn && !t ? `cards +${ph.remaining}` : holdingBreakdown(b, t?.cards ?? 0);
+    return { seat: seatRef(d, me_), armies: ph.remaining, breakdown };
   }
 
   private receipts(): ReceiptLedger {
@@ -2202,6 +2528,7 @@ class Controller {
       x: info.clientX,
       y: info.clientY,
       key: ++this.nameCardKey,
+      history: this.meta ? stoneHistory(this.story(), d, t) : null,
     };
     this.invalidate();
     return true;
@@ -2217,6 +2544,11 @@ class Controller {
     this.boardClicks++;
     this.hideNameCard();
     this.markActive();
+    // v5 C1: any tap during the replay ends it (the recap shows).
+    if (this.replay) {
+      this.endReplay(true);
+      return;
+    }
     // v4 A3: input to the board waits on the receipt; the tap dismisses it and does nothing else.
     if (this.receipt && !this.overlay && !this.confirm) {
       this.dismissReceipt();
@@ -2955,7 +3287,80 @@ class Controller {
       case 'dismissReceipt':
         this.dismissReceipt();
         break;
+      case 'replayRound':
+        this.replayTo(i.index);
+        break;
+      case 'skipReplay':
+        this.endReplay(true);
+        break;
+      case 'tapContinent':
+        this.tapContinent(i.id);
+        break;
+      case 'tapCup': {
+        const d = this.disp;
+        if (!d || this.screen !== 'game') break;
+        this.cue('rattle');
+        if (d.phase.kind !== 'game-over') this.flashLine(`${poss(pName(d, d.currentPlayer))} turn`);
+        break;
+      }
+      case 'tapEnso': {
+        const d = this.disp;
+        if (!d || this.screen !== 'game') break;
+        const now = this.now();
+        if (now - this.ensoAt <= ENSO_DOUBLE_MS) {
+          this.ensoAt = -Infinity;
+          this.setOverlay('log');
+          this.sheet(true);
+        } else {
+          this.ensoAt = now;
+          this.flashLine(d.round > 0 ? `Round ${d.round}` : 'Setup');
+        }
+        break;
+      }
+      case 'tapLane': {
+        if (this.screen !== 'game' || !TERRITORIES[i.from] || !TERRITORIES[i.to]) break;
+        const a = this.panOf(i.from);
+        const b = this.panOf(i.to);
+        this.cue('glint', { ...(a !== null ? { pan: a } : {}), ...(b !== null ? { panTo: b } : {}), duration: 0.5 } as PlayOptions);
+        this.flashLine(`${tName(i.from)} to ${tName(i.to)} by sea`);
+        break;
+      }
+      case 'hoverSeat': {
+        const d = this.disp;
+        const id = i.player !== null && d?.players[i.player] && !d.players[i.player].eliminated ? i.player : null;
+        if (id !== this.hoverSeatId) this.hoverSeatId = id;
+        break;
+      }
+      case 'stoneHistory': {
+        const d = this.disp;
+        if (i.territory === null) {
+          if (this.flash?.kind === 'stone') {
+            this.flash = null;
+            this.lineKey++;
+          }
+          break;
+        }
+        if (!d || !this.meta || this.screen !== 'game' || !d.territories[i.territory]) break;
+        this.flashLine(stoneHistory(this.story(), d, i.territory), 'stone', 2400);
+        break;
+      }
+      case 'seatMission': {
+        const s = this.state;
+        if (i.player === null) {
+          if (this.flash?.kind === 'mission') {
+            this.flash = null;
+            this.lineKey++;
+          }
+          break;
+        }
+        // Secret: only the seat whose live turn it is reads its own mission.
+        if (!s || this.screen !== 'game' || !this.interactive() || i.player !== s.currentPlayer) break;
+        const m = this.missionFor(s, i.player);
+        if (m) this.flashLine(m, 'mission', 2400);
+        break;
+      }
       case 'nav':
+        this.endReplay(false);
         this.screen = i.screen;
         this.overlay = null;
         this.board.setAttractMode(true);
@@ -3180,10 +3585,18 @@ class Controller {
     const leader = this.standingsOrder(s)[0];
     this.clearSave();
     this.wakeAll();
+    // v5 C: what was still queued to play happened all the same: the game's memory keeps it.
+    if (this.meta) {
+      for (const q of this.queue) {
+        if (q.ev.type === 'territoryConquered') noteConquest(this.story(), q.after.round, q.ev.to, q.ev.player, q.ev.previousOwner);
+        else if (q.ev.type === 'playerEliminated') noteOut(this.story(), Math.max(1, q.after.round), q.ev.player, q.ev.by);
+      }
+    }
     this.queue = [];
     this.skipAll = true;
     this.board.skipAnimations();
     this.victory = this.buildVictory(s, leader, `Called in round ${Math.max(1, s.round)}`);
+    this.startReplay(s, leader);
     this.screen = 'victory';
     this.allHumansOut = false;
     this.holdUntil = this.now() + 600;
@@ -3204,8 +3617,41 @@ class Controller {
       this.intent({ type: 'nav', screen: 'newGame' });
       return;
     }
+    this.endReplay(false);
     const players = s.config.players.map((p, i) => ({ ...p, kind: s.players[i]?.kind ?? p.kind }));
-    this.startGame({ ...s.config, players, seed: this.randomSeed() });
+    // v5 C3: same seats; the loser goes first. The engine draws the first seat from the seed, so the rematch
+    // picks a seed whose deal starts with the loser (a handful of tries; deterministic once chosen).
+    const winner = s.phase.kind === 'game-over' ? s.phase.winner : (this.victory?.winner.id ?? null);
+    const first = rematchFirst(s, winner);
+    const config: GameConfig = { ...s.config, players, seed: this.randomSeed() };
+    for (let tries = 0; tries < 64; tries++) {
+      const seed = this.randomSeed();
+      try {
+        if (createGame({ ...config, seed }).state.firstPlayer === first) {
+          config.seed = seed;
+          break;
+        }
+      } catch {
+        break;
+      }
+    }
+    this.startGame(config);
+  }
+
+  /** v5 F2: a tapped continent label: its name and bonus (and holder) for a moment, its land pulses once. */
+  private tapContinent(c: ContinentId): void {
+    const d = this.disp;
+    const info = CONTINENTS[c];
+    if (!d || !info || this.screen !== 'game') return;
+    const owners = new Set<number>(info.territories.map((t) => d.territories[t]?.owner ?? -1));
+    const holder: number = owners.size === 1 ? [...owners][0] : -1;
+    const held = holder >= 0 && d.players[holder] ? `${SEP}${pName(d, holder)} holds it` : '';
+    this.flashLine(`${cName(c)}${SEP}+${info.bonus} a turn${held}`);
+    this.tapPulse = [...info.territories];
+    this.timer(() => {
+      this.tapPulse = [];
+      this.invalidate();
+    }, FLASH_MS);
   }
 
   // =========================================================================
@@ -3270,9 +3716,10 @@ class Controller {
       // v4 A1: count the turn's beats up front (a dry run of the AI on a copy), and compress every beat by
       // the same factor when there are more than the cap. Nothing is ever snapped.
       const opening = s.round <= 1 && !this.humanHasPlayed;
-      const beats = s.turn > 0 && speed !== 'instant' ? this.planAiBeats(s) : 0;
+      const plan = s.turn > 0 && speed !== 'instant' ? this.planAiBeats(s) : { beats: 0, attacks: false };
+      const beats = plan.beats;
       const cap = opening ? AI_BEATS_CAP_OPENING : AI_BEATS_CAP;
-      this.aiCtx = { key, player: p, startedAt: this.now(), first: true, beats, scale: beats > cap ? Math.max(AI_MIN_SCALE, cap / beats) : 1 };
+      this.aiCtx = { key, player: p, startedAt: this.now(), first: true, beats, scale: beats > cap ? Math.max(AI_MIN_SCALE, cap / beats) : 1, attacks: plan.attacks };
     }
     const ctx = this.aiCtx;
     // Watch = beats at 1×, Fast = 2× (spacing, never pitch); a long turn's beats run faster by 1/scale.
@@ -3305,7 +3752,8 @@ class Controller {
     }
 
     if (ph === 'setup-place' || ph === 'reinforce') {
-      if (ctx.first && ph === 'reinforce') await this.sleep(THINK_TURN_START * k);
+      // v5 D5: a turn that will attack gives part of its opening think to the cup's rattle (same total).
+      if (ctx.first && ph === 'reinforce') await this.sleep((ctx.attacks ? THINK_TURN_START - (RATTLE_MS - AI_GAP_MS) : THINK_TURN_START) * k);
       ctx.first = false;
       if (this.state !== s) return; // something else moved the game
       const collected: { ev: GameEvent; after: GameState; end: boolean }[] = [];
@@ -3341,8 +3789,14 @@ class Controller {
     if (ph === 'attack') {
       const a0 = this.chooseFor(s);
       if (isAttackAction(a0)) {
-        // One even breath before each engagement, so the line is read before the next begins.
-        await this.sleep((ctx.first ? THINK_TURN_START : AI_GAP_MS) * k);
+        // One even breath before each engagement, so the line is read before the next begins. v5 D5: before the
+        // turn's first attack the cup rattles once (intent you can see), and the breath is the rattle's.
+        if (!ctx.rattled) {
+          ctx.rattled = true;
+          const pan = this.panOf(a0.from);
+          if (!this.autoplayOn) this.cue('rattle', pan !== null ? { pan } : undefined);
+          await this.sleep((ctx.first ? THINK_TURN_START : RATTLE_MS) * k);
+        } else await this.sleep((ctx.first ? THINK_TURN_START : AI_GAP_MS) * k);
         ctx.first = false;
         if (this.state !== s || !this.aiShouldAct()) return;
         await this.aiEngagement(a0, pace);
@@ -3374,10 +3828,11 @@ class Controller {
    * The beats this AI turn will play (engagements, plus one for a fortify), from a dry run of the AI on a
    * copy of the state. The engine is deterministic, so the count matches the turn about to be played.
    */
-  private planAiBeats(s0: GameState): number {
+  private planAiBeats(s0: GameState): { beats: number; attacks: boolean } {
     const p = s0.currentPlayer;
     let s = s0;
     let beats = 0;
+    let attacks = false;
     let pair = '';
     try {
       for (let guard = 0; guard < 2000; guard++) {
@@ -3390,6 +3845,7 @@ class Controller {
           if (!r.ok) break;
         }
         if (isAttackAction(a)) {
+          attacks = true;
           const k = `${a.from}>${a.to}`;
           if (k !== pair) beats++;
           pair = k;
@@ -3398,9 +3854,9 @@ class Controller {
         s = r.state;
       }
     } catch {
-      return beats;
+      return { beats, attacks };
     }
-    return beats;
+    return { beats, attacks };
   }
 
   private aiFallback(pace?: number): void {
@@ -3575,12 +4031,16 @@ class Controller {
       receipt: this.receiptVM(),
       ...(this.updateReady ? { updateReady: true } : {}),
       banner,
-      handoff: this.handoff ? { seat: seatRef(d, this.handoff.player), subline: this.handoffSubline(this.handoff.player) } : null,
+      handoff: this.handoff
+        ? { seat: seatRef(d, this.handoff.player), subline: this.handoffSubline(this.handoff.player), mission: this.missionFor(s, this.handoff.player) }
+        : null,
       confirm: this.confirm,
       seatActions: this.buildSeatActions(d),
       viewMoved: this.viewMoved,
       nameCard: this.nameCard,
       seed: this.gameSeed(s),
+      replay: this.replay,
+      holding: this.buildHolding(d),
     };
   }
 
@@ -3614,6 +4074,15 @@ class Controller {
     return vm;
   }
 
+  /** v5 G: a seat's secret mission sentence (null when missions are off, for the neutral seat, or on error). */
+  private missionFor(s: GameState, p: PlayerId): string | null {
+    try {
+      return missionText(s, p) ?? null;
+    } catch {
+      return null;
+    }
+  }
+
   private handoffSubline(p: PlayerId): string {
     const s = this.state!;
     const r = reinforcementsFor(s, p);
@@ -3644,7 +4113,13 @@ class Controller {
 
   private buildSeats(d: GameState): SeatChipVM[] {
     const lit = this.truceMode ? this.truceSeats() : [];
+    // v5 C2: the reader's grudges: per seat, the territories it took from them, net of the ones taken back.
+    const reader = this.meta ? this.grudgeReader(d) : null;
+    const ticks = reader !== null ? grudgeTicks(this.story(), reader) : {};
+    const said = this.voices.bySeat;
     return d.players.map((p) => ({
+      grudgeTicks: p.id === reader ? 0 : (ticks[p.id] ?? 0),
+      voiceLine: said[p.id] ?? null,
       ...this.seatExtras(d, p.id, lit),
       seat: seatRef(d, p.id),
       current: p.id === d.currentPlayer && d.phase.kind !== 'game-over',
@@ -3753,6 +4228,22 @@ class Controller {
         if (this.truceMode && strip.lineKind !== 'rejection') out.line = `Offer a ${TRUCE_ROUNDS}-round truce${SEP}${click()} a seat`;
       }
     }
+    // v5 E8: desktop hover odds. A source is picked and the pointer rests on an enemy neighbour: the line reads
+    // the armed odds before the click, and gives the instruction back when the pointer leaves.
+    const hv = this.hoverTile;
+    if (
+      interactive && hv && !this.touch && out.mode === 'attack' && out.lineKind === 'normal' && sel.selected && !sel.target &&
+      d.territories[sel.selected]?.owner === me && !this.fightPlaying() && attackTargets(d, sel.selected).includes(hv)
+    ) {
+      out.line = attackLine(d, sel.selected, hv, this.settings.showWinChance);
+    }
+    // v5 F: a clickable's line holds the strip a moment (never over a refused click's reason).
+    if (this.flash && this.flash.until > this.now() && out.lineKind !== 'rejection' && !this.handoff) {
+      out.line = this.flash.text;
+    } else if (this.voiceNow && !interactive && out.line === this.voiceNow.text && d.players[this.voiceNow.seat]) {
+      // v5 D4: the AI's own voice, set in its light tint.
+      out.voice = seatRef(d, this.voiceNow.seat);
+    }
     if (this.now() < this.holdUntil && out.buttons.length) {
       out.buttons = out.buttons.map((b) => (b.primary ? { ...b, busy: true } : b));
       this.timer(() => this.invalidate(), this.holdUntil - this.now() + 10);
@@ -3844,10 +4335,17 @@ class Controller {
    * receipt line's pulse (A3). While the receipt shows, the board offers nothing to click.
    */
   private buildHighlights(): BoardHighlights {
-    const base = this.receipt ? {} : this.baseHighlights();
+    let base = this.receipt ? {} : this.baseHighlights();
+    // v5 F7: a hovered seat ring: its territories lift a shade and the rest rest, while the pointer is there.
+    const d = this.disp;
+    if (this.hoverSeatId !== null && d && !this.receipt && this.screen === 'game') {
+      const theirs = TERRITORY_IDS.filter((t) => d.territories[t].owner === this.hoverSeatId);
+      base = { selectable: theirs, dimOthers: true };
+    }
     const rings = this.loserRings();
-    if (!rings.length && !this.pulse.length) return base;
-    return { ...base, ...(rings.length ? { loserRings: rings } : {}), ...(this.pulse.length ? { pulse: this.pulse } : {}) };
+    const pulse = this.pulse.length ? this.pulse : this.tapPulse;
+    if (!rings.length && !pulse.length) return base;
+    return { ...base, ...(rings.length ? { loserRings: rings } : {}), ...(pulse.length ? { pulse } : {}) };
   }
 
   /** Territories each human lost since its last turn, still held by someone else, in the loser's colour. */
@@ -3929,6 +4427,7 @@ class Controller {
 
   private pushHighlights(): void {
     this.pushStrokeSources();
+    this.syncLean(this.leanTarget());
     const h = this.buildHighlights();
     const preview = this.boardPreview() ? this.previewTotals() : null;
     const key = JSON.stringify([h, preview]);
@@ -3962,6 +4461,12 @@ class Controller {
     return null;
   }
 
+  /** v5 G: a game won by a mission headlines with it ('Vermilion holds Asia and Africa'); else null. */
+  private missionHeadline(s: GameState): string | null {
+    const ph = s.phase as { kind: string; by?: string; mission?: string };
+    return ph.kind === 'game-over' && ph.by === 'mission' && typeof ph.mission === 'string' && ph.mission ? ph.mission : null;
+  }
+
   private buildVictory(s: GameState, winner: PlayerId, called: string | null): VictoryVM {
     const meta = this.meta;
     const order = this.standingsOrder(s).filter((p) => p !== winner);
@@ -3987,7 +4492,7 @@ class Controller {
     return {
       seed: this.gameSeed(s),
       winner: seatRef(s, winner),
-      title: `${pName(s, winner)} holds the world`,
+      title: this.missionHeadline(s) ?? `${pName(s, winner)} holds the world`,
       subline,
       awards: awards.map((a) => ({ id: a.id, title: a.title, text: a.text, seat: seatRef(s, a.player) })),
       seats: s.players.map((p) => seatRef(s, p.id)),
@@ -4236,6 +4741,19 @@ class Controller {
     return this.receiptVM();
   }
 
+  /** Test hooks (v5): the replay (kept after it ends), the holding dab, the voice lines said this game. */
+  replayHook(): ReplayVM | null {
+    return this.lastReplay;
+  }
+
+  holdingHook(): GameVM['holding'] | null {
+    return this.getViewModel().game?.holding ?? null;
+  }
+
+  voiceLinesHook(): VoiceEntry[] {
+    return this.voices.log.map((e) => ({ ...e }));
+  }
+
   /** Test hook (v4): the loser's rings on the board now. */
   loserRingsHook(): NonNullable<BoardHighlights['loserRings']> {
     return this.loserRings();
@@ -4354,6 +4872,12 @@ class Controller {
 
   /** An empty-ocean (or table) click on your turn backs out one level, like Esc. */
   private oceanClick(): void {
+    // v5 F1: open water answers with a ripple (the board draws it); nothing else changes because of it.
+    if (this.replay) {
+      this.endReplay(true);
+      return;
+    }
+    if ((this.screen === 'game' || this.screen === 'victory') && !this.overlay && !this.confirm) this.cue('ripple');
     if (this.screen !== 'game' || this.overlay || this.confirm || !this.interactive() || this.busyBlocking()) return;
     if (this.backOut()) {
       this.clearRejection();
@@ -4411,6 +4935,9 @@ export function createController(opts: { board: BoardView; audio: AudioEngine } 
     receipt: () => c.receiptHook(),
     dismissReceipt: () => c.intent({ type: 'dismissReceipt' }),
     loserRings: () => c.loserRingsHook(),
+    replay: () => c.replayHook(),
+    holding: () => c.holdingHook(),
+    voiceLines: () => c.voiceLinesHook(),
   };
   return {
     getViewModel: () => c.getViewModel(),

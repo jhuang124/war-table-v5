@@ -289,6 +289,11 @@ export interface StripVM {
    * text: 'Sage proposes a truce with John · 3 rounds · you share a border in Asia'. null / absent = none.
    */
   offer?: { text: string; buttons: ButtonVM[] } | null;
+  /**
+   * Additive (v5 D): the line is an AI seat's own voice ('Sage remembers that'), set in that seat's light tint.
+   * lineKind stays 'narration'. null / absent = an ordinary line.
+   */
+  voice?: SeatRef | null;
 }
 
 export interface BattleSideVM {
@@ -610,6 +615,11 @@ export type UiIntent =
   | { type: 'tapLane'; from: TerritoryId; to: TerritoryId }
   | { type: 'hoverSeat'; player: PlayerId | null }
   | { type: 'stoneHistory'; territory: TerritoryId | null }
+  /**
+   * Additive (v5 G): long-press of a seat mark. For the seat whose turn it is (a live human turn, no cover), its
+   * secret mission writes on the line for a moment; for anyone else nothing (missions are secret). null = released.
+   */
+  | { type: 'seatMission'; player: PlayerId | null }
   // victory
   | { type: 'rematch' }
   // settings
