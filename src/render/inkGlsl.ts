@@ -32,6 +32,30 @@ export const VIG_WARM = 0.2;
 export const VIG_DARK = 0.07;
 /** E3 / E2: the coast stroke's opacity at rest (Layer 2), its glow, and the territory border's opacity. */
 export const COAST_A = 0.82;
+// --- [place v5] a place, not a picture (PROPOSAL §4 B) -------------------------------------------------------
+/**
+ * Mist parallax: the near veils (the ones that cross the coasts) sit above the paper and slide against the
+ * camera's offset by PAR_NEAR of it; the far veils (the sea's own) sit below it and trail by PAR_FAR. A lean of
+ * 0.15 board widths (15 units) moves the near veils ≈ 3 units and the far ≈ 1.2 the other way against the land.
+ */
+export const PAR_NEAR = 0.2;
+export const PAR_FAR = 0.08;
+/**
+ * The evening (round 1 dusk → round 12+ night): at uEve = 1 the whole paper is EVE_ALL darker and the open sea
+ * EVE_SEA more, the lamp's margin darkening grows by EVE_VIG_DARK and its warmth by EVE_VIG_WARM (fractions of the
+ * v4 values), and the lit centre narrows a little. A few points of L* at the margins, about one at the centre.
+ */
+export const EVE_SEA = 0.1;
+export const EVE_ALL = 0.03;
+export const EVE_VIG_DARK = 2.2;
+export const EVE_VIG_WARM = 0.25;
+/**
+ * Front lines: the split Medium stroke's opacity, and how far each half's ink is lifted from its seat's colour
+ * toward the ivory (the seat's light tone, as the palette's `light` is: a pigment that reads on the indigo, like
+ * every other line on the board, and in its seat's hue so the two halves are two seats).
+ */
+export const FRONT_A = 0.95;
+export const FRONT_LIFT = 0.6;
 export const COAST_BLOOM = 0.2;
 export const TERR_A = 0.75;
 /** The continents' paper tints: src/shared/palette.ts CONTINENT_TINTS. */
@@ -102,6 +126,13 @@ export interface SharedUniforms {
   uTerrInk: { value: THREE.Vector3 };
   /** The lamp's umber (the cozy vignette warms the margins toward it). */
   uUmber: { value: THREE.Vector3 };
+  // --- [place v5] (additive) ----------------------------------------------------------------------------
+  /** The camera's offset from home (board units, +x east, +y north), the idle drift included: the mist parallax. */
+  uPar: { value: THREE.Vector2 };
+  /** The evening, 0 = dusk (round 1) … 1 = night (round 12+). */
+  uEve: { value: number };
+  /** Front lines on (1) / off (0) (BoardHighlights.frontLines). */
+  uFront: { value: number };
 }
 
 /** A 1×1 mid-grey (mask channels unset): what the map samplers read before the maps load. */
@@ -113,7 +144,10 @@ function neutralTexture(): THREE.DataTexture {
   return t;
 }
 
-/** Per-territory data (64×1 RGBA8): R = coast glow 0..1, G = ink dim 0..1, B = continent index, A = spare. */
+/**
+ * Per-territory data (64×1 RGBA8): R = coast glow 0..1, G = ink dim 0..1, B = continent index, A = the displayed
+ * owner's seat + 1 ([place v5] front lines; 0 = unclaimed or the neutral seat).
+ */
 export function makeTerrTexture(ink: InkLayer): THREE.DataTexture {
   const d = new Uint8Array(64 * 4);
   for (let i = 1; i <= 42; i++) d[i * 4 + 2] = ink.continentIndex(i);
@@ -162,6 +196,9 @@ export function makeSharedUniforms(ink: InkLayer, boardW: number, boardH: number
     uTexTaps: { value: 3 },
     uTerrInk: { value: v3(INK_TERR) },
     uUmber: { value: v3(LAMP_UMBER) },
+    uPar: { value: new THREE.Vector2(0, 0) },
+    uEve: { value: 0 },
+    uFront: { value: 1 },
   };
   ink.bindShared?.(u);
   return u;
@@ -203,6 +240,9 @@ uniform float uTexOn;
 uniform float uTexTaps;
 uniform vec3 uTerrInk;
 uniform vec3 uUmber;
+uniform vec2 uPar;
+uniform float uEve;
+uniform float uFront;
 
 vec2 bUV(vec2 bp) { return vec2(bp.x / uBoard.x, 1.0 - bp.y / uBoard.y); }
 bool inBoard(vec2 bp) { return bp.x > 0.0 && bp.y > 0.0 && bp.x < uBoard.x && bp.y < uBoard.y; }
@@ -287,20 +327,25 @@ vec3 paperAt(vec2 bp) {
 
 // The lamp (v4 cozy, PLAN §5 / E10): the frame's margins warm a few points toward umber and dim a little, the
 // centre is untouched; at rest the warmth breathes ±12 % over ~23 s, the slowest thing on screen.
+// [place v5] the evening: as the game gets later the lit centre narrows a little and the margins go darker and
+// warmer (uEve, driven by the round; never back).
 float vigMask() {
   vec2 q = gl_FragCoord.xy / uRes - 0.5;
   q.x *= uRes.x / max(1.0, uRes.y) * 0.62;
-  return smoothstep(0.24, 0.8, length(q));
+  return smoothstep(0.24 - 0.05 * uEve, 0.8, length(q));
+}
+float vigDark() {
+  return ${VIG_DARK.toFixed(3)} * (1.0 + ${EVE_VIG_DARK.toFixed(3)} * uEve);
 }
 vec3 lamp(vec3 c) {
   float v = vigMask();
-  float warm = ${VIG_WARM.toFixed(3)} * (1.0 + 0.12 * uAmb * sin(uTime * 0.273));
-  c *= 1.0 - ${VIG_DARK.toFixed(3)} * v;
+  float warm = ${VIG_WARM.toFixed(3)} * (1.0 + ${EVE_VIG_WARM.toFixed(3)} * uEve) * (1.0 + 0.12 * uAmb * sin(uTime * 0.273));
+  c *= (1.0 - vigDark() * v) * (1.0 - ${EVE_ALL.toFixed(3)} * uEve);
   return mix(c, uUmber, warm * v);
 }
 // (v3's darkening-only vignette, kept for the marks that are alpha-blended: their ink dims at the margins too)
 float vignette() {
-  return 1.0 - ${VIG_DARK.toFixed(3)} * vigMask();
+  return 1.0 - vigDark() * vigMask();
 }
 
 // One brush (v4 E2): every edge on the paper (coast, continent outline, territory border, sea lane) carries the
@@ -356,22 +401,30 @@ float coastSoft(vec2 bp) {
 // Mist veils (A1): large fbm veils, 3-5 on the board at a time, drifting east ~0.7 % of the board width
 // a second (the board is 100 units wide) and morphing slowly. x = the veils that keep to the sea (thinner
 // near the coasts), y = the two that cross coasts, so the land breathes too. Peak opacity is 7-8 %.
+// [place v5] two layers with parallax: the sea's veils (x) are the far layer, sampled at bp − uPar·PAR_FAR (they
+// trail the land as the camera moves); the crossing veils (y) are the near layer, at bp + uPar·PAR_NEAR (they
+// run ahead of it). The broad warp is shared (260 / 210 units: a few units of parallax don't change it); each
+// layer has its own fine break-up and wisps, so the detail moves with its veil.
 vec2 mistAt(vec2 bp) {
   // the lead veil drifts MIST_SPEED units a second (~0.7 % of the board width): clearly drifting at couch
   // distance, never hurrying (mirrored on the CPU by inkGlsl.ts mistSeaCPU for the drift hook)
   float t = uTime * ${(MIST_SPEED / 1.1).toFixed(5)};
-  vec2 w = vec2(nz(bp / 260.0 + vec2(t * 0.0011, -t * 0.0008)).r, nz(bp / 210.0 + vec2(0.41 - t * 0.0009, 0.17 + t * 0.001)).r) - 0.5;
-  float f = nz(bp / 26.0 + vec2(-t * 1.1 / 26.0, 0.33)).g - 0.5;
-  float m1 = nz(bp / 170.0 + vec2(-t * 1.1 / 170.0, t * 0.1 / 170.0) + w * 0.3).r + 0.05 * f;
-  float m2 = nz(bp / 140.0 + vec2(0.37 - t * 1.0 / 140.0, 0.61 - t * 0.12 / 140.0) - w.yx * 0.26).r + 0.05 * f;
-  float m3 = nz(bp / 190.0 + vec2(0.73 - t * 1.15 / 190.0, 0.29 + t * 0.06 / 190.0) + w * 0.24).r + 0.05 * f;
-  float m4 = nz(bp / 155.0 + vec2(0.13 - t * 1.05 / 155.0, 0.83 - t * 0.05 / 155.0) - w * 0.2).r + 0.05 * f;
+  vec2 pf = bp - uPar * ${PAR_FAR.toFixed(3)};
+  vec2 pn = bp + uPar * ${PAR_NEAR.toFixed(3)};
+  vec2 w = vec2(nz(pf / 260.0 + vec2(t * 0.0011, -t * 0.0008)).r, nz(pf / 210.0 + vec2(0.41 - t * 0.0009, 0.17 + t * 0.001)).r) - 0.5;
+  float f = nz(pf / 26.0 + vec2(-t * 1.1 / 26.0, 0.33)).g - 0.5;
+  float fn = nz(pn / 26.0 + vec2(-t * 1.1 / 26.0, 0.33)).g - 0.5;
+  float m1 = nz(pf / 170.0 + vec2(-t * 1.1 / 170.0, t * 0.1 / 170.0) + w * 0.3).r + 0.05 * f;
+  float m2 = nz(pf / 140.0 + vec2(0.37 - t * 1.0 / 140.0, 0.61 - t * 0.12 / 140.0) - w.yx * 0.26).r + 0.05 * f;
+  float m3 = nz(pn / 190.0 + vec2(0.73 - t * 1.15 / 190.0, 0.29 + t * 0.06 / 190.0) + w * 0.24).r + 0.05 * fn;
+  float m4 = nz(pn / 155.0 + vec2(0.13 - t * 1.05 / 155.0, 0.83 - t * 0.05 / 155.0) - w * 0.2).r + 0.05 * fn;
   // (v4: the veils' edges a touch crisper than v3's, 0.04 of the field instead of 0.055, so the drift reads)
   float sea = max(smoothstep(0.592, 0.632, m1), smoothstep(0.607, 0.647, m2) * 0.85);
   float over = max(smoothstep(0.607, 0.647, m3), smoothstep(0.617, 0.657, m4) * 0.8);
   // wisps inside the veils
-  float wisp = 0.8 + 0.4 * (nz(bp / 11.0 + vec2(-t * 1.1 / 11.0, 0.7)).a);
-  return vec2(sea, over) * wisp;
+  float wisp = 0.8 + 0.4 * (nz(pf / 11.0 + vec2(-t * 1.1 / 11.0, 0.7)).a);
+  float wispN = 0.8 + 0.4 * (nz(pn / 11.0 + vec2(-t * 1.1 / 11.0, 0.7)).a);
+  return vec2(sea * wisp, over * wispN);
 }
 const vec3 MIST = vec3(0.78, 0.82, 0.9);
 
@@ -458,6 +511,8 @@ varying vec2 vBP;
 void main() {
   vec2 bp = vBP;
   vec3 c = paperAt(bp);
+  // [place v5] the evening: the open sea a few points darker by night (the washes keep their colour)
+  c *= 1.0 - ${EVE_SEA.toFixed(3)} * uEve;
   float seaD = 4.0;
   if (inBoard(bp)) {
     vec4 f = fieldAt(bp);
@@ -537,6 +592,7 @@ void main() {
   // Ink flood: the new wash soaks in behind an fbm-perturbed front with a darker, wetter leading rim.
   // Torn (a human's territory falling): a rougher, darker rim, paper fibres showing past it.
   float fresh = 0.0;
+  float floodK = 0.0;
   if (uFloodOn > 0.5) {
     vec2 d = bp - uFloodOrigin;
     float r = uFloodMode > 0.5 ? dot(d, uFloodDir) : length(d);
@@ -554,6 +610,7 @@ void main() {
     vec3 fc = mix(uFloodColor, uFloodDeep, clamp(rim * mix(0.95, 1.25, uFloodTorn), 0.0, 1.0));
     wash = mix(wash, fc, k);
     deep = mix(deep, uFloodDeep, k);
+    floodK = k;
     // torn paper: a thin pale fringe just past the dark rim, where the old colour is being eaten
     float fringe = uFloodTorn * smoothstep(front - 0.02, front + 0.03, r) * (1.0 - smoothstep(front + 0.06, front + 0.22, r));
     wash = mix(wash, uIvory * 0.82, fringe * 0.42);
@@ -630,7 +687,25 @@ void main() {
   vec3 cc = coastColor(uId, bp, glow);
   glow = max(glow, uGlow);
   float jit = brushJit(bp);
-  c = mix(c, uTerrInk, clamp(k.g * jit * TERR_A * (1.0 - 0.3 * uLight), 0.0, 1.0));
+  // [place v5] front lines: where this territory's border meets another seat's land, the border is the Medium
+  // weight (ink A, the same brush) and this side of it is inked in this seat's light tone (from the wash showing
+  // here, so a flood re-inks its half as it soaks); the neighbour's tile draws the other half in its own. Inside one
+  // seat's land, against a coast, or unclaimed/neutral land, the Light hairline as before.
+  float front = 0.0;
+  if (uFront > 0.5 && k.a > 0.002) {
+    float nb = floor(texelFetch(uCont, ivec2(bUV(bp) * uFieldSize), 0).a * 255.0 + 0.5);
+    if (nb > 0.5) {
+      float mine = floor(terrAt(uId).a * 255.0 + 0.5);
+      float theirs = floor(terrAt(nb).a * 255.0 + 0.5);
+      front = (mine > 0.5 && theirs > 0.5 && abs(mine - theirs) > 0.5) ? 1.0 : 0.0;
+    }
+  }
+  if (front > 0.5) {
+    // this seat's colour here (the flood's, behind its front), lifted to its light tone
+    vec3 seat = mix(uColor, uFloodColor, floodK);
+    c = mix(c, mix(seat, uIvory, ${FRONT_LIFT.toFixed(3)}), clamp(k.a * jit * ${FRONT_A.toFixed(3)} * (1.0 - 0.3 * uLight), 0.0, 1.0));
+  }
+  else c = mix(c, uTerrInk, clamp(k.g * jit * TERR_A * (1.0 - 0.3 * uLight), 0.0, 1.0));
   float gl = max(glow, 0.3 * uLight);
   c = mix(c, cc, clamp(k.r * mix(cj, 1.0, gl) * (COAST_A + (1.0 - COAST_A) * gl), 0.0, 1.0));
   // a continent's border across land (Ural, the isthmus, Suez) is the printed outline too
@@ -692,7 +767,10 @@ const smooth = (a: number, b: number, x: number) => {
 };
 
 /** The sea veils' field (mistAt().x before the wisps) at a board point and ambient time. */
-export function mistSeaCPU(noise: THREE.DataTexture, bx: number, by: number, uTime: number): number {
+export function mistSeaCPU(noise: THREE.DataTexture, bx: number, by: number, uTime: number, par: [number, number] = [0, 0]): number {
+  // [place v5] the far layer's parallax (mistAt's pf)
+  bx -= par[0] * PAR_FAR;
+  by -= par[1] * PAR_FAR;
   const t = uTime * (MIST_SPEED / 1.1);
   const nz = (x: number, y: number) => nzCPU(noise, x, y);
   const w = [nz(bx / 260 + t * 0.0011, by / 260 - t * 0.0008)[0] - 0.5, nz(bx / 210 + 0.41 - t * 0.0009, by / 210 + 0.17 + t * 0.001)[0] - 0.5];

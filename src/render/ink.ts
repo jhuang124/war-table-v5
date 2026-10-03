@@ -9,7 +9,9 @@
 //           the sea (0 at the coast → 1 at 4 units; drives the coast feather and the mist), B = territory
 //           index (1..42; over the sea: the nearest coast's, within ~1.5 units; read with texelFetch),
 //           A = land coverage.
-// - `cont`  RGBA at field resolution: the printed continents (v3; buildContinents).
+//           A = the interior borders again at the Medium weight ([place v5] front lines).
+// - `cont`  RGBA at field resolution: the printed continents (v3; buildContinents); A = the territory across
+//           the nearest land border ([place v5] front lines).
 // - `noise` a small tileable fbm texture (4 channels) the shaders use for mist, mottling and breathing,
 //           instead of evaluating fbm per pixel.
 // - `waves` an atlas of calligraphic wave strokes (the board places 6–8 of them per game, seeded).
@@ -888,6 +890,42 @@ export async function buildInk(g: BoardGeometry, opt: InkOptions): Promise<InkLa
   // the shaders draw a smooth line of any weight), G = the continent this texel belongs to (land or halo;
   // 255 = open sea), B = the continent the nearest outline belongs to (a held one takes its holder's ink).
   const contTex = await buildContinents(ids, fieldW, fieldH, sF, contOf, DECOR);
+  // [place v5] front lines (PROPOSAL §4 B): `cont` A = the territory across the nearest land border (0 = none:
+  // a coast, or deeper inland than FRONT_REACH). The tile shaders compare its owner with their own, so a border
+  // between two seats draws as the split Medium stroke (ink A) and one inside a seat's land stays the hairline.
+  {
+    const cd = contTex.image.data as Uint8Array;
+    const reach = 1.0 * sF;
+    const landId = (j: number) => {
+      const v = ids[j];
+      return v && v !== DECOR ? v : 0;
+    };
+    for (let y = 0; y < fieldH; y++)
+      for (let x = 0; x < fieldW; x++) {
+        const i = y * fieldW + x;
+        const v = landId(i);
+        let nb = 0;
+        if (v && dist[i] <= reach) {
+          const f = near[i];
+          const fv = landId(f);
+          if (fv && fv !== v) nb = fv;
+          else {
+            const fx = f % fieldW;
+            const fy = (f - fx) / fieldW;
+            const cand = [fx > 0 ? f - 1 : -1, fx < fieldW - 1 ? f + 1 : -1, fy > 0 ? f - fieldW : -1, fy < fieldH - 1 ? f + fieldW : -1];
+            for (const j of cand) {
+              const w = j >= 0 ? landId(j) : 0;
+              if (w && w !== fv) {
+                nb = w;
+                break;
+              }
+            }
+          }
+        }
+        cd[i * 4 + 3] = nb;
+      }
+    contTex.needsUpdate = true;
+  }
 
   // --- ink canvas -------------------------------------------------------------------------------------
   const s = inkW / BW;
@@ -1019,15 +1057,25 @@ export async function buildInk(g: BoardGeometry, opt: InkOptions): Promise<InkLa
   await yieldFrame();
 
   // G: interior borders, the Light weight (the shaders draw them in the paper's deep tone).
+  const borderSeed = seed;
   for (const r of borderRuns) oneBrush(r, EDGE_PX.light * (u / EDGE_REF_PPU), 6);
   grab(1);
   await yieldFrame();
+  // [place v5] A: the same interior borders at the Medium weight, the same brush and seeds (so the same breaks
+  // along the line): a front line (two seats meeting) draws from this, each tile its own half in its pigment.
+  {
+    const after = seed;
+    seed = borderSeed;
+    for (const r of borderRuns) oneBrush(r, EDGE_PX.medium * (u / EDGE_REF_PPU), 6);
+    seed = after;
+    grab(3);
+    await yieldFrame();
+  }
 
   // B: the decorative (non-playable) coasts, the Hair weight.
   for (const p of g.decorativeLand) oneBrush({ pts: p.outer, closed: true }, EDGE_PX.hair * (u / EDGE_REF_PPU), 4);
   // (The sea lanes are printed crossings of their own now: lanes.ts. B keeps the decorative coasts.)
   grab(2);
-  for (let j = 3; j < inkData.length; j += 4) inkData[j] = 255;
   canvas.width = canvas.height = 1;
   await yieldFrame();
 

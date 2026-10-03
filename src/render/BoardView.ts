@@ -280,7 +280,18 @@ export interface BoardView {
    * px: `mistPx` = the median displacement of points on the sea veils' edges, `glowPx` = the median drift of the
    * coast glow; `clockS` = the ambient seconds that passed (half speed after 3 min idle, 0 under reduced motion).
    */
-  paperDrift?(ms?: number): Promise<{ mistPx: number; glowPx: number; clockS: number; pxPerUnit: number; samples: number }>;
+  paperDrift?(ms?: number): Promise<{ mistPx: number; glowPx: number; clockS: number; pxPerUnit: number; samples: number; driftPx?: number }>;
+  /**
+   * Additive (v5 B "the evening deepens"): the game's clock, 0 = dusk … 1 = night. By default the board takes it
+   * from `state.round` (round 1 → 0, round 12+ → 1) and never steps back within a game; a number here overrides
+   * that, `null` hands it back to the round. (paperDrift's `driftPx`, additive: the idle camera drift, CSS px.)
+   */
+  setEvening?(t: number | null): void;
+  /**
+   * Additive (v5 B "water that remembers"): a fight's first roll crossed the sea lane `from`–`to` and it glinted.
+   * The board already plays `audio.cue('glint')` when it has the audio engine; this is for anything else.
+   */
+  onLaneGlint?(cb: (from: TerritoryId, to: TerritoryId) => void): void;
 
   /**
    * Screen position (client px) of a territory's army piece — the top centre of its base, which is always

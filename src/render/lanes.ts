@@ -19,19 +19,38 @@ const COVER = EDGE_PX.hair / QUAD_PX;
 /** Opacity at rest and lit, before the hair's coverage (measured: rest ΔL* ≈ 12, lit ≈ 38 on the open sea). */
 const REST = 0.36;
 const LIT = 1.25;
+/**
+ * [place v5] Water that remembers (PROPOSAL §4 B): a lane a fight has crossed this game rests USED× brighter than
+ * one never used (still Layer 3: ≤ 15 ΔL* on the open sea), and a crossing glints once as the fight starts: a
+ * brightening that travels from the attacker's shore to the defender's over GLINT_MS (tier 1).
+ */
+const USED = 1.1;
+export const GLINT_MS = 560;
+const GLINT_A = 1.6;
 
 const VERT = /* glsl */ `
 attribute float aLane;
 attribute float aSide;
 attribute float aAlong;
+attribute float aT;
 uniform float uLit[32];
+uniform float uUsed[32];
+uniform vec2 uGlint[32];
 uniform vec2 uBoard;
 varying float vLit;
 varying float vSide;
 varying float vAlong;
 varying vec2 vBP;
+varying float vUsed;
+varying float vGlint;
 void main() {
-  vLit = uLit[int(aLane + 0.5)];
+  int li = int(aLane + 0.5);
+  vLit = uLit[li];
+  vUsed = uUsed[li];
+  // the glint: x = its head along the lane (0 = a's shore … 1 = b's; −1 = none), y = ±1 its direction
+  vec2 gl = uGlint[li];
+  float along = gl.y < 0.0 ? 1.0 - aT : aT;
+  vGlint = gl.x < -0.5 ? -9.0 : along - gl.x;
   vSide = aSide;
   vAlong = aAlong;
   vec4 w = modelMatrix * vec4(position, 1.0);
@@ -44,7 +63,11 @@ uniform vec3 uInk;
 uniform float uRest;
 uniform float uLitA;
 uniform float uCover;
+uniform float uUsedK;
+uniform float uGlintA;
 uniform sampler2D uNoise;
+varying float vUsed;
+varying float vGlint;
 varying float vLit;
 varying float vSide;
 varying float vAlong;
@@ -53,7 +76,10 @@ void main() {
   // a hairline, soft at its two edges, with the board's pen pressure along it (inkGlsl brushJit)
   float edge = 1.0 - smoothstep(0.35, 1.0, abs(vSide));
   float jit = 0.84 + 0.16 * smoothstep(0.3, 0.62, texture2D(uNoise, vBP / 1.3 + 0.61).a);
-  float a = edge * jit * uCover * mix(uRest, uLitA, vLit);
+  float rest = uRest * mix(1.0, uUsedK, vUsed);
+  // a soft bright band ~0.12 of the lane long, its tail a little longer than its head
+  float g = vGlint < -8.0 ? 0.0 : exp(-pow(vGlint / (vGlint > 0.0 ? 0.08 : 0.14), 2.0));
+  float a = edge * jit * uCover * (mix(rest, uLitA, vLit) + uGlintA * g);
   if (a < 0.004) discard;
   gl_FragColor = vec4(uInk * a, a);
 }
@@ -66,6 +92,10 @@ export class SeaLanes {
   private lanes: { a: TerritoryId; b: TerritoryId }[] = [];
   private lit: number[];
   private goal: number[];
+  /** [place v5] lanes a fight has crossed this game (1) and the running glints (head, direction). */
+  private used: number[];
+  private glints: THREE.Vector2[];
+  private glintVer: number[];
   private ver = 0;
   /** Board units per CSS px at the home view (the hairline is the Hair weight, the ticks ~7 px). */
   private pxUnit = 1 / 12.7;
@@ -78,12 +108,19 @@ export class SeaLanes {
     const ink = hexToRgb(INK_COAST);
     this.lit = new Array(32).fill(0);
     this.goal = new Array(32).fill(0);
+    this.used = new Array(32).fill(0);
+    this.glints = Array.from({ length: 32 }, () => new THREE.Vector2(-1, 1));
+    this.glintVer = new Array(32).fill(0);
     // (no noise texture: a flat mid-grey texel, so the pen pressure is even)
     const flat = new THREE.DataTexture(new Uint8Array([128, 128, 128, 128]), 1, 1, THREE.RGBAFormat);
     flat.needsUpdate = true;
     this.mat = new THREE.ShaderMaterial({
       uniforms: {
         uLit: { value: this.lit.slice() },
+        uUsed: { value: this.used },
+        uGlint: { value: this.glints },
+        uUsedK: { value: USED },
+        uGlintA: { value: GLINT_A },
         uInk: { value: new THREE.Vector3(ink[0], ink[1], ink[2]) },
         uRest: { value: REST },
         uLitA: { value: LIT },
@@ -122,7 +159,12 @@ export class SeaLanes {
     const lane: number[] = [];
     const side: number[] = [];
     const along: number[] = [];
+    const tAt: number[] = [];
     const idx: number[] = [];
+    // [place v5] each vertex's place along its whole lane (0 = a's shore, 1 = b's), for the glint
+    let laneLen = 1;
+    let laneAt = 0;
+    let tickT: number | null = null;
     // (the ribbon is QUAD_PX wide; its soft edges leave a ~0.8 px core, drawn at the hair's coverage)
     const hw = (QUAD_PX / 2 + 0.25) * this.pxUnit;
     const tick = 3.6 * this.pxUnit;
@@ -146,7 +188,9 @@ export class SeaLanes {
         lane.push(li);
         side.push(sd);
         along.push(s0 + (k >= 2 ? L : 0));
+        tAt.push(tickT ?? Math.min(1, (laneAt + (k >= 2 ? L : 0)) / laneLen));
       });
+      if (tickT === null) laneAt += L;
       idx.push(base, base + 1, base + 2, base + 1, base + 3, base + 2);
       return L;
     };
@@ -172,12 +216,18 @@ export class SeaLanes {
         const q = best.seg[at === 0 ? 1 : best.seg.length - 2];
         ends.push({ p: best.seg[at], q });
       }
+      laneLen = 0;
+      for (const seg of segs) for (let i = 1; i < seg.length; i++) laneLen += Math.hypot(seg[i][0] - seg[i - 1][0], seg[i][1] - seg[i - 1][1]);
+      laneLen = Math.max(1e-3, laneLen);
+      laneAt = 0;
+      tickT = null;
       for (const seg of segs) {
         let s = 0;
         for (let i = 1; i < seg.length; i++) s += quad(seg[i - 1], seg[i], hw, li, s);
       }
       // a tick across the line at each shore point (a wrapped lane's board-edge ends have none)
-      for (const { p, q } of ends) {
+      for (const [ei, { p, q }] of ends.entries()) {
+        tickT = ends.length === 2 ? ei : Math.hypot(p[0] - shores[0][0], p[1] - shores[0][1]) < Math.hypot(p[0] - shores[1][0], p[1] - shores[1][1]) ? 0 : 1;
         const dx = q[0] - p[0];
         const dy = q[1] - p[1];
         const L = Math.hypot(dx, dy) || 1;
@@ -185,12 +235,14 @@ export class SeaLanes {
         const n: Vec2 = [-dy / L, dx / L];
         quad([c[0] - n[0] * tick, c[1] - n[1] * tick], [c[0] + n[0] * tick, c[1] + n[1] * tick], hw, li, 0.2);
       }
+      tickT = null;
     });
     const geo = new THREE.BufferGeometry();
     geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
     geo.setAttribute('aLane', new THREE.Float32BufferAttribute(lane, 1));
     geo.setAttribute('aSide', new THREE.Float32BufferAttribute(side, 1));
     geo.setAttribute('aAlong', new THREE.Float32BufferAttribute(along, 1));
+    geo.setAttribute('aT', new THREE.Float32BufferAttribute(tAt, 1));
     geo.setIndex(idx);
     this.mesh = new THREE.Mesh(geo, this.mat);
     this.mesh.frustumCulled = false;
@@ -225,9 +277,46 @@ export class SeaLanes {
     });
   }
 
-  /** Test hook: how lit each lane is, by its two ends. */
-  state(): { a: TerritoryId; b: TerritoryId; lit: number }[] {
-    return this.lanes.map((l, i) => ({ ...l, lit: this.lit[i] }));
+  /** [place v5] The lane between two territories (either order), or −1. */
+  laneOf(x: TerritoryId, y: TerritoryId): number {
+    return this.lanes.findIndex((l) => (l.a === x && l.b === y) || (l.a === y && l.b === x));
+  }
+
+  /**
+   * [place v5] A fight crosses the lane `from`–`to`: it is remembered (one shade brighter at rest from now on) and,
+   * unless `still` (reduced motion, instant speed), glints once from `from`'s shore to `to`'s. Resolves when the
+   * glint has crossed; returns null when the two are not joined by a lane.
+   */
+  cross(from: TerritoryId, to: TerritoryId, still = false): Promise<void> | null {
+    const i = this.laneOf(from, to);
+    if (i < 0) return null;
+    this.used[i] = 1;
+    if (still) return Promise.resolve();
+    const g = this.glints[i];
+    g.y = this.lanes[i].a === from ? 1 : -1;
+    const ver = ++this.glintVer[i];
+    return this.anim.tween({
+      ms: GLINT_MS,
+      ease: ease.inOutSine,
+      update: (v) => {
+        if (ver !== this.glintVer[i]) return;
+        g.x = -0.2 + 1.4 * v;
+      },
+      done: () => {
+        if (ver === this.glintVer[i]) g.x = -1;
+      },
+    });
+  }
+
+  /** [place v5] Forget every crossing (a new game). */
+  forget(): void {
+    this.used.fill(0);
+    for (const g of this.glints) g.x = -1;
+  }
+
+  /** Test hook: how lit each lane is, by its two ends (+ [place v5] used this game, a glint's head or −1). */
+  state(): { a: TerritoryId; b: TerritoryId; lit: number; used: boolean; glint: number }[] {
+    return this.lanes.map((l, i) => ({ ...l, lit: this.lit[i], used: this.used[i] > 0, glint: this.glints[i].x }));
   }
 
   dispose(): void {

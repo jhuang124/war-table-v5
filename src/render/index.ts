@@ -1999,6 +1999,31 @@ export const createBoardView: CreateBoardView = async (opts: BoardViewOptions): 
 
   const NON_BLOCKING = new Set(['armiesPlaced', 'territoryClaimed', 'setupTurn', 'phaseChanged', 'cardDrawn', 'controllerChanged']);
 
+  // [place v5] water that remembers: the first roll of a fight across a sea lane glints that lane once, from the
+  // attacker's shore to the defender's (tier 1, with the 'glint' cue), and the lane rests a shade brighter for
+  // the rest of the game. Reduced motion / instant: remembered, no glint.
+  const placeOnEvent = (e: GameEvent, o: PlayEventOptions) => {
+    if (e.type !== 'diceRolled' || (o.seq?.index ?? 0) !== 0) return;
+    const still = reduced || anim.instant;
+    const g = lanes.cross(e.from, e.to, still);
+    if (!g || still) return;
+    if (audio) {
+      try {
+        const vol = isHuman(e.player) || isHuman(e.defender) ? 0.8 : 0.45;
+        audio.cue?.('glint', { volume: vol, pan: panOf(e.to) });
+      } catch {
+        /* never throws, but be safe */
+      }
+    }
+    for (const cb of glintCbs) {
+      try {
+        cb(e.from, e.to);
+      } catch (err) {
+        console.error(err);
+      }
+    }
+  };
+  const glintCbs: ((from: TerritoryId, to: TerritoryId) => void)[] = [];
   const playEvent = (e: GameEvent, stateAfter: GameState, o: PlayEventOptions = {}): Promise<void> => {
     if (disposed) return Promise.resolve();
     lastState = stateAfter;
@@ -2034,6 +2059,7 @@ export const createBoardView: CreateBoardView = async (opts: BoardViewOptions): 
       const go = async () => {
         try {
           if (!nb) await waitCamera(run);
+          placeOnEvent(e, o); // [place v5]
           await handle(e, stateAfter, o, run);
         } catch (err) {
           console.error('[render] playEvent', e.type, err);
@@ -2085,6 +2111,10 @@ export const createBoardView: CreateBoardView = async (opts: BoardViewOptions): 
       arrowSource = null;
     }
     if (s.id !== focusGame) {
+      // [place v5] a new game (or a load): the sea forgets its crossings and the evening starts from this round
+      lanes.forget();
+      eveMax = 0;
+      eveCur = -1;
       // A new game (or a load): the paper is fresh — no dried washes — and its wave strokes are its own.
       parts.waves.place(s.config?.seed ?? 7);
       for (const t of tiles.list)
@@ -2144,6 +2174,7 @@ export const createBoardView: CreateBoardView = async (opts: BoardViewOptions): 
   let mistAmp = 1;
   let lastInputAt = performance.now();
   let lastAmbientDraw = 0;
+  let lastEveAt = performance.now();
   const IDLE_SLOW_MS = 180000;
   const ambientOn = () => ambientWanted && !reduced;
   const noteInput = () => {
@@ -2152,6 +2183,76 @@ export const createBoardView: CreateBoardView = async (opts: BoardViewOptions): 
   const onWindowInput = () => noteInput();
   window.addEventListener('keydown', onWindowInput, { passive: true });
   window.addEventListener('pointerdown', onWindowInput, { passive: true });
+  // [place v5] any input ends the idle drift (a mouse moving over the board, a wheel, a touch)
+  window.addEventListener('pointermove', onWindowInput, { passive: true });
+  window.addEventListener('wheel', onWindowInput, { passive: true });
+
+  // [place v5] a place, not a picture (PROPOSAL §4 B) -------------------------------------------------
+  // The evening: the game's clock. Round 1 is dusk, round 12+ night; the paper's margins deepen and warm and the
+  // open sea goes a few points darker (inkGlsl uEve). It only ever moves forward within a game, easing over
+  // ~6 s when a round turns; `setEvening(t)` lets the controller drive it instead.
+  let eveOverride: number | null = null;
+  /** Test hook: hold the front lines on (1) / off (0) whatever the highlights say; null = follow them. */
+  let frontForce: number | null = null;
+  let eveCur = -1;
+  let eveMax = 0;
+  const EVE_ROUNDS = 11;
+  const eveGoal = (): number => {
+    if (eveOverride !== null) return eveOverride;
+    const r = lastState?.round ?? 0;
+    return clamp((r - 1) / EVE_ROUNDS, 0, 1);
+  };
+  // The idle drift: after IDLE_DRIFT_MS without input the camera drifts DRIFT_PX in a slow loop (the mist layers
+  // parallax through it) and the mist thickens a little; any input returns it over ~2 s. Never under reduced
+  // motion. Additive and separate from the rig: an offset laid on the placed camera each drawn frame.
+  const IDLE_DRIFT_MS = 60000;
+  const DRIFT_PX = 5;
+  const DRIFT_THICKEN = 0.18;
+  let driftAmt = 0;
+  let driftPx = 0;
+  let ppuHome = 14.5;
+  const driftBoard = new THREE.Vector2();
+  const smooth01 = (x: number) => x * x * (3 - 2 * x);
+  const stepDrift = (now: number, dtS: number, amb: boolean) => {
+    const want = amb && now - lastInputAt > IDLE_DRIFT_MS ? 1 : 0;
+    // in over ~5 s, back over 2 s
+    driftAmt = want ? Math.min(1, driftAmt + dtS / 5) : Math.max(0, driftAmt - dtS / 2);
+    if (!amb) driftAmt = 0;
+  };
+  /** Lay the idle drift on the placed camera; set the camera's offset from home (board units) for the mist. */
+  const applyPlace = () => {
+    const k = smooth01(driftAmt);
+    const px = DRIFT_PX * k;
+    const ox = px * Math.sin((ambT * Math.PI * 2) / 41);
+    const oy = px * 0.6 * Math.sin((ambT * Math.PI * 2) / 53 + 1.3);
+    driftPx = Math.hypot(ox, oy);
+    const u = 1 / Math.max(1, ppuHome);
+    driftBoard.set(ox * u, oy * u);
+    if (k > 0) {
+      // board +x = world +x; board north (+y) = world −z
+      camera.position.x += driftBoard.x;
+      camera.position.z -= driftBoard.y;
+      camera.updateMatrixWorld();
+    }
+    const px2 = rig.cur.tx - rig.home.tx + driftBoard.x;
+    const py2 = -(rig.cur.tz - rig.home.tz) + driftBoard.y;
+    const L = Math.hypot(px2, py2);
+    const m = L > 40 ? 40 / L : 1;
+    shared.uPar.value.set(px2 * m, py2 * m);
+  };
+  const stepEvening = (dtS: number, amb: boolean): boolean => {
+    let goal = eveGoal();
+    // never back within a game (a new game resets eveMax in syncState)
+    if (eveOverride === null) goal = Math.max(goal, eveMax);
+    eveMax = Math.max(eveMax, goal);
+    if (eveCur < 0 || !amb) eveCur = goal;
+    else if (eveCur !== goal) {
+      eveCur += (goal - eveCur) * (1 - Math.exp(-dtS / 2));
+      if (Math.abs(goal - eveCur) < 0.002) eveCur = goal;
+    }
+    shared.uEve.value = eveCur;
+    return eveCur !== goal;
+  };
   const setRes = () => shared.uRes.value.set(W * renderer.getPixelRatio(), H * renderer.getPixelRatio());
   /** Per-territory data (the ground's half of each coast): the glow of the phase response. */
   const syncTerr = () => {
@@ -2161,6 +2262,13 @@ export const createBoardView: CreateBoardView = async (opts: BoardViewOptions): 
       const o = t.index * 4;
       if (terrData[o] !== v) {
         terrData[o] = v;
+        changed = true;
+      }
+      // [place v5] front lines: the displayed owner's seat + 1 (0 = unclaimed or the neutral seat)
+      const ow = owners[t.id];
+      const seat = ow == null || ow < 0 || !lastState?.players[ow] || lastState.players[ow].color === 'neutral' ? 0 : Math.min(254, ow + 1);
+      if (terrData[o + 3] !== seat) {
+        terrData[o + 3] = seat;
         changed = true;
       }
     }
@@ -2502,6 +2610,7 @@ export const createBoardView: CreateBoardView = async (opts: BoardViewOptions): 
     arrow.pxUnit = live.pxUnit = 1 / Math.max(1, homePxPerUnit());
     arrow.relayout();
     lanes.setPxUnit(1 / Math.max(1, homePxPerUnit()));
+    ppuHome = homePxPerUnit(); // [place v5] the idle drift's px → board units
     invalidate();
   };
   /** CSS px per board unit at the centre of the board, at the home view. */
@@ -2606,7 +2715,8 @@ export const createBoardView: CreateBoardView = async (opts: BoardViewOptions): 
     const ampTo = amb ? (gameplay ? 0.5 : 1) : 0;
     ambAmp += (ampTo - ambAmp) * (1 - Math.exp(-dtS / (ampTo < ambAmp ? 0.25 : 1.5)));
     if (Math.abs(ampTo - ambAmp) < 0.003) ambAmp = ampTo;
-    const mistTo = gameplay ? 0.5 : 1;
+    stepDrift(now, dtS, amb); // [place v5]
+    const mistTo = gameplay ? 0.5 : 1 + DRIFT_THICKEN * smooth01(driftAmt);
     mistAmp += (mistTo - mistAmp) * (1 - Math.exp(-dtS / (mistTo < mistAmp ? 0.25 : 1.5)));
     if (Math.abs(mistTo - mistAmp) < 0.003) mistAmp = mistTo;
     const calm = amb || ambAmp > 0 || mistAmp !== mistTo;
@@ -2620,6 +2730,10 @@ export const createBoardView: CreateBoardView = async (opts: BoardViewOptions): 
       if (now - lastAmbientDraw < 1000 / cap - 4) return;
     }
     lastAmbientDraw = now;
+    // [place v5] the evening and the idle drift (the mist's parallax reads the camera's offset from home)
+    if (stepEvening(Math.max(0, now - lastEveAt) / 1000, amb)) hot = Math.max(hot, 1);
+    lastEveAt = now;
+    applyPlace();
     shared.uTime.value = ambT;
     shared.uAmb.value = ambAmp;
     shared.uMist.value = mistAmp;
@@ -2892,6 +3006,7 @@ export const createBoardView: CreateBoardView = async (opts: BoardViewOptions): 
       const h = hl ?? {};
       const prev = lastHl;
       lastHl = { ...h, targets: h.targets ? [...h.targets] : undefined };
+      shared.uFront.value = frontForce ?? (h.frontLines === false ? 0 : 1); // [place v5] front lines, on unless asked off
       applyHighlights(h, prev);
       applyPieceMarks(h, prev);
     },
@@ -3068,6 +3183,14 @@ export const createBoardView: CreateBoardView = async (opts: BoardViewOptions): 
     };
   }
 
+  // [place v5] the evening, driven by the controller (0 dusk … 1 night); null hands it back to the round.
+  view.setEvening = (t: number | null) => {
+    eveOverride = t === null || !Number.isFinite(t) ? null : clamp(t, 0, 1);
+    invalidate();
+  };
+  view.onLaneGlint = (cb) => {
+    glintCbs.push(cb);
+  };
   // v4 board paper (PLAN §5 "drift you can see"): the drift test hook (BoardView.paperDrift, additive).
   view.paperDrift = async (ms = 2000) => {
     const seaPts: [number, number][] = [];
@@ -3086,7 +3209,8 @@ export const createBoardView: CreateBoardView = async (opts: BoardViewOptions): 
     const amp = (a0 + ambAmp) / 2;
     const d = paperDriftCPU(ink.noise, seaPts, coastPts, t0, t1);
     const ppu = homePxPerUnit();
-    return { mistPx: d.mist * ppu, glowPx: d.glow * amp * ppu, clockS: t1 - t0, pxPerUnit: ppu, samples: d.mistN };
+    // [place v5] driftPx: the idle camera drift's current displacement (CSS px; 0 until a minute without input)
+    return { mistPx: d.mist * ppu, glowPx: d.glow * amp * ppu, clockS: t1 - t0, pxPerUnit: ppu, samples: d.mistN, driftPx };
   };
 
   // Debug hook for the sandbox / e2e (cheap).
@@ -3153,6 +3277,15 @@ export const createBoardView: CreateBoardView = async (opts: BoardViewOptions): 
     /** Test hook: pretend the last input was `ms` ago (the 3-minute half-speed rule). */
     set idleFor(ms: number) {
       lastInputAt = performance.now() - ms;
+    },
+    /** [place v5] the place layer: evening, idle drift (px and 0..1), the mist's parallax offset (board units). */
+    set frontForce(v: number | null) {
+      frontForce = v;
+      shared.uFront.value = v ?? (lastHl.frontLines === false ? 0 : 1);
+      invalidate();
+    },
+    get place() {
+      return { evening: eveCur, eveningGoal: eveGoal(), driftPx, driftAmt, par: [shared.uPar.value.x, shared.uPar.value.y], front: shared.uFront.value };
     },
     touchPick: (x: number, y: number) => touchPick(x, y, clickable),
     homePxPerUnit,
