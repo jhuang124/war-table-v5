@@ -60,6 +60,9 @@ export function createStubBoard(opts: StubBoardOptions): BoardView {
   let frames: number[] = [];
   let lastFrame = performance.now();
   let pulse: { t: TerritoryId; until: number } | null = null;
+  /** v4: the receipt's pulse (BoardHighlights.pulse), played once when the array changes. */
+  let pulseSet: { ts: Set<TerritoryId>; until: number } | null = null;
+  let pulseKey = '';
 
   // Board → screen transform
   let scale = 1;
@@ -222,7 +225,7 @@ export function createStubBoard(opts: StubBoardOptions): BoardView {
       if (!ts) continue;
       const [x, y] = toScreen(g.anchor);
       const owner = ts.owner >= 0 ? disp!.players[ts.owner] : null;
-      const pop = pulse && pulse.t === t && pulse.until > now ? 1.15 : 1;
+      const pop = (pulse && pulse.t === t && pulse.until > now) || (pulseSet && pulseSet.ts.has(t) && pulseSet.until > now) ? 1.15 : 1;
       const text = String(ts.armies);
       const bw = (ctx.measureText(text).width + fs * 1.6) * pop;
       const bh = fs * 1.6 * pop;
@@ -242,6 +245,15 @@ export function createStubBoard(opts: StubBoardOptions): BoardView {
         ctx.fillStyle = PLAYER_COLORS[owner.color].light;
         ctx.fill(e);
         ctx.restore();
+      }
+      // v4 A4: a territory a human lost keeps a thin ring in the loser's colour.
+      const ring = hl.loserRings?.find((r) => r.territory === t);
+      if (ring && PLAYER_COLORS[ring.color]) {
+        ctx.strokeStyle = PLAYER_COLORS[ring.color].base;
+        ctx.lineWidth = 1.2;
+        ctx.beginPath();
+        ctx.arc(x, y, Math.max(bw, bh) / 2 + 4, 0, Math.PI * 2);
+        ctx.stroke();
       }
       ctx.fillStyle = IVORY;
       ctx.fillText(text, x + fs * 0.3, y + 0.5);
@@ -273,6 +285,10 @@ export function createStubBoard(opts: StubBoardOptions): BoardView {
     lastFrame = now;
     if (pulse && pulse.until < now) {
       pulse = null;
+      dirty = true;
+    }
+    if (pulseSet && pulseSet.until < now) {
+      pulseSet = null;
       dirty = true;
     }
     if (dirty) {
@@ -352,9 +368,14 @@ export function createStubBoard(opts: StubBoardOptions): BoardView {
   layout();
   requestAnimationFrame(loop);
 
-  const playSound = (e: GameEvent, style: 'full' | 'brief' | 'readable') => {
+  const playSound = (e: GameEvent, style: 'full' | 'brief' | 'readable', o?: PlayEventOptions) => {
     if (!audio) return;
     const vol = style === 'brief' ? 0.6 : 1;
+    // v4 readable (an AI's engagement): one short bone click for the whole engagement, never the dice show.
+    if (e.type === 'diceRolled' && style === 'readable') {
+      if ((o?.seq?.index ?? 0) === 0) audio.cue?.('bone');
+      return;
+    }
     switch (e.type) {
       case 'armiesPlaced':
         audio.play(e.count < 0 ? 'unplace' : 'place', { volume: vol });
@@ -383,7 +404,7 @@ export function createStubBoard(opts: StubBoardOptions): BoardView {
       if (disp) disp = applyEventToDisplay(disp, event, stateAfter, false);
       if (event.type === 'armiesPlaced') pulse = { t: event.territory, until: performance.now() + 160 };
       dirty = true;
-      playSound(event, o?.style ?? 'full');
+      playSound(event, o?.style ?? 'full', o);
       const ms = opts.simulateTimings ? scaledDuration(eventDurationMs(event, o), speed) : 0;
       if (ms <= 0) return Promise.resolve();
       return new Promise<void>((resolve) => {
@@ -404,6 +425,10 @@ export function createStubBoard(opts: StubBoardOptions): BoardView {
       audio?.stopAll?.();
     },
     setHighlights(h) {
+      // v4 receipt pulse: once per new array (the renderer holds no state for it).
+      const key = (h.pulse ?? []).join(',');
+      if (key && key !== pulseKey) pulseSet = { ts: new Set(h.pulse), until: performance.now() + 450 };
+      pulseKey = key;
       hl = h;
       dirty = true;
     },

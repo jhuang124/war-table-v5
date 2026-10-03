@@ -159,9 +159,10 @@ describe('AI highlight reel (UX.md §6.1)', () => {
     expect(p95).toBeLessThanOrEqual(12000);
   }, 60_000);
 
-  it('1 human + 3 AI: AI turns (full-style fights vs the human) stay in budget and cap at 10 s', async () => {
+  it('1 human + 3 AI (v4 A1): every AI fight is a readable beat, never the dice show; turns stay in budget', async () => {
     const all: number[] = [];
     let fullRolls = 0;
+    let readableRolls = 0;
     for (const seed of [5, 6, 7]) {
       const { c, fb } = make();
       c.hooks.newGame({
@@ -175,19 +176,21 @@ describe('AI highlight reel (UX.md §6.1)', () => {
         await vi.advanceTimersByTimeAsync(100);
       }
       all.push(...c.hooks.metrics().turns.filter((t) => t.kind === 'ai').map((t) => t.ms));
-      fullRolls += fb.played.filter((p) => p.ev.type === 'diceRolled' && p.opts?.style === 'full' && (p.ev as { player: number }).player !== 0).length;
+      const aiRolls = fb.played.filter((p) => p.ev.type === 'diceRolled' && (p.ev as { player: number }).player !== 0);
+      fullRolls += aiRolls.filter((p) => p.opts?.style !== 'readable').length;
+      readableRolls += aiRolls.filter((p) => p.opts?.style === 'readable' && p.opts.tier === 1).length;
       c.dispose();
     }
     const med = pctl(all, 0.5);
     const p95 = pctl(all, 0.95);
-    console.log(`[reel] 1h+3AI: AI turns n=${all.length} median ${med} ms p95 ${p95} ms max ${Math.max(...all)} ms, full AI rolls ${fullRolls}`);
-    expect(fullRolls).toBeGreaterThan(0);
+    console.log(`[reel] 1h+3AI: AI turns n=${all.length} median ${med} ms p95 ${p95} ms max ${Math.max(...all)} ms, readable AI rolls ${readableRolls}`);
+    expect(fullRolls).toBe(0);
+    expect(readableRolls).toBeGreaterThan(0);
     expect(med).toBeLessThanOrEqual(6000);
     expect(p95).toBeLessThanOrEqual(12000);
-    expect(Math.max(...all)).toBeLessThan(10_000 + 4_500); // the beat running at 10 s may finish, then instant
   }, 120_000);
 
-  it('think time only at decision points: 350 ms at turn start, 200 (140 compressed) ms between engagements, 0 inside', async () => {
+  it('think time only at decision points: a breath at turn start and between engagements (× the turn compression), 0 inside', async () => {
     const { c, fb } = make();
     c.hooks.newGame({ players: AIS(3), seed: 3, dominationPercent: 70, turnLimit: null });
     await until(() => (c.hooks.getState()?.round ?? 0) > 3, 300_000, 100);
@@ -198,30 +201,27 @@ describe('AI highlight reel (UX.md §6.1)', () => {
       if (ev[i].ev.type !== 'turnStarted') continue;
       const firstPlace = ev.slice(i + 1).find((p) => p.ev.type === 'armiesPlaced' || p.ev.type === 'cardsTraded');
       if (firstPlace) {
+        // v4: 300 ms at 1×, shortened with every other beat on a long turn (≥ 4× compression floor).
         const gap = firstPlace.start - ev[i].end;
-        expect(gap).toBeGreaterThanOrEqual(340);
+        expect(gap).toBeGreaterThanOrEqual(74);
         expect(gap).toBeLessThan(700);
         checkedStart++;
       }
     }
-    // Consecutive diceRolled of one engagement are back to back. (Only before the turn's cap: at the cap
-    // the rest of the turn snaps and pending think time is cut, by design.)
-    let turnStart = 0;
+    // Consecutive diceRolled of one engagement are back to back.
     for (let i = 1; i < ev.length; i++) {
-      if (ev[i].ev.type === 'turnStarted') turnStart = ev[i].start;
-      if (ev[i].start - turnStart > 4500) continue;
       const a = ev[i - 1].ev;
       const b = ev[i].ev;
       if (a.type === 'diceRolled' && b.type === 'diceRolled' && a.from === b.from && a.to === b.to) {
         expect(ev[i].start - ev[i - 1].end).toBeLessThanOrEqual(20);
       }
       if (b.type === 'diceRolled' && (b as { blitz: boolean }).blitz) {
-        // First roll of a new engagement after another engagement in the same turn: ≥ 200 ms think
-        // (140 ms once AI-vs-AI fights run compressed, from the 3rd in a turn).
+        // First roll of a new engagement after another in the same turn: a 160 ms breath at 1× (× the
+        // turn's compression, floor 4×), never none.
         const prev = [...ev.slice(0, i)].reverse().find((p) => p.ev.type === 'diceRolled');
         if (prev && prev.ev.type === 'diceRolled' && (prev.ev.from !== b.from || prev.ev.to !== b.to) && prev.ev.player === b.player) {
           const lastOfPrev = ev.slice(0, i).reverse().find((p) => p.start >= prev.start && p.ev.type !== 'phaseChanged');
-          expect(ev[i].start - (lastOfPrev?.end ?? prev.end)).toBeGreaterThanOrEqual(130);
+          expect(ev[i].start - (lastOfPrev?.end ?? prev.end)).toBeGreaterThanOrEqual(39);
           checkedBetween++;
         }
       }
@@ -231,15 +231,20 @@ describe('AI highlight reel (UX.md §6.1)', () => {
     c.dispose();
   }, 60_000);
 
-  it('brief style for AI vs AI, one engagement ≤ 0.8 s of animation', async () => {
+  it('readable style for every AI engagement (v4 A1): one tier-1 beat for the dice, ≤ 0.65 s, never snapped', async () => {
     const { c, fb } = make();
     c.hooks.newGame({ players: AIS(4), seed: 9, dominationPercent: 70, turnLimit: null });
     await until(() => (c.hooks.getState()?.round ?? 0) > 3, 300_000, 100);
     const rolls = c.hooks.metrics().rolls;
     expect(rolls.length).toBeGreaterThan(3);
-    for (const r of rolls) expect(r.style).toBe('brief');
-    for (const r of rolls) expect(r.ms).toBeLessThanOrEqual(800);
-    expect(fb.played.filter((p) => p.ev.type === 'diceRolled').every((p) => p.opts?.style === 'brief')).toBe(true);
+    for (const r of rolls) expect(r.style).toBe('readable');
+    for (const r of rolls) expect(r.ms).toBeLessThanOrEqual(650);
+    const dice = fb.played.filter((p) => p.ev.type === 'diceRolled');
+    expect(dice.every((p) => p.opts?.style === 'readable' && p.opts.tier === 1)).toBe(true);
+    // Never snapped: every conquest floods at its tier-2 beat (≥ 650 ms / 4× compression floor).
+    const floods = fb.played.filter((p) => p.ev.type === 'territoryConquered');
+    expect(floods.length).toBeGreaterThan(0);
+    for (const f of floods) expect(f.end - f.start).toBeGreaterThanOrEqual(160);
     c.dispose();
   }, 60_000);
 

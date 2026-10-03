@@ -3,7 +3,7 @@
 // personality) never proposes and always declines.
 
 import { grudgeOf, offerBetween, recentlyRebuffed, truceBetween } from '../diplomacy';
-import { ADJACENCY, TERRITORY_IDS } from '../mapData';
+import { ADJACENCY, CONTINENTS, TERRITORIES, TERRITORY_IDS } from '../mapData';
 import type { GameState, PlayerId, TruceProposal } from '../types';
 import { TEMPERAMENTS } from './personality';
 
@@ -77,9 +77,69 @@ export function acceptsTruce(s: GameState, offer: TruceProposal): boolean {
 }
 
 /**
+ * v4 (PLAN §3 A5): an AI seat makes at most one offer per this many rounds (so a pair hears at most one),
+ * whatever came of it.
+ */
+export const TRUCE_PAIR_ROUNDS = 3;
+
+/**
+ * The round of the last offer between `a` and `b` (either way), as the state still remembers it: a pending
+ * offer (this round), a truce (its `since`), or a refusal / lapse (the rebuff's round). null = none known.
+ */
+export function lastOfferRound(s: GameState, a: PlayerId, b: PlayerId): number | null {
+  const d = s.diplomacy;
+  if (!d) return null;
+  const pair = (x: PlayerId, y: PlayerId) => (x === a && y === b) || (x === b && y === a);
+  let r: number | null = null;
+  const see = (n: number) => (r = r === null ? n : Math.max(r, n));
+  for (const o of d.offers) if (pair(o.from, o.to)) see(s.round);
+  for (const t of d.truces) if (pair(t.from, t.to)) see(t.since);
+  for (const x of d.rebuffs) if (pair(x.from, x.to)) see(x.round);
+  return r;
+}
+
+/**
+ * A human hears at most one AI offer at a time and none the round after one (the review saw three offers in
+ * two rounds: spam that cheapens the one diplomatic act the game has).
+ */
+function humanRecentlyAsked(s: GameState, human: PlayerId): boolean {
+  const d = s.diplomacy;
+  if (!d) return false;
+  if (d.offers.some((o) => o.to === human)) return true;
+  const recent = (round: number) => s.round - round < 2;
+  return d.truces.some((t) => t.to === human && recent(t.since)) || d.rebuffs.some((x) => x.to === human && recent(x.round));
+}
+
+/**
+ * Why `from` wants a truce with `to`, in plain words, or null when it can't say: the continent where their
+ * borders touch most. Addressed to the reader when `to` is human ('you share a border in Asia'), else
+ * 'they share a border in Asia'. The AI only proposes when it can state one (v4 A5).
+ */
+export function truceReason(s: GameState, from: PlayerId, to: PlayerId): string | null {
+  const touches: Partial<Record<string, number>> = {};
+  for (const t of TERRITORY_IDS) {
+    const o = s.territories[t].owner;
+    if (o !== from && o !== to) continue;
+    const other = o === from ? to : from;
+    for (const n of ADJACENCY[t]) {
+      if (s.territories[n].owner !== other) continue;
+      const c = TERRITORIES[t].continent;
+      touches[c] = (touches[c] ?? 0) + 1;
+    }
+  }
+  let best: string | null = null;
+  for (const [c, n] of Object.entries(touches)) if (!best || (n ?? 0) > (touches[best] ?? 0)) best = c;
+  if (!best) return null;
+  const who = s.players[to]?.kind === 'human' ? 'you' : 'they';
+  return `${who} share a border in ${CONTINENTS[best as keyof typeof CONTINENTS].name}`;
+}
+
+/**
  * The truce this AI would offer at the start of its turn, or null. It only asks when it faces two or
  * more rivals (a truce frees one front), never a seat it holds a grudge against, never the runaway
  * leader, never a classic AI (they always refuse), and a human only when config.diplomacy is on.
+ * v4 (PLAN §3 A5): at most once per TRUCE_PAIR_ROUNDS rounds per pair, a human one offer at a time with a
+ * round's rest after it, and only with a reason it can state (truceReason).
  */
 export function chooseTruceProposal(s: GameState, me: PlayerId): TruceProposal | null {
   const pl = s.players[me];
@@ -89,6 +149,11 @@ export function chooseTruceProposal(s: GameState, me: PlayerId): TruceProposal |
   const T = TEMPERAMENTS[pl.personality];
   if (T.proposeBias <= 0) return null;
   if (s.diplomacy?.proposedOn[me] === s.turn) return null;
+  // v4: one offer per TRUCE_PAIR_ROUNDS rounds from this seat at all (so per pair too). The engine keeps the
+  // turn of each seat's last offer; a round is one turn per seat still in the game.
+  const lastTurn = s.diplomacy?.proposedOn[me];
+  const seatsIn = s.players.filter((p) => !p.eliminated).length;
+  if (lastTurn !== undefined && s.turn - lastTurn < TRUCE_PAIR_ROUNDS * Math.max(1, seatsIn)) return null;
   const seats = neighbourSeats(s, me);
   if (seats.size < 2) return null;
   let best: PlayerId = -1;
@@ -99,6 +164,10 @@ export function chooseTruceProposal(s: GameState, me: PlayerId): TruceProposal |
     if (zp.kind === 'human' && !s.config.diplomacy) continue;
     if (zp.kind === 'ai' && !zp.personality) continue;
     if (recentlyRebuffed(s, me, z)) continue;
+    const lastRound = lastOfferRound(s, me, z);
+    if (lastRound !== null && s.round - lastRound < TRUCE_PAIR_ROUNDS) continue;
+    if (zp.kind === 'human' && humanRecentlyAsked(s, z)) continue;
+    if (!truceReason(s, me, z)) continue;
     if (grudgeOf(s, me, z) >= 1.5) continue;
     if (share(s, z) >= 0.45) continue;
     const b = border(s, me, z);

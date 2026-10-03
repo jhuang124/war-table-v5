@@ -182,23 +182,25 @@ describe('a game on another map (v3)', () => {
 });
 
 describe('diplomacy in the dock (v3)', () => {
-  it("an AI's offer: the line is its sentence, Decline and Accept, Accept holds the one gold; Accept answers", async () => {
+  it("an AI's offer (v4 A5): a secondary line with its reason and Decline / Accept as small words; it never takes the line or the gold; Accept answers", async () => {
     const s = diplomacyBoard((st) => {
       st.diplomacy = { truces: [], offers: [{ from: 2, to: 0, rounds: 3, kind: 'noAttack', turn: 8 }], proposedOn: { 2: 8 }, rebuffs: [] };
     });
     const { c } = await load(s);
     const u = c.hooks.ui();
-    expect(u.line).toBe('Priya proposes a truce with John · 3 rounds');
-    expect(u.buttons).toEqual(['Decline', 'Accept']);
-    expect(u.gold).toBe('button:acceptTruce');
-    expect(u.brass).toEqual(['Accept']);
+    expect(u.offer?.text).toMatch(/^Priya proposes a truce with John · 3 rounds · you share a border in [A-Z][a-z]+( [A-Z][a-z]+)?$/);
+    expect(u.offer?.buttons).toEqual(['Decline', 'Accept']);
+    expect(u.line).not.toMatch(/truce/);
+    expect(u.buttons).not.toContain('Accept');
+    expect(u.gold).not.toBe('button:acceptTruce');
+    expect(u.brass).not.toContain('Accept');
     c.intent({ type: 'button', id: 'acceptTruce' });
     await settle();
     const after = c.hooks.getState()!;
     expect(after.diplomacy?.offers.length).toBe(0);
     expect(after.diplomacy?.truces.map((t) => [t.from, t.to])).toEqual([[2, 0]]);
     expect(c.hooks.ledger().some((l) => l.kind === 'truce' && /^John accepts Priya's truce · until round \d+$/.test(l.text))).toBe(true);
-    expect(c.hooks.ui().buttons).not.toContain('Accept');
+    expect(c.hooks.ui().offer).toBeNull();
     c.dispose();
   });
 

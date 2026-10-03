@@ -15,7 +15,7 @@ import {
   type GameState,
   type TerritoryId,
 } from '../engine';
-import { Click, SEP, armies, cName, click, pName, pct, poss, seatRef, tName } from './copy';
+import { Click, SEP, armies, cName, click, movesIn, pName, pct, poss, seatRef, tName } from './copy';
 import { bestSet, oddsWord } from './helpers';
 import type { ButtonId, ButtonVM, CountVM, StripVM, TrackSegId, TrackSegVM, TrackVM } from './viewModel';
 
@@ -220,6 +220,20 @@ export interface StripInput {
    * still playing): the line says what happened instead of describing a half-moved board.
    */
   took?: TerritoryId | null;
+  /**
+   * v4 (PLAN §3 A5): the engine moved the armies in itself after that conquest (no choice to make): the
+   * line says how many ('You took Brazil · 3 armies move in'). null = a count was (or will be) chosen.
+   */
+  tookMoved?: number | null;
+}
+
+/**
+ * v4 (PLAN §3 A5, the review's truce bug): a truce offer to the driver. It never takes the primary slot,
+ * the line, the count or the buttons; it rides under them as a secondary line with 'Accept' / 'Decline'
+ * as small words. `Place N` stays the one gold.
+ */
+export function withOffer(strip: StripVM, text: string): StripVM {
+  return { ...strip, offer: { text, buttons: [btn('declineTruce', 'Decline'), btn('acceptTruce', 'Accept')] } };
 }
 
 const btn = (id: ButtonId, label: string, primary = false): ButtonVM => ({ id, label, primary });
@@ -260,6 +274,11 @@ export function attackLine(s: GameState, from: TerritoryId, to: TerritoryId, sho
   // Too long for everything: the stake outranks the word (the number already says the odds).
   const tries = stake ? [`${odds}${SEP}${stake}`, ...(showWinChance ? [`${num}${SEP}${stake}`] : []), odds, num] : [odds, num];
   return tries.find((x) => x.length <= ATTACK_LINE_MAX) ?? head;
+}
+
+/** 'You took Brazil', and when the engine moved the armies in itself, '· 3 armies move in'. */
+export function tookLine(t: TerritoryId, moved: number | null): string {
+  return moved ? `You took ${tName(t)}${SEP}${movesIn(moved)}` : `You took ${tName(t)}`;
 }
 
 /** 'Ural 1 · Siberia 15': the two totals after moving `n` (the board-less preview). */
@@ -375,7 +394,7 @@ export function buildStrip(inp: StripInput): StripVM {
       return make('place', line, { buttons: secondaries });
     }
     case 'attack': {
-      if (inp.took && s.territories[inp.took].owner === me) return make('attack', `You took ${tName(inp.took)}`);
+      if (inp.took && s.territories[inp.took].owner === me) return make('attack', tookLine(inp.took, inp.tookMoved ?? null));
       const armed = sel.selected && sel.target && s.territories[sel.selected].owner === me && s.territories[sel.target].owner !== me;
       if (armed) {
         return make('attack', attackLine(s, sel.selected!, sel.target!, inp.showWinChance), {
