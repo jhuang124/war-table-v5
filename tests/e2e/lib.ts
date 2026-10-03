@@ -200,7 +200,11 @@ export async function dismissReceipt(page: Page): Promise<boolean> {
     }
     return false;
   });
-  if (had) await page.waitForFunction(() => window.__risk.isIdle(), null, { timeout: 3000 }).catch(() => undefined);
+  if (had) {
+    await page.waitForFunction(() => window.__risk.isIdle(), null, { timeout: 3000 }).catch(() => undefined);
+    // the sheet lifts off over ~400 ms; a click under it before that is lost
+    await page.waitForTimeout(500);
+  }
   return had;
 }
 
@@ -208,15 +212,23 @@ export async function place(page: Page, t: string, n?: number): Promise<void> {
   await dismissReceipt(page);
   await answerOffer(page);
   await clickT(page, t);
-  await page.waitForFunction(() => !!window.__risk.ui().count, null, { timeout: 3000 }).catch(async (e) => {
-    const u = await ui(page);
-    throw new Error(`place(${t}): no count control (line "${u.line}", buttons ${u.buttons.join('/') || 'none'}, step ${u.step}): ${e}`);
-  });
+  // v4: the first click after the receipt / turn line can land in the board's settle; one retry
+  const got = await page.waitForFunction(() => !!window.__risk.ui().count, null, { timeout: 2500 }).then(() => true, () => false);
+  if (!got) {
+    await page.waitForTimeout(400);
+    await clickT(page, t);
+    await page.waitForFunction(() => !!window.__risk.ui().count, null, { timeout: 3000 }).catch(async (e) => {
+      const u = await ui(page);
+      throw new Error(`place(${t}): no count control (line "${u.line}", buttons ${u.buttons.join('/') || 'none'}, step ${u.step}): ${e}`);
+    });
+  }
   if (n !== undefined) await setCount(page, n);
   await clickBtn(page, 'btn-place');
 }
 
 export async function clickBtn(page: Page, testid: string): Promise<void> {
+  // v4: the receipt covers the strip until it is put away (a human's first tap does that)
+  await dismissReceipt(page);
   await page.locator(`[data-testid="${testid}"]`).first().click();
 }
 

@@ -455,6 +455,11 @@
 .st-buttons { flex: none; display: flex; align-items: center; gap: 0.5rem; }
 .st-buttons:empty { display: none; }
 .st-buttons .btn { min-width: 5.5rem; }
+/* v4: a truce offer waits on its own line: the sentence in ivory-70, Decline / Accept as bare words */
+.st-offer { display: flex; align-items: center; gap: 0.5rem; margin-left: 0.75rem; padding-left: 0.75rem; border-left: 1px solid var(--ivory-20, rgba(236, 229, 214, 0.2)); }
+.st-offer-text { font-size: 14px; color: var(--ivory-70, rgba(236, 229, 214, 0.7)); white-space: nowrap; }
+.st-offer .btn { min-width: 0; }
+.st-offer.hidden { display: none; }
 .st-zone.is-empty { display: none; }
 
 /* Count, ≤ 6 options: −  3  +  as words (the − and + are 44 px transparent hit boxes) */

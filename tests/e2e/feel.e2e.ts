@@ -86,14 +86,17 @@ for (const vp of [
   const g = await trayAndBand(page);
   await page.screenshot({ path: `${ART}/feel-tray-${tag}.png` });
   const tol = 1.5;
-  check(!!g.band && g.tray.top >= g.band.top - tol && g.tray.bottom <= g.band.bottom + tol, `${tag}: tray ${Math.round(g.tray.top)}–${Math.round(g.tray.bottom)} inside band ${Math.round(g.band!.top)}–${Math.round(g.band!.bottom)}`, results);
-  check(!!g.headerText && g.headerText.bottom <= g.tray.top + tol && g.headerText.bottom >= g.tray.top - 24 && !!g.top && g.headerText.top >= g.top.bottom, `${tag}: header line ${Math.round(g.headerText!.top)}–${Math.round(g.headerText!.bottom)} sits above the tray (${Math.round(g.tray.top)})`, results);
+  // v4: on desktop the ring sits beside the fight (not in a southern band); the header rides on its rim, above or below
+  check(!!g.top && g.tray.top >= g.top.bottom - tol, `${tag}: tray ${Math.round(g.tray.top)}–${Math.round(g.tray.bottom)} clears the seat strip (${Math.round(g.top!.bottom)})`, results);
+  const hAbove = !!g.headerText && g.headerText.bottom <= g.tray.top + tol && g.headerText.bottom >= g.tray.top - 24;
+  const hBelow = !!g.headerText && g.headerText.top >= g.tray.bottom - tol && g.headerText.top <= g.tray.bottom + 24;
+  check((hAbove || hBelow) && !!g.top && g.headerText!.top >= g.top.bottom, `${tag}: header line ${Math.round(g.headerText!.top)}–${Math.round(g.headerText!.bottom)} rides on the ring (${Math.round(g.tray.top)}–${Math.round(g.tray.bottom)})`, results);
   check(!!g.bar && g.tray.bottom <= g.bar.top + tol, `${tag}: the tray clears the bottom strip (${Math.round(g.tray.bottom)} ≤ ${Math.round(g.bar!.top)})`, results);
   // Bottom chrome = the rule and the pill row under it (the moodboard's is ~14% of the height); TV text is larger.
   const bottomMax = vp.text === 'tv' ? 0.16 : 0.14;
   const topMax = vp.text === 'tv' ? 0.085 : 0.075;
   check(!!g.top && g.top.bottom <= topMax * g.H && !!g.rule && g.H - g.rule.top <= bottomMax * g.H, `${tag}: chrome is two thin strips (top ${Math.round(g.top!.bottom)} px, bottom from the rule ${Math.round(g.H - (g.rule?.top ?? 0))} px ≤ ${Math.round(bottomMax * g.H)})`, results);
-  check(Math.abs((g.tray.left + g.tray.right) / 2 - vp.width / 2) < 1 && Math.abs((g.band!.left + g.band!.right) / 2 - vp.width / 2) < 1, `${tag}: tray and band share the centre line`, results);
+  check(g.tray.left >= -tol && g.tray.right <= vp.width + tol, `${tag}: the tray stays inside the frame (${Math.round(g.tray.left)}–${Math.round(g.tray.right)})`, results);
   // The ink tray is slim and quiet (INK F2: ~0.7× the old lacquer dice); still legible across a room.
   check(g.tray.die >= 34, `${tag}: die ${Math.round(g.tray.die)} px (≥ 34)`, results);
   if (vp.text === 'tv') {
@@ -150,7 +153,7 @@ for (const vp of [
   const minW = Math.min(...badges.map((b) => b.d));
   const minFig = Math.min(...badges.map((b) => b.fig));
   const minF = Math.min(...badges.map((b) => b.fs));
-  check(badges.length === 42 && minW >= 13.5 && minFig >= 14 && minF >= 14, `army pieces at home on 1280×800: ${badges.length} visible, stones ≥ ${minW.toFixed(1)} px across (≥ 14), figures ≥ ${minFig.toFixed(1)} px long (≥ 14), numerals ≥ ${minF.toFixed(1)} px (≥ 14: a 9 px lining digit)`, results);
+  check(badges.length === 42 && minW >= 9.5 && minFig >= 10 && minF >= 17.5, `army pieces at home on 1280×800: ${badges.length} visible, stones ≥ ${minW.toFixed(1)} px across (≥ 10, the v4 law), figures ≥ ${minFig.toFixed(1)} px long (≥ 10), numerals ≥ ${minF.toFixed(1)} px (≥ 18)`, results);
   const st0 = await page.evaluate(() => window.__risk.stats());
   check(st0.activeTweens === 0 && !st0.cameraMoving, `idle board: ${st0.activeTweens} tweens, camera ${st0.cameraMoving ? 'moving' : 'still'}`, results);
   await page.screenshot({ path: `${ART}/feel-home-1280x800.png` });

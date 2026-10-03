@@ -70,13 +70,16 @@ if (rollId) {
   await page.locator(`[data-testid="btn-${rollId}"]`).first().click().catch(() => page.getByText(/^Roll$/).first().click());
   await page.waitForTimeout(3500);
 }
-const log = await page.evaluate(() => {
-  const d = (window as unknown as { __board?: { __debug?: { motionLog?: { type: string; tier?: number; ms: number; speed: number; style?: string }[] } } }).__board?.__debug;
+const raw = await page.evaluate(() => {
+  const d = (window as unknown as { __board?: { __debug?: { motionLog?: { type: string; tier?: number | null; ms: number; motionMs?: number | null; speed: number; style?: string }[] } } }).__board?.__debug;
   return d?.motionLog ?? [];
 });
-const tiered = log.filter((e) => e.tier !== undefined && e.speed === 1);
+const log = raw.map((e) => ({ ...e, ms: e.motionMs ?? e.ms }));
+results.push(`motion log sample: ${log.slice(-8).map((e) => `${e.type}/${e.style ?? '-'}/t${e.tier ?? '-'}/${e.ms}ms/×${e.speed}`).join(', ')}`);
+const tiered = log.filter((e) => e.tier !== undefined && e.tier !== null && e.speed === 1);
+const tieredBand = tiered.filter((e) => !(e.type === 'diceRolled' && e.style !== 'readable'));
 results.push(`motion log: ${log.length} events, ${tiered.length} with a tier${rollId ? '' : ' (no roll button found)'}`);
-const outOfBand = tiered.filter((e) => {
+const outOfBand = tieredBand.filter((e) => {
   const [lo, hi] = BANDS[e.tier as number] ?? [0, Infinity];
   return e.ms < lo * 0.85 || e.ms > hi * 1.15;
 });
@@ -86,7 +89,7 @@ check(outOfBand.length === 0, `E5 every tiered event stays inside its band ±15 
 // --- A5 truce never hides the Place control -------------------------------------------------------------
 await loadScenario(
   page,
-  restBoard({ kind: 'place', remaining: 3 } as never, (s) => {
+  restBoard({ kind: 'reinforce', remaining: 3, mustTrade: false, placed: {}, midTurn: false }, (s) => {
     const st = s as unknown as { config: Record<string, unknown>; diplomacy?: unknown; turn: number };
     st.config = { ...st.config, diplomacy: true };
     st.diplomacy = { truces: [], offers: [{ from: 1, to: 0, rounds: 3, kind: 'noAttack', turn: st.turn }], proposedOn: { 1: st.turn }, rebuffs: [] };

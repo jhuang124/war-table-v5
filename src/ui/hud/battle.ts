@@ -86,7 +86,10 @@ export class BattleHeader {
     const r = vm.trayRect;
     if (r) {
       this.el.style.left = `${r.x + r.w / 2}px`;
-      this.el.style.top = `${Math.max(8, r.y - this.el.offsetHeight - 4)}px`;
+      const h = this.el.offsetHeight || 28;
+      const above = r.y - h - 4;
+      // under the seat strip (≈ 64 px) the header goes below the ring instead
+      this.el.style.top = `${above >= 68 ? above : r.y + r.h + 4}px`;
       this.el.style.bottom = 'auto';
     } else if (this.el.style.top) {
       this.el.style.left = '';

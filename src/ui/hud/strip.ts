@@ -583,6 +583,10 @@ export class BottomStrip {
   private stepper: Stepper;
   private slider: CountSlider;
   private buttons: Buttons;
+  /** v4 (A5): a truce offer waits on its own secondary line, never in the primary slot. */
+  private offer: HTMLDivElement;
+  private offerText: HTMLSpanElement;
+  private offerButtons: Buttons;
   private zone: HTMLDivElement;
   private seat = new SeatMark();
   private vm: StripVM | null = null;
@@ -608,6 +612,12 @@ export class BottomStrip {
     const zone = (this.zone = h('div', 'st-zone'));
     zone.dataset.testid = 'action-zone';
     zone.append(this.count, this.buttons.el);
+    this.offer = h('div', 'st-offer hidden');
+    this.offer.dataset.testid = 'offer';
+    this.offerText = h('span', 'st-offer-text');
+    this.offerButtons = new Buttons((b) => send({ type: 'button', id: b.id }));
+    this.offer.append(this.offerText, this.offerButtons.el);
+    zone.append(this.offer);
     this.say = h('div', 'st-say');
     // The round word, at the left of the line's row: a click (a mouse) opens the Ledger. On touch it is a
     // word only (a 44 px target there would take taps from the board above the dock); the menu has it.
@@ -722,8 +732,15 @@ export class BottomStrip {
     else this.stepper.reset();
     if (c?.control === 'slider') this.slider.update(c);
     this.buttons.update(vm.buttons, g ?? null);
+    // v4: the offer line (plain words; Accept is never the gold while the player is acting)
+    const offer = (vm as StripVM & { offer?: { text: string; buttons: ButtonVM[] } | null }).offer ?? null;
+    toggle(this.offer, 'hidden', !offer);
+    if (offer) {
+      setText(this.offerText, offer.text);
+      this.offerButtons.update(offer.buttons, null);
+    } else this.offerButtons.update([], null);
     // The action row folds away when there is nothing to press (portrait docks).
-    toggle(this.zone, 'is-empty', !c && vm.buttons.length === 0);
-    this.el.dataset.buttons = String(vm.buttons.length + (c ? 1 : 0));
+    toggle(this.zone, 'is-empty', !c && vm.buttons.length === 0 && !offer);
+    this.el.dataset.buttons = String(vm.buttons.length + (c ? 1 : 0) + (offer ? offer.buttons.length : 0));
   }
 }

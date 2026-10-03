@@ -137,7 +137,7 @@ const occ = () =>
   const after = iCap >= 0 ? hdr[iCap + 1]?.h : undefined;
   check(iCap >= 0 && heldMs >= 600 && heldMs <= 1500 && after === null, `"Indonesia captured" held ~1 s (${heldMs} ms), then the header cleared (${after})`, results);
   check(!lines.some((l) => /from New Guinea · 1/.test(l)), 'the line never describes a half-moved board', results);
-  check(lines.includes('You took Indonesia'), 'the line says "You took Indonesia" while the conquest plays', results);
+  check(lines.some((l) => l.startsWith('You took Indonesia')), 'the line says "You took Indonesia…" while the conquest plays', results);
   const last = samples[samples.length - 1];
   check(last.line === 'Attack from Indonesia · click an enemy', `settles on the chained source: ${last.line}`, results);
 }

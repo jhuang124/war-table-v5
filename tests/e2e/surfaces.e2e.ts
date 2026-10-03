@@ -148,8 +148,8 @@ if (run('1')) {
     })),
   );
   check(
-    strip[0].pers === null && strip.slice(1).map((c) => c.pers).join(',') === 'Turtle,Opportunist,Warlord' && strip[1].caps === 'small-caps' && /Keeps its word/.test(strip[1].title),
-    `the strip: each AI's personality under its name, small caps, its line as the title (${strip.map((c) => `${c.name}:${c.pers}`).join(' ')})`,
+    strip[0].pers === null && strip.slice(1).map((c) => c.pers).join(',') === 'Turtle,Opportunist,Warlord' && /Keeps its word/.test(strip[1].title),
+    `the strip: each AI's personality under its name (v4: 14 px italic), its line as the title (${strip.map((c) => `${c.name}:${c.pers}`).join(' ')})`,
     results,
   );
   await page.waitForTimeout(1800); // the turn banner dries
@@ -224,11 +224,12 @@ if (run('2')) {
   }, null, { timeout: 30000 });
   await rendered(page);
   const ledger = await page.evaluate(() => window.__risk.ledger());
-  const proposed = ledger.find((l) => l.kind === 'truce' && /^Cobalt proposes a truce with John · \d rounds?$/.test(l.text));
+  const proposed = ledger.find((l) => l.kind === 'truce' && /^Cobalt proposes a truce with John · \d rounds?( · .+)?$/.test(l.text));
   check(!!proposed, `the AI proposed: "${proposed?.text ?? (ledger.filter((l) => l.kind === 'truce').map((l) => l.text).join(' | ') || 'no truce line')}" is in the ledger`, results);
   await page.waitForTimeout(1700); // the turn banner dries
-  let u = await ui(page);
-  check(/^Cobalt proposes a truce with John · \d rounds?$/.test(u.line) && u.buttons.join(' / ') === 'Decline / Accept' && u.gold === 'button:acceptTruce', `John's turn: the line is the offer ("${u.line}"), the dock says ${u.buttons.join(' / ')}, gold ${u.gold}`, results);
+  let u = (await ui(page)) as Awaited<ReturnType<typeof ui>> & { offer?: { text: string; buttons: string[] } | null };
+  // v4 (A5): the offer waits on its own line; the strip's line and the one gold stay with the player's step
+  check(!!u.offer && /^Cobalt proposes a truce with John · \d rounds?( · .+)?$/.test(u.offer.text) && u.offer.buttons.join(' / ') === 'Decline / Accept' && u.gold !== 'button:acceptTruce', `John's turn: the offer waits on its own line ("${u.offer?.text}"), its words ${u.offer?.buttons.join(' / ')}, the gold stays ${u.gold}`, results);
   const dock = await page.evaluate(() => {
     const acc = document.querySelector('[data-testid="btn-acceptTruce"]');
     const dec = document.querySelector('[data-testid="btn-declineTruce"]');
@@ -239,9 +240,9 @@ if (run('2')) {
       trackGold: !!cur?.classList.contains('gold'),
     };
   });
-  check(dock.acceptRinged && dock.declineBare && !dock.trackGold, `Accept sits in the gold brush ring, Decline is a bare word, the phase underline has yielded (${JSON.stringify(dock)})`, results);
+  check(!dock.acceptRinged && dock.declineBare && dock.trackGold, `v4: Accept and Decline are bare words, the phase underline keeps the gold (${JSON.stringify(dock)})`, results);
   const g = await goldOver(page, 1200);
-  check(g.max === 1 && g.worst[0] === 'btn-acceptTruce', `one gold at a time while the offer waits: max ${g.max} per frame (${g.worst.join(', ')})`, results);
+  check(g.max === 1, `one gold at a time while the offer waits: max ${g.max} per frame (${g.worst.join(', ')})`, results);
   await shot(page, 'truce-offer-1440x900');
   await clickBtn(page, 'btn-acceptTruce');
   await idle(page);
@@ -295,8 +296,8 @@ if (run('2')) {
   }, null, { timeout: 30000 });
   await rendered(page);
   await page.waitForTimeout(1700);
-  const u = await ui(page);
-  check(u.buttons.join(' / ') === 'Decline / Accept', `iphone-land: the offer's Decline / Accept (${u.buttons.join(' / ')})`, results);
+  const u = (await ui(page)) as Awaited<ReturnType<typeof ui>> & { offer?: { text: string; buttons: string[] } | null };
+  check(u.offer?.buttons.join(' / ') === 'Decline / Accept', `iphone-land: the offer's Decline / Accept (${u.offer?.buttons.join(' / ') ?? ''})`, results);
   await shot(page, 'truce-offer-iphone-land');
   allErrors.push(...ctx.errors);
   await ctx.browser.close();
@@ -547,7 +548,8 @@ if (run('7')) {
     check(bad.length === 0, `True World ${form}: no piece (stone + figure) or numeral covers another territory's numeral, outside the pairs the cap fit reports tangled${bad.length ? ` — ${bad.slice(0, 5).join('; ')}` : ''}`, results);
     if (admitted.length) console.log(`   NOTE True World ${form}: tangled at the 1-army floor (the renderer says so; anchors too close at this size): ${[...known].join(', ')} — ${admitted.join('; ')}`);
     if (slivers.length) console.log(`   NOTE True World ${form}: slivers (≤ 4 px²): ${slivers.join('; ')}`);
-    check(uniq.filter((l) => !l.includes('1-army floor')).length === 0, `True World ${form}: no stone over another territory's land above the 1-army floor${uniq.length ? ` — ${uniq.slice(0, 6).join('; ')}` : ''}`, results);
+    // v4 (decision Q9): a strong stone may cross a neighbour's border; covering a numeral is the gate (table flow). Reported, not gated.
+    results.push(`True World ${form}: stones crossing another territory's land (allowed in v4): ${uniq.filter((l) => !l.includes('1-army floor')).length}${uniq.length ? ` — ${uniq.slice(0, 4).join('; ')}` : ''}`);
     console.log(`   True World ${form}: stones held at the 1-army floor (their cap wanted less): ${floored.length ? floored.join(', ') : 'none'}${uniq.some((l) => l.includes('floor')) ? `; floor stones that still touch a neighbour's land: ${uniq.filter((l) => l.includes('floor')).join('; ')}` : ''}`);
     await loadScenario(page, scenario({ ural: [0, 19], ukraine: [0, 6], siberia: [1, 12], china: [2, 5], india: [0, 25], peru: [0, 1], brazil: [1, 8], egypt: [3, 14] }, { kind: 'attack' }));
     await page.waitForTimeout(1800);

@@ -156,7 +156,7 @@ while (Date.now() - t0 < 60_000) {
 }
 console.log('   narration:', narr.slice(0, 10).join(' | '));
 check(narr.some((l) => /^\w+ (gets|places) \d+ arm(y|ies)$/.test(l) || /^\w+ trades cards for \+\d+$/.test(l)), 'narration: “Cobalt gets 5 armies” / “Cobalt places 5 armies”', results);
-check(narr.some((l) => /^\w+ attacks [\w ]+$/.test(l)), 'narration: “Cobalt attacks Siam”', results);
+check(narr.some((l) => /^\w+ attacks [\w ]+(…| and (takes it|is thrown back))?$/.test(l)), 'narration: “Cobalt attacks Siam…”', results);
 check(!narr.some((l) => /is (reinforcing|attacking|fortifying)/.test(l)), 'no “is reinforcing / attacking / fortifying” lines', results);
 check([...steps].every((x) => ['Place', 'Attack', 'Fortify'].includes(x)) && steps.size > 0, `the track names the AI's step (${[...steps].join(', ')})`, results);
 check([...seats].some((x) => x !== 'John') && !live, `the track follows the AI seat (${[...seats].join(', ')}), not clickable`, results);
