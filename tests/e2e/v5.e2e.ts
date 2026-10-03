@@ -40,7 +40,7 @@ const rollId = u.buttons.find((b: string) => /roll/i.test(b));
 let lean: unknown = null;
 let staggered: unknown = null;
 if (rollId) {
-  await page.locator(`[data-testid="btn-${rollId}"]`).first().click();
+  await page.locator(`[data-testid="btn-${rollId.toLowerCase()}"]`).first().click();
   await page.waitForTimeout(700);
   lean = await page.evaluate(() => {
     const d = (window as unknown as { __board?: { __debug?: Record<string, unknown> } }).__board?.__debug ?? {};

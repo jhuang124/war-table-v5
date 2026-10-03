@@ -383,7 +383,13 @@ class Holding {
   }
 
   private stone(i: number): HTMLElement {
+    // an inline SVG ellipse: a painted stone, not a rounded box (INK2 §3)
     const st = h('i', 'hd-stone');
+    const pic = svg('svg', { viewBox: '0 0 14 10', width: '100%', height: '100%', 'aria-hidden': 'true' });
+    const shadow = svg('ellipse', { cx: 7.6, cy: 5.8, rx: 6.2, ry: 4, class: 'hd-stone-shadow' });
+    const body = svg('ellipse', { cx: 7, cy: 5, rx: 6.2, ry: 4, class: 'hd-stone-body' });
+    pic.append(shadow, body);
+    st.append(pic);
     const p = this.spot(i);
     st.style.left = `${p.x}%`;
     st.style.top = `${p.y}%`;

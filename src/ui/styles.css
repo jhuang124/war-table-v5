@@ -1001,11 +1001,10 @@
 .st-hold.hidden { display: none; }
 .hd-dab { position: absolute; left: 0; right: 0; bottom: 0; width: 100%; height: 2.1rem; overflow: visible; opacity: 0.92; }
 .hd-stones { position: absolute; left: 0.5rem; right: 0.5rem; top: 0.25rem; bottom: 0.55rem; }
-.hd-stone {
-  position: absolute; width: 0.7rem; height: 0.5rem; border-radius: 50%; transform: translate(-50%, -100%);
-  background: var(--hold-stone); border: 1px solid var(--hold-deep);
-  box-shadow: 0.08rem 0.1rem 0 rgba(3, 5, 12, 0.45);
-}
+.hd-stone { position: absolute; width: 0.875rem; height: 0.625rem; transform: translate(-50%, -100%); display: block; }
+.hd-stone svg { display: block; overflow: visible; }
+.hd-stone-body { fill: var(--hold-stone); stroke: var(--hold-deep); stroke-width: 1; }
+.hd-stone-shadow { fill: rgba(3, 5, 12, 0.45); }
 .hd-num { position: absolute; left: 0; right: 0; bottom: 0.55rem; text-align: center; font-size: 1.125rem; font-weight: 600; line-height: 1; color: var(--ivory); text-shadow: 0 0 0.3em rgba(11, 18, 36, 0.8); }
 
 /* E · The breakdown under the one line as the turn starts: it writes, holds and dries (~1.5 s). */

@@ -43,6 +43,7 @@ await settle();
 u = await ui(page);
 check(u.buttons.join(' / ') === 'Roll / Blitz' && /^Ural → Siberia · \d+%( · .+)?$/.test(u.line) && u.brass.join() === 'Blitz', `armed: ${u.buttons.join(' / ')} · "${u.line}" · brass [${u.brass.join(', ')}]`, results);
 await page.keyboard.press('Escape');
+await page.mouse.move(40, 760); // v5: hover odds hold the line while the pointer rests on the enemy; move to open sea
 await settle(40);
 u = await ui(page);
 check(u.line === 'Attack from Ural · click an enemy', `Esc 1 → source only: ${u.line}`, results);

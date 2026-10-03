@@ -67,7 +67,7 @@ await clickT(page, 'siberia');
 const u = await ui(page);
 const rollId = u.buttons.find((b: string) => /roll/i.test(b)) ?? u.buttons.find((b: string) => /blitz/i.test(b));
 if (rollId) {
-  await page.locator(`[data-testid="btn-${rollId}"]`).first().click().catch(() => page.getByText(/^Roll$/).first().click());
+  await page.locator(`[data-testid="btn-${rollId.toLowerCase()}"]`).first().click().catch(() => page.getByText(/^Roll$/).first().click());
   await page.waitForTimeout(3500);
 }
 const raw = await page.evaluate(() => {

@@ -142,13 +142,14 @@ if (run('1')) {
   const strip = await page.evaluate(() =>
     [...document.querySelectorAll<HTMLElement>('.seat-chip')].map((c) => ({
       name: c.querySelector('.sc-name')?.textContent,
-      pers: c.querySelector('.sc-pers:not(.hidden)')?.textContent ?? null,
+      // v5: an AI's voice line replaces its personality word for a turn
+      pers: c.querySelector('.sc-pers:not(.hidden)')?.textContent ?? (c.querySelector('.sc-voice:not(.hidden)')?.textContent ? 'voice' : null),
       caps: getComputedStyle(c.querySelector('.sc-pers')!).fontVariantCaps,
       title: c.title,
     })),
   );
   check(
-    strip[0].pers === null && strip.slice(1).map((c) => c.pers).join(',') === 'Turtle,Opportunist,Warlord' && /Keeps its word/.test(strip[1].title),
+    strip[0].pers === null && strip.slice(1).every((c, i) => c.pers === ['Turtle', 'Opportunist', 'Warlord'][i] || c.pers === 'voice') && /Keeps its word/.test(strip[1].title),
     `the strip: each AI's personality under its name (v4: 14 px italic), its line as the title (${strip.map((c) => `${c.name}:${c.pers}`).join(' ')})`,
     results,
   );
