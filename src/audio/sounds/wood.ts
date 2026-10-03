@@ -99,3 +99,50 @@ export const diceShake: SoundFn = (ctx, dest, t, { rate, rand, duration }) => {
   tape.filter('lowpass', 3600, 0.7).dcBlock().normalizeWindow(0.25).endFade(0.03);
   return tape.play(ctx, dest, t, rate);
 };
+
+/**
+ * v5 cue 'rattle': the cup rattles once (~300 ms): before an AI's first attack, and when anyone taps the
+ * cup. One short shake of the turned-wood cup with the bone dice inside: a few dice against the wall, the
+ * dice meeting the far side together, then two of them settling with small bone clicks. Softer and
+ * shorter than the roll's shake, so it reads as presence, not as a roll. Sits slightly across the table
+ * (its default distance is 0.3).
+ */
+export const rattle: SoundFn = (ctx, dest, t, { rate, rand }) => {
+  const sr = ctx.sampleRate;
+  const tape = new Tape(sr, 0.34);
+  const cup = 520 * jitter(rand, 0.05);
+  const span = 0.15;
+  const n = Math.round(between(rand, 6, 8));
+  for (let i = 0; i < n; i++) {
+    // the first collision lands right at the start (the cup answers at once)
+    const x = i === 0 ? 0 : rand();
+    const at = 0.004 + span * Math.pow(x, 0.7);
+    const a = i === 0 ? 0.7 : between(rand, 0.35, 0.9) * (0.5 + 0.5 * x);
+    if (i > 0 && rand() < 0.35) tape.mode(at, between(rand, 1900, 2600), 0.0016, a * 0.24, 0.0003);
+    else {
+      const f = cup * between(rand, 0.85, 1.3);
+      tape.mode(at, f, 0.007, a * 0.6, 0.0006);
+      tape.mode(at, f * 2.4, 0.0028, a * 0.18, 0.0005);
+      tape.burst(at, { amp: a * 0.1, attack: 0.0005, tau: 0.0025, filter: [{ type: 'lowpass', f: 1400 }] }, rand);
+    }
+  }
+  // the dice meet the far wall together
+  const slam = 0.004 + span + between(rand, 0.005, 0.015);
+  for (let k = 0; k < 3; k++) {
+    const at = slam + between(rand, 0, 0.009);
+    tape.mode(at, cup * between(rand, 0.9, 1.2), 0.009, 0.62, 0.0007);
+    tape.burst(at, { amp: 0.16, attack: 0.0006, tau: 0.004, filter: [{ type: 'lowpass', f: 1200 }] }, rand);
+  }
+  // two dice settle inside: small bone clicks, the cup's floor under them
+  for (let k = 0; k < 2; k++) {
+    const at = slam + 0.04 + k * between(rand, 0.025, 0.04);
+    const a = k ? 0.28 : 0.42;
+    tape.mode(at, between(rand, 2000, 2600), 0.0016, a * 0.4, 0.0003);
+    tape.mode(at + 0.0003, 400 * jitter(rand, 0.05), 0.008, a * 0.35, 0.0007);
+  }
+  const body = new Float32Array(tape.data);
+  biquad(body, sr, 'bandpass', cup * 0.92, 3.5);
+  for (let i = 0; i < body.length; i++) tape.data[i] += body[i] * 1.4;
+  tape.filter('lowpass', 3600, 0.7).dcBlock().normalizeWindow(0.25).endFade(0.04);
+  return tape.play(ctx, dest, t, rate);
+};

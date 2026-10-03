@@ -13,6 +13,8 @@ export function roleClasses(pcs: number[], role: KeyRole): number[] {
   const root = ((pcs[0] % 12) + 12) % 12;
   const fifth = (root + 7) % 12;
   if (role === 'root') return [root];
+  // v5: every chord in the field has its fifth (sus chords included)
+  if (role === 'fifth') return [fifth];
   if (role === 'bright') return [root, fifth];
   const m3 = (root + 3) % 12;
   return pcs.includes(m3) ? [m3] : [root, fifth];

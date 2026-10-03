@@ -11,7 +11,7 @@
 import { clamp } from './dsp';
 import { LOOKAHEAD, Mixer } from './mixer';
 import { SFX } from './sounds';
-import { V4_CUES, type AudioEngine, type AudioStats, type CreateAudioOptions, type PlayOptions, type SfxName, type StrokeHandle, type V4Cue } from './types';
+import { V4_CUES, V5_CUES, type AudioEngine, type AudioStats, type CreateAudioOptions, type PlayOptions, type SfxName, type StrokeHandle, type V4Cue, type V5Cue } from './types';
 
 type AudioContextCtor = new (opts?: AudioContextOptions) => AudioContext;
 
@@ -91,6 +91,9 @@ export function createAudio(options: CreateAudioOptions = {}): AudioEngine {
         ctx = new AC({ latencyHint: 'interactive' });
         mixer = new Mixer(ctx, ctx.destination, { limiter: true, live: true });
         if (idle) mixer.setIdle(true);
+        // v5: remembered before unlock (the score starts at this evening, cold if a fight is on)
+        if (evening > 0) mixer.setEvening(evening);
+        if (cold) mixer.setCold(true);
         mixer.sfxBus.gain.value = volume * volume;
         mixer.musicVol.gain.value = musicVolume * musicVolume;
         mixer.muteGain.gain.value = muted ? 0 : 1;
@@ -119,6 +122,7 @@ export function createAudio(options: CreateAudioOptions = {}): AudioEngine {
       mixer.trigger(name, ctx.currentTime + LOOKAHEAD + delay, {
         volume: Number.isFinite(o.volume) ? o.volume : undefined,
         pan: Number.isFinite(o.pan) ? o.pan : undefined,
+        panTo: Number.isFinite(o.panTo) ? o.panTo : undefined,
         rate: Number.isFinite(o.rate) ? o.rate : undefined,
         duration: Number.isFinite(o.duration) ? o.duration : undefined,
         variant: o.variant,
@@ -131,14 +135,36 @@ export function createAudio(options: CreateAudioOptions = {}): AudioEngine {
 
   // v4 (B3): idle is remembered before unlock and across music restarts
   let idle = false;
+  // v5: the fight's cold and the evening clock, likewise
+  let cold = false;
+  let evening = 0;
 
   return {
     unlock,
     play,
-    cue(name: V4Cue, o?: PlayOptions) {
+    cue(name: V4Cue | V5Cue, o?: PlayOptions) {
       // tolerant: unknown names are a silent no-op
-      if (!V4_CUES.includes(name) || !SFX[name as SfxName]) return;
+      if (!(V4_CUES.includes(name as V4Cue) || V5_CUES.includes(name as V5Cue)) || !SFX[name as SfxName]) return;
       play(name as SfxName, o);
+    },
+    fightCold(on: boolean) {
+      cold = !!on;
+      try {
+        if (!ctx || !mixer) return;
+        mixer.setCold(cold, ctx.currentTime + LOOKAHEAD);
+      } catch (err) {
+        console.warn('[audio] fightCold failed', err);
+      }
+    },
+    setEvening(t: number) {
+      if (!Number.isFinite(t)) return;
+      evening = clamp(t, 0, 1);
+      try {
+        if (!ctx || !mixer) return;
+        mixer.setEvening(evening, ctx.currentTime + LOOKAHEAD);
+      } catch (err) {
+        console.warn('[audio] setEvening failed', err);
+      }
     },
     turnPassed(toHuman: boolean) {
       try {
@@ -252,6 +278,8 @@ export function createAudio(options: CreateAudioOptions = {}): AudioEngine {
         musicWanted,
         chord: mixer?.chordName(),
         idle,
+        cold,
+        evening,
       };
     },
     dispose() {

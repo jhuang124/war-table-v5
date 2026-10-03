@@ -12,6 +12,12 @@
 // B2 key-locked effects (chordAt from the score; D-minor fallback), B3 the score breathes (turnPassed,
 // lean, setIdle, the +2 dB swell), B4 every voice fades in over ≥ 15 ms except the one sharp family,
 // A2 distance (0 at the table .. 1 far: −4 dB, more hall, a gentle high-shelf cut).
+//
+// v5 (PROPOSAL §4 A, B, F): the dice pour (landings 60–90 ms apart are one sequence: each die takes the
+// next of three bone timbres and a ±4 % rate spread; the first is a touch louder, later ones a little
+// wetter; dice stay exempt from the 70 ms rule), texture variants (hit · pair is exempt too, so the
+// verdict's pairs are never thinned), a default distance per sound (rattle 0.3), panTo (a voice that
+// travels), fightCold (a 2 dB high shelf on the score + the room tone thins), setEvening (the score's clock).
 
 import { SoundBank } from './bank';
 import { cached, clamp, dbToGain, mulberry32, roomImpulse, softClipCurve } from './dsp';
@@ -53,6 +59,19 @@ const FAR_WET_ADD = 0.12;
 export const SWELL_DB = 2;
 const SWELL_IN = 2;
 const SWELL_OUT = 8;
+/** v5: landings closer than this to the previous one belong to the same pour. */
+export const DICE_SEQ_GAP = 0.2;
+/** v5: the dice pour. Later dice sit this far under the first (dB) … */
+export const DICE_LATER_DB = -1;
+/** … each die's hall send grows by this (×, per place in the pour, up to 4 places). */
+export const DICE_WET_STEP = 0.18;
+/** v5: per-die rate spread (±). */
+export const DICE_RATE_SPREAD = 0.04;
+/** v5: fightCold: the score's high shelf (Hz, dB) and how fast it goes cold / comes back (time constants, s). */
+export const COLD_SHELF_HZ = 1100;
+export const COLD_SHELF_DB = -2;
+const COLD_IN_TAU = 0.1;
+const COLD_OUT_TAU = 0.3;
 
 export interface MixerOptions {
   /** Master limiter + soft clip (live: on; per-sound analysis: off, to prove sounds are clean alone). */
@@ -78,6 +97,10 @@ export interface TriggerOptions {
   distance?: number;
   /** Tests: force the chord (pitch classes, root first) instead of asking the score. */
   chord?: number[];
+  /** v5: travel from `pan` to `panTo` over the motion length (or the sound's own). */
+  panTo?: number;
+  /** v5 (tests): force a diceLand timbre (0..2) instead of the pour's own choice. */
+  timbre?: number;
 }
 
 interface Voice {
@@ -95,6 +118,8 @@ export class Mixer {
   readonly sfxBus: GainNode;
   readonly musicBus: GainNode;
   readonly musicDuck: GainNode;
+  /** v5: fightCold's high shelf on the whole score (hall and room tone included). */
+  readonly coldShelf: BiquadFilterNode;
   readonly musicVol: GainNode;
   /** B3: +2 dB when a human's turn begins. */
   readonly musicSwell: GainNode;
@@ -102,6 +127,12 @@ export class Mixer {
   /** B1: the effects' hall (the score's impulse, a shorter tap). */
   readonly room: ConvolverNode;
   private idle = false;
+  private cold = false;
+  private evening = 0;
+  /** v5: the dice pour in progress (context time of the last landing, its place in the pour). */
+  private diceSeq = { last: -Infinity, index: -1 };
+  /** v5: the last diceLand's place in its pour (0 = first), for tests. */
+  lastDiceIndex = -1;
   /** Last pitch the key-lock chose per sound (debugging, tests). */
   lastKey: Partial<Record<SfxName, number>> = {};
   private readonly live: boolean;
@@ -161,7 +192,11 @@ export class Mixer {
     this.musicVol = ctx.createGain();
     this.musicVol.gain.value = 0.7 * 0.7;
     this.musicSwell = ctx.createGain();
-    this.musicBus.connect(this.musicDuck).connect(this.musicSwell).connect(this.musicVol);
+    this.coldShelf = ctx.createBiquadFilter();
+    this.coldShelf.type = 'highshelf';
+    this.coldShelf.frequency.value = COLD_SHELF_HZ;
+    this.coldShelf.gain.value = 0;
+    this.musicBus.connect(this.coldShelf).connect(this.musicDuck).connect(this.musicSwell).connect(this.musicVol);
 
     const pre = ctx.createGain();
     this.sfxBus.connect(hp).connect(shelf).connect(pre);
@@ -200,17 +235,21 @@ export class Mixer {
       this.hushed++;
       return false;
     }
+    // v5: a texture variant (hit · pair) is part of the verdict's texture, like the dice
+    const textureVariant = !!o.variant && !!meta.textureVariants?.includes(o.variant);
+    const texture = !!meta.texture || textureVariant;
+    const minGapMs = textureVariant ? (meta.textureGapMs ?? 20) : meta.minGapMs;
     // A sound retriggered inside its own minimum gap is a repeat, not a new cue: drop it first, so a
     // burst of one sound thins to one instead of queueing up behind itself.
     const prev = this.lastAt[name];
-    if (prev !== undefined && when >= prev && (when - prev) * 1000 < meta.minGapMs) {
+    if (prev !== undefined && when >= prev && (when - prev) * 1000 < minGapMs) {
       this.dropped++;
       return false;
     }
     // ≤ 1 cue per 70 ms. The more important cue wins: a new one replaces a lesser one that is
     // (about to be) sounding; an equal important one waits its turn (≤ a few frames, never audibly
     // late); routine sounds that collide simply drop (that is what thins dense bursts).
-    if (!meta.texture) {
+    if (!texture) {
       for (let k = 0; k < 4; k++) {
         const clash = this.cues.find((c) => Math.abs(when - c.t) < CUE_GAP - 1e-6);
         if (!clash) break;
@@ -233,7 +272,7 @@ export class Mixer {
     this.prune(when);
 
     const last = this.lastAt[name];
-    if (last !== undefined && when >= last && (when - last) * 1000 < meta.minGapMs) {
+    if (last !== undefined && when >= last && (when - last) * 1000 < minGapMs) {
       this.dropped++;
       return false;
     }
@@ -251,12 +290,29 @@ export class Mixer {
     }
 
     const ctx = this.ctx;
+    const rand = o.rand ?? Math.random;
     const volume = clamp(o.volume ?? 1, 0, 2);
-    const distance = clamp(Number.isFinite(o.distance) ? (o.distance as number) : 0, 0, 1);
+    const distance = clamp(Number.isFinite(o.distance) ? (o.distance as number) : (meta.distance ?? 0), 0, 1);
     const density = meta.densityDb ? Math.min(meta.densityMaxDb ?? 6, others * meta.densityDb) : 0;
     const duration = meta.duration ? clamp(o.duration ?? meta.duration[2], meta.duration[0], meta.duration[1]) : undefined;
     // B2: a whole-note sound is re-pitched to the chord tone (the caller's rate is ignored: key wins)
     let rate = clamp(o.rate ?? 1, 0.5, 2);
+    // v5: the dice pour. Landings within DICE_SEQ_GAP of the last one continue the pour: each die takes the
+    // next bone timbre and its own small rate; the first is a touch louder, later ones send more to the hall.
+    let timbre: number | undefined;
+    let seqDb = 0;
+    let seqWet = 1;
+    if (meta.timbres) {
+      const s = this.diceSeq;
+      const index = when >= s.last && when - s.last < DICE_SEQ_GAP ? s.index + 1 : 0;
+      this.diceSeq = { last: when, index };
+      this.lastDiceIndex = index;
+      timbre = Number.isFinite(o.timbre) ? clamp(Math.round(o.timbre as number), 0, meta.timbres - 1) : index % meta.timbres;
+      seqDb = index > 0 ? DICE_LATER_DB : 0;
+      seqWet = 1 + DICE_WET_STEP * Math.min(index, 4);
+      // (off with rateJitter: false, so a bank-vs-direct comparison draws the same stream)
+      if (this.rateJitter) rate = clamp(rate * (1 + (rand() * 2 - 1) * DICE_RATE_SPREAD), 0.5, 2);
+    }
     const pcs = meta.key || meta.tone ? (o.chord ?? this.chordPcs(when)) : null;
     if (meta.key && pcs) {
       const role = o.variant === 'somber' && meta.key.somberRole ? meta.key.somberRole : meta.key.role;
@@ -266,7 +322,7 @@ export class Mixer {
     }
     // the voice: fade-in (B4) → distance shelf (A2) → panner + hall send (B1)
     const gain = ctx.createGain();
-    const level = dbToGain(meta.trimDb - density + FAR_DB * distance) * volume;
+    const level = dbToGain(meta.trimDb - density + FAR_DB * distance + seqDb) * volume;
     const attack = meta.attack ?? DEFAULT_ATTACK;
     if (attack > 0) {
       gain.gain.value = 0;
@@ -285,15 +341,17 @@ export class Mixer {
       nodes.push(sh);
     }
     let head: AudioNode = tap;
+    let panner: StereoPannerNode | null = null;
     if (typeof ctx.createStereoPanner === 'function') {
       const p = ctx.createStereoPanner();
       p.pan.value = clamp(o.pan ?? 0, -1, 1);
       tap.connect(p);
       head = p;
       nodes.push(p);
+      panner = p;
     }
     head.connect(this.sfxBus);
-    const wet = meta.wet * (1 + (FAR_WET_MUL - 1) * distance) + FAR_WET_ADD * distance;
+    const wet = (meta.wet * (1 + (FAR_WET_MUL - 1) * distance) + FAR_WET_ADD * distance) * seqWet;
     if (wet > 0) {
       const send = ctx.createGain();
       send.gain.value = wet;
@@ -302,21 +360,21 @@ export class Mixer {
     }
 
     let dur: number;
-    const rand = o.rand ?? Math.random;
     try {
       const dq = SoundBank.quantize(duration);
-      const banked = this.bank?.take(name, o.variant, dq) ?? null;
+      const banked = this.bank?.take(name, o.variant, dq, timbre) ?? null;
       if (banked) {
         const src = ctx.createBufferSource();
         src.buffer = banked;
-        const r = rate * (meta.musical || !this.rateJitter ? 1 : 1 + (rand() * 2 - 1) * 0.02);
+        // (the dice already carry their own ±4 % spread)
+        const r = rate * (meta.musical || meta.timbres || !this.rateJitter ? 1 : 1 + (rand() * 2 - 1) * 0.02);
         src.playbackRate.value = r;
         src.connect(gain);
         src.start(when);
         dur = banked.duration / r;
       } else {
-        dur = meta.fn(ctx, gain, when, { rate, rand, duration: dq, variant: o.variant });
-        this.bank?.request(name, o.variant, dq);
+        dur = meta.fn(ctx, gain, when, { rate, rand, duration: dq, variant: o.variant, timbre });
+        this.bank?.request(name, o.variant, dq, timbre);
       }
       // B2: tuned layers at the chord's pitch (never banked: a few oscillators)
       if (meta.tone && pcs) {
@@ -333,6 +391,12 @@ export class Mixer {
       return false;
     }
     if (!Number.isFinite(dur) || dur <= 0) dur = meta.maxDur / rate;
+    // v5: a voice that travels (the glint runs shore to shore)
+    if (panner && Number.isFinite(o.panTo)) {
+      const span = Math.max(0.05, (duration ?? dur) / rate);
+      panner.pan.setValueAtTime(clamp(o.pan ?? 0, -1, 1), when);
+      panner.pan.linearRampToValueAtTime(clamp(o.panTo as number, -1, 1), when + span);
+    }
 
     const v: Voice = { name, start: when, end: when + dur, priority: meta.priority, gain, nodes };
     if (this.live) {
@@ -340,7 +404,7 @@ export class Mixer {
       v.timer = setTimeout(() => this.release(v), Math.max(50, ms));
     }
     this.voices.push(v);
-    if (!meta.texture) {
+    if (!texture) {
       this.cues.push({ t: when, p: meta.priority, v });
       if (this.cues.length > 12) this.cues.shift();
     }
@@ -357,6 +421,7 @@ export class Mixer {
     this.lastAt = {};
     this.cues = [];
     this.hushUntil = -1;
+    this.diceSeq = { last: -Infinity, index: -1 };
     this.liveStroke?.kill(at);
     this.liveStroke = null;
   }
@@ -457,13 +522,42 @@ export class Mixer {
     return this.idle;
   }
 
+  /**
+   * v5 (the room goes cold for a breath): with the camera lean. on = the score's top dips COLD_SHELF_DB
+   * (quickly) and the room tone thins; off = both come back over ~1 s.
+   */
+  setCold(on: boolean, at = this.ctx.currentTime): void {
+    if (on === this.cold) return;
+    this.cold = on;
+    const g = this.coldShelf.gain;
+    g.cancelScheduledValues(at);
+    g.setValueAtTime(on ? 0 : COLD_SHELF_DB, at);
+    g.setTargetAtTime(on ? COLD_SHELF_DB : 0, at, on ? COLD_IN_TAU : COLD_OUT_TAU);
+    this.music?.setCold?.(on, at);
+  }
+
+  get isCold(): boolean {
+    return this.cold;
+  }
+
+  /** v5: the evening clock, 0 (dusk) .. 1 (night): the score's voicings and room tone lean darker, slowly. */
+  setEvening(t: number, at = this.ctx.currentTime): void {
+    const e = clamp(Number.isFinite(t) ? t : 0, 0, 1);
+    this.evening = e;
+    this.music?.setEvening?.(e, at);
+  }
+
+  get eveningValue(): number {
+    return this.evening;
+  }
+
   // Music ------------------------------------------------------------------
 
   startMusic(at = this.ctx.currentTime, opts: { seed?: number; renderUntil?: number; fadeIn?: number } = {}): void {
     if (this.music) return;
     const seed = opts.seed ?? ((Math.random() * 1e9) | 0);
     const begin = (t: number) =>
-      startMusic(this.ctx, this.musicBus, t, { seed, live: this.live, renderUntil: opts.renderUntil, fadeIn: opts.fadeIn, hall: this.hall ?? undefined });
+      startMusic(this.ctx, this.musicBus, t, { seed, live: this.live, renderUntil: opts.renderUntil, fadeIn: opts.fadeIn, hall: this.hall ?? undefined, evening: this.evening, cold: this.cold });
     if (!this.live) {
       this.hall ??= createMusicHall(this.ctx, this.musicBus);
       this.music = begin(at);

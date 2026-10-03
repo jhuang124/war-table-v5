@@ -24,7 +24,13 @@ export type SfxName =
   | 'cupSlide'
   | 'cupSet'
   | 'bone'
-  | 'tick';
+  | 'tick'
+  // v5 cues (also reachable as `cue(name)`): see V5Cue
+  | 'ripple'
+  | 'splash'
+  | 'rattle'
+  | 'glint'
+  | 'pour';
 
 export const SFX_NAMES: readonly SfxName[] = [
   'uiClick',
@@ -49,6 +55,11 @@ export const SFX_NAMES: readonly SfxName[] = [
   'cupSet',
   'bone',
   'tick',
+  'ripple',
+  'splash',
+  'rattle',
+  'glint',
+  'pour',
 ];
 
 /** v4: the cue names as a list (every V4Cue is also an SfxName, so `play()` accepts them too). */
@@ -69,6 +80,8 @@ export type V4Cue = 'sheet' | 'cupSlide' | 'cupSet' | 'bone' | 'tick';
  * first attack; tap the cup), glint (a sea lane glints), pour (reinforcements pour into the holding dab).
  */
 export type V5Cue = 'ripple' | 'splash' | 'rattle' | 'glint' | 'pour';
+/** v5: the cue names as a list (every V5Cue is also an SfxName). */
+export const V5_CUES: readonly V5Cue[] = ['ripple', 'splash', 'rattle', 'glint', 'pour'];
 
 export interface PlayOptions {
   /** Per-play gain, 0..2 (1 = designed level). */
@@ -81,6 +94,11 @@ export interface PlayOptions {
   distance?: number;
   /** Stereo position, -1 (left) .. 1 (right). */
   pan?: number;
+  /**
+   * v5 extra: the voice travels from `pan` to `panTo` over `duration` (or the sound's own length). The glint
+   * uses it to run from one shore to the other; any sound accepts it.
+   */
+  panTo?: number;
   /** Playback rate, 0.5..2: scales pitch and timing together (tape-style). */
   rate?: number;
   /** extra: start this many seconds from now (sample-accurate, cancelled by stopAll). */
@@ -95,12 +113,14 @@ export interface PlayOptions {
    * 'somber' = a human lost it. conquer · somber is the A5 sting (a dry brush snap, then a rougher,
    * darker flood): play it whenever the previous owner is human. continent · somber = the bowl is
    * hand-damped (your continent was broken). v4: 'lift' = sheet lifted off the table (default: laid on).
+   * v5: hit · 'pair' = the verdict for one matched pair (the breath of smoke plus a tiny high tick on the
+   * chord's fifth, ≈ −30 LUFS on its own); call it once per pair as the gold hairline connects.
    */
   variant?: SfxVariant;
 }
 
-/** v4 adds 'lift' (the sheet cue: lifted off rather than laid on). */
-export type SfxVariant = 'bright' | 'somber' | 'lift';
+/** v4 adds 'lift' (the sheet cue: lifted off rather than laid on). v5 adds 'pair' (hit: one matched pair). */
+export type SfxVariant = 'bright' | 'somber' | 'lift' | 'pair';
 
 export interface AudioStats {
   /** 'locked' until the first user gesture creates/resumes the context. */
@@ -120,6 +140,10 @@ export interface AudioStats {
   chord?: string;
   /** v4: setIdle(true) is in effect. */
   idle?: boolean;
+  /** v5: fightCold(true) is in effect. */
+  cold?: boolean;
+  /** v5: the evening clock, 0 (dusk) .. 1 (night). */
+  evening?: number;
 }
 
 /** extra: a live brush stroke the pointer drives (INK A2: draw your attack). */
@@ -178,6 +202,19 @@ export interface AudioEngine {
   lean?(colour: 'cold'): void;
   /** v4 (B3, §7.14): idle. true = the score thins to pad only over ~4 s; false = back over ~2 s. */
   setIdle?(on: boolean): void;
+  /**
+   * v5 (PROPOSAL §4 A, "the room goes cold for a breath"): call with the camera lean. true = the score's top
+   * dips 2 dB (high shelf) and the room tone thins, quickly (~0.3 s); false = both come back over ~1 s.
+   * Remembered before unlock. Tempo and the walk are untouched.
+   */
+  fightCold?(on: boolean): void;
+  /**
+   * v5 (PROPOSAL §4 B, the evening deepens): the game's clock, 0 = dusk (round 1) .. 1 = night (round 12+).
+   * The score leans to its lower, darker voicings and a darker top, and the room tone deepens a touch; the
+   * walk's timing, pad lengths and note density never change (Pillar 5). Idle thinning still works on top.
+   * Moves slowly (a few seconds); remembered before unlock and across score restarts.
+   */
+  setEvening?(t: number): void;
   /** extra: true once the AudioContext exists and has been asked to run. */
   isUnlocked(): boolean;
   /** extra: counters for debugging / tests. */
@@ -212,6 +249,8 @@ export interface VoiceOpts {
   /** Motion length in seconds (see PlayOptions.duration), already clamped. */
   duration?: number;
   variant?: SfxVariant;
+  /** v5 (internal): which of the die's three bone timbres (0..2). diceLand only; absent = 0. */
+  timbre?: number;
 }
 
 /**
@@ -219,8 +258,9 @@ export interface VoiceOpts {
  *  root    the chord's root
  *  bright  the root or the fifth, whichever sits nearer the recipe's designed pitch
  *  somber  the chord's minor third when it has one; otherwise the open root/fifth
+ *  fifth   v5: the chord's fifth (every chord in the field has one): the glint, the pair tick, the pour's top
  */
-export type KeyRole = 'root' | 'bright' | 'somber';
+export type KeyRole = 'root' | 'bright' | 'somber' | 'fifth';
 
 /** v4: a tuned layer the mixer adds under a sound at the chord's pitch (cheap oscillators, never banked). */
 export interface ToneLayer {
@@ -323,4 +363,14 @@ export interface SfxMeta {
   key?: { role: KeyRole; ref: number; somberRole?: KeyRole };
   /** v4 (B2): tuned layers added at the chord's pitch (paper and wood keep their unpitched body). */
   tone?: ToneLayer[];
+  /**
+   * v5: these variants are part of a texture (the verdict's pairs): exempt from the ≤ 1 cue per 70 ms rule,
+   * and their own retrigger gap is `textureGapMs` (default 20).
+   */
+  textureVariants?: SfxVariant[];
+  textureGapMs?: number;
+  /** v5: distance used when the caller passes none (rattle: 0.3, slightly across the table). */
+  distance?: number;
+  /** v5: number of distinct timbres the recipe has (diceLand: 3); the bank keeps each. */
+  timbres?: number;
 }

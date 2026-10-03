@@ -1,6 +1,7 @@
 // Offline renders (OfflineAudioContext) through the same Mixer the game uses. Browser-only.
 
-import { mulberry32 } from './dsp';
+import { dbToGain, mulberry32 } from './dsp';
+import { TONIC_PCS, keyPitch, layerOn, toneLayer } from './key';
 import { MAX_VOICES, Mixer } from './mixer';
 import { createMusicHall } from './music';
 import { SFX } from './sounds';
@@ -25,6 +26,11 @@ export interface RenderOptions {
   distance?: number;
   /** v4 B2: force the chord (pitch classes, root first); default: no score → D minor. */
   chord?: number[];
+  /** v5: force a diceLand timbre (0..2). */
+  timbre?: number;
+  /** v5: travel to this pan. */
+  panTo?: number;
+  pan?: number;
 }
 
 export interface RenderResult {
@@ -46,7 +52,7 @@ export async function renderSfx(name: SfxName, o: RenderOptions = {}): Promise<R
   const len = Math.ceil(renderLength(name, o) * sr);
   const ctx = new OfflineAudioContext(2, len, sr);
   const mixer = new Mixer(ctx, ctx.destination, { limiter: o.limiter ?? false, live: false });
-  const ok = mixer.trigger(name, 0, { rand: mulberry32(o.seed ?? 1), rate: o.rate, duration: o.duration, variant: o.variant, volume: o.volume, distance: o.distance, chord: o.chord });
+  const ok = mixer.trigger(name, 0, { rand: mulberry32(o.seed ?? 1), rate: o.rate, duration: o.duration, variant: o.variant, volume: o.volume, distance: o.distance, chord: o.chord, timbre: o.timbre, pan: o.pan, panTo: o.panTo });
   if (!ok) throw new Error(`${name} failed to build (seed ${o.seed ?? 1})`);
   const reportedDur = mixer.lastDuration;
   const buffer = await ctx.startRendering();
@@ -61,7 +67,7 @@ export async function renderBankPair(name: SfxName): Promise<{ direct: AudioBuff
   const sr = OFFLINE_SR;
   const len = Math.ceil(renderLength(name) * sr);
   const a = new OfflineAudioContext(2, len, sr);
-  new Mixer(a, a.destination, { limiter: false, bank: false }).trigger(name, 0, { rand: mulberry32(1) });
+  new Mixer(a, a.destination, { limiter: false, bank: false, rateJitter: false }).trigger(name, 0, { rand: mulberry32(1) });
   const b = new OfflineAudioContext(2, len, sr);
   const mb = new Mixer(b, b.destination, { limiter: false, bank: true, bankRand: mulberry32(1), rateJitter: false });
   const d = SFX[name].duration?.[2];
@@ -77,7 +83,7 @@ export async function renderBankPair(name: SfxName): Promise<{ direct: AudioBuff
  */
 export async function buildSweep(seeds = 20): Promise<string[]> {
   const bad: string[] = [];
-  const cases: { name: SfxName; variant?: SfxVariant; duration?: number; rate?: number }[] = [];
+  const cases: { name: SfxName; variant?: SfxVariant; duration?: number; rate?: number; timbre?: number }[] = [];
   for (const name of Object.keys(SFX) as SfxName[]) {
     if (SFX[name].silent) continue;
     cases.push({ name }, { name, rate: 0.5 }, { name, rate: 2 });
@@ -86,6 +92,9 @@ export async function buildSweep(seeds = 20): Promise<string[]> {
   }
   for (const name of ['turnStart', 'conquer', 'continent', 'sheet'] as SfxName[]) cases.push({ name, variant: 'bright' }, { name, variant: 'somber' });
   cases.push({ name: 'sheet', variant: 'lift' });
+  // v5
+  cases.push({ name: 'hit', variant: 'pair' }, { name: 'hit', variant: 'pair', rate: 0.5 }, { name: 'hit', variant: 'pair', rate: 2 });
+  for (const timbre of [1, 2]) cases.push({ name: 'diceLand', timbre }, { name: 'diceLand', timbre, rate: 0.5 }, { name: 'diceLand', timbre, rate: 2 });
   const origWarn = console.warn;
   let msg = '';
   console.warn = (...a: unknown[]) => (msg = a.map(String).join(' '));
@@ -96,7 +105,7 @@ export async function buildSweep(seeds = 20): Promise<string[]> {
         const ctx = new OfflineAudioContext(2, 128, OFFLINE_SR);
         const m = new Mixer(ctx, ctx.destination, { limiter: false, bank: false });
         msg = '';
-        if (!m.trigger(c.name, 0, { rand: mulberry32(1000 + s), rate: c.rate, duration: c.duration, variant: c.variant })) bad.push(`${JSON.stringify(c)} seed ${1000 + s}: ${msg}`);
+        if (!m.trigger(c.name, 0, { rand: mulberry32(1000 + s), rate: c.rate, duration: c.duration, variant: c.variant, timbre: c.timbre })) bad.push(`${JSON.stringify(c)} seed ${1000 + s}: ${msg}`);
         await ctx.startRendering();
       }
     }
@@ -248,6 +257,52 @@ export async function renderMoment(seed = 6, seconds = 18): Promise<{ buffer: Au
   return { buffer: await ctx.startRendering(), marks };
 }
 
+/**
+ * v5: a staggered pour of dice (`gap` seconds apart, attacker −0.3 / defender +0.3) through the mixer, with
+ * a non-dice cue landing in the middle of it (a paper tick), and two verdict pairs + two splashes that
+ * land on the same frame. Reports what the arbitration let through.
+ */
+export async function renderDicePour(gap = 0.06, count = 5, seed = 1): Promise<{ buffer: AudioBuffer; played: number; requested: number; indices: number[]; diceAt: number[]; pairsPlayed: number; splashesPlayed: number; tickPlayed: boolean }> {
+  const sr = OFFLINE_SR;
+  const ctx = new OfflineAudioContext(2, Math.ceil(3 * sr), sr);
+  const mixer = new Mixer(ctx, ctx.destination, { limiter: false });
+  const rand = mulberry32(seed);
+  const indices: number[] = [];
+  const diceAt: number[] = [];
+  let played = 0;
+  const pans = [-0.3, -0.3, -0.3, 0.3, 0.3, 0.3];
+  for (let i = 0; i < count; i++) {
+    const t = 0.05 + i * gap;
+    if (mixer.trigger('diceLand', t, { pan: pans[i % pans.length], rand })) {
+      played++;
+      diceAt.push(t);
+    }
+    indices.push(mixer.lastDiceIndex);
+  }
+  const tickPlayed = mixer.trigger('tick', 0.05 + 2 * gap + 0.01, { rand });
+  const v = 0.05 + count * gap + 0.4;
+  let pairsPlayed = 0;
+  let splashesPlayed = 0;
+  for (const pan of [-0.3, 0.3]) {
+    if (mixer.trigger('hit', v, { variant: 'pair', pan, rand })) pairsPlayed++;
+    if (mixer.trigger('splash', v, { pan, rand })) splashesPlayed++;
+  }
+  return { buffer: await ctx.startRendering(), played, requested: count, indices, diceAt, pairsPlayed, splashesPlayed, tickPlayed };
+}
+
+/** v5: a sound's tuned layers alone (at its trim, over D minor or `chord`): e.g. the pair tick's own level. */
+export async function renderToneOnly(name: SfxName, variant?: SfxVariant, chord: number[] = TONIC_PCS): Promise<AudioBuffer> {
+  const sr = OFFLINE_SR;
+  const meta = SFX[name];
+  const ctx = new OfflineAudioContext(2, Math.ceil(2 * sr), sr);
+  const g = ctx.createGain();
+  g.gain.value = dbToGain(meta.trimDb);
+  g.connect(ctx.destination);
+  const rand = mulberry32(1);
+  for (const l of meta.tone ?? []) if (layerOn(l, variant)) toneLayer(ctx, g, 0, keyPitch(chord, l.role, l.ref), l, rand);
+  return ctx.startRendering();
+}
+
 // ---------------------------------------------------------------------------
 // v4: one room (B1), key-lock (B2), the breathing score (B3), distance (A2)
 // ---------------------------------------------------------------------------
@@ -292,12 +347,16 @@ export async function renderInKey(name: SfxName, chord: number[] | null, variant
 }
 
 /** B3: the score alone (effects muted) with scripted breathing; for level and chord checks. */
-export async function renderBreath(o: { seconds: number; seed?: number; swellAt?: number; turnAt?: number; leanAt?: number; idleAt?: number; wakeAt?: number; sampleRate?: number }): Promise<{ buffer: AudioBuffer; chords: { t: number; chord: string }[] }> {
+export async function renderBreath(o: { seconds: number; seed?: number; swellAt?: number; turnAt?: number; leanAt?: number; idleAt?: number; wakeAt?: number; sampleRate?: number; coldAt?: number; coldOffAt?: number; evening?: number; eveningAt?: number; eveningTo?: number; fadeIn?: number }): Promise<{ buffer: AudioBuffer; chords: { t: number; chord: string }[] }> {
   const sr = o.sampleRate ?? 24000;
   const ctx = new OfflineAudioContext(2, Math.ceil(o.seconds * sr), sr);
   const mixer = new Mixer(ctx, ctx.destination, { limiter: false });
   mixer.sfxBus.gain.value = 0;
-  mixer.startMusic(0, { seed: o.seed ?? 5, renderUntil: o.seconds, fadeIn: 2 });
+  if (o.evening !== undefined) mixer.setEvening(o.evening, 0);
+  mixer.startMusic(0, { seed: o.seed ?? 5, renderUntil: o.seconds, fadeIn: o.fadeIn ?? 2 });
+  if (o.coldAt !== undefined) mixer.setCold(true, o.coldAt);
+  if (o.coldOffAt !== undefined) mixer.setCold(false, o.coldOffAt);
+  if (o.eveningAt !== undefined) mixer.setEvening(o.eveningTo ?? 1, o.eveningAt);
   if (o.swellAt !== undefined) mixer.swell(o.swellAt);
   if (o.turnAt !== undefined) mixer.turnPassed(false, o.turnAt);
   if (o.leanAt !== undefined) mixer.lean(o.leanAt);
@@ -384,6 +443,124 @@ export async function renderScene(name: SceneName): Promise<{ buffer: AudioBuffe
   const buffer = await ctx.startRendering();
   const chordAt = (t: number) => mixer.chordName(t);
   for (const m of marks) if (/turnPassed|lean/.test(m.what)) m.what += ` (chord ${chordAt(m.t - 0.2)} → ${chordAt(m.t + 3)})`;
+  return { buffer, marks };
+}
+
+// ---------------------------------------------------------------------------
+// v5: listening excerpts (artifacts/audio/v5/*.wav), through the live mix (limiter on), score underneath
+// ---------------------------------------------------------------------------
+
+export type V5SceneName = 'staggered-roll-verdict' | 'blitz-drum' | 'ai-turn-rattle' | 'holding-pour' | 'board-details' | 'evening-dusk' | 'evening-night';
+export const V5_SCENES: V5SceneName[] = ['staggered-roll-verdict', 'blitz-drum', 'ai-turn-rattle', 'holding-pour', 'board-details', 'evening-dusk', 'evening-night'];
+
+/** The dice gaps of one staggered pour (60–90 ms, never even). */
+const POUR_GAPS = [0, 0.07, 0.082, 0.064, 0.088, 0.075];
+
+export async function renderV5Scene(name: V5SceneName): Promise<{ buffer: AudioBuffer; marks: { t: number; what: string }[] }> {
+  const sr = OFFLINE_SR;
+  const evening = name === 'evening-dusk' ? 0 : name === 'evening-night' ? 1 : null;
+  // the evening pair: 30 s of the same score at dusk and at night, the last 10 s kept (past the fade-in)
+  const seconds = evening !== null ? 30 : name === 'ai-turn-rattle' ? 10 : 8;
+  const ctx = new OfflineAudioContext(2, Math.ceil(seconds * sr), sr);
+  const mixer = new Mixer(ctx, ctx.destination, { limiter: true });
+  const rand = mulberry32(31);
+  if (evening !== null) mixer.setEvening(evening, 0);
+  mixer.startMusic(0, { seed: 11, renderUntil: seconds, fadeIn: 1.5 });
+  const marks: { t: number; what: string }[] = [];
+  const play = (n: SfxName, t: number, o: Parameters<Mixer['trigger']>[2] = {}) => {
+    const ok = mixer.trigger(n, t, { rand, ...o });
+    marks.push({ t: +t.toFixed(3), what: n + (o.variant ? ` · ${o.variant}` : '') + (o.distance ? ` · d ${o.distance}` : '') + (ok ? '' : ' (dropped)') });
+  };
+  const mark = (t: number, what: string) => marks.push({ t: +t.toFixed(3), what });
+  /** One full roll from the cup: the staggered pour, the verdict beat, then each pair with its splash. */
+  const fullRoll = (t0: number, att: number, def: number, losers: ('att' | 'def')[]) => {
+    play('uiClick', t0);
+    play('diceShake', t0 + 0.02, { duration: 0.15 });
+    let t = t0 + 0.02 + 0.15 + 0.25;
+    const n = att + def;
+    for (let i = 0; i < n; i++) {
+      t += POUR_GAPS[i];
+      play('diceLand', t, { pan: i < att ? -0.3 : 0.3 });
+    }
+    const settle = t + 0.1;
+    mixer.hush(settle, 0.25);
+    mark(settle, 'hush 250 ms (the verdict beat)');
+    let v = settle + 0.25;
+    for (const who of losers) {
+      const pan = who === 'att' ? -0.3 : 0.3;
+      play('hit', v, { variant: 'pair', pan });
+      play('splash', v + 0.03, { pan });
+      v += 0.12;
+    }
+    return v;
+  };
+  if (name === 'staggered-roll-verdict') {
+    // 3 v 2: the room goes cold with the lean, five dice pour one at a time, the hush, two pairs connect
+    mixer.setCold(true, 1.75);
+    mark(1.75, 'fightCold(true)');
+    const end = fullRoll(2.0, 3, 2, ['def', 'att']);
+    mixer.setCold(false, end + 0.5);
+    mark(end + 0.5, 'fightCold(false)');
+  } else if (name === 'blitz-drum') {
+    // blitz: one shake, an accelerating drum of single bone clicks with soft hits, then one full roll
+    mixer.setCold(true, 0.9);
+    mark(0.9, 'fightCold(true)');
+    play('diceShake', 1.0, { duration: 0.1 });
+    let t = 1.1;
+    const gaps = [0.36, 0.3, 0.26, 0.22, 0.19];
+    gaps.forEach((g, k) => {
+      t += g;
+      play('diceLand', t, { rate: Math.min(1.4, 1 + 0.08 * k), pan: k % 2 ? 0.3 : -0.3 });
+      play('hit', t + 0.09, { pan: k % 2 ? -0.3 : 0.3, volume: 0.5 });
+    });
+    const v = fullRoll(t + 0.2, 3, 1, ['def']);
+    play('conquer', v + 0.2);
+    play('march', v + 0.35, { duration: 0.5 });
+    mixer.setCold(false, v + 0.6);
+    mark(v + 0.6, `fightCold(false) · blitz ${(v - 1.0).toFixed(2)} s from the shake to the last pair`);
+  } else if (name === 'ai-turn-rattle') {
+    // the cup slides to an AI; it places at distance 0.6; its cup rattles once before its first attack
+    const d = 0.6;
+    play('cupSlide', 1.0, { duration: 0.4, distance: d });
+    mixer.turnPassed(false, 1.0);
+    play('cupSet', 1.4, { distance: d });
+    for (let k = 0; k < 4; k++) play('place', 2.0 + k * 0.12, { distance: d, pan: -0.3 + 0.1 * k });
+    play('rattle', 3.2, { pan: 0.25 });
+    for (const [t0, pan] of [[3.75, 0.25], [6.6, -0.2]] as [number, number][]) {
+      play('whoosh', t0, { duration: 0.5, distance: d, pan });
+      play('bone', t0 + 0.75, { distance: d, pan });
+      play('hit', t0 + 1.2, { distance: d, pan });
+      play('conquer', t0 + 1.55, { distance: d, pan });
+      play('march', t0 + 1.7, { duration: 0.4, distance: d, pan });
+    }
+  } else if (name === 'holding-pour') {
+    // your turn: "Vermilion · 7 armies"; seven stones pour into the holding dab, then you spend them;
+    // later a card trade pours three more in
+    play('cupSet', 1.0);
+    play('turnStart', 1.25);
+    play('pour', 2.1, { duration: 0.6, pan: -0.4 });
+    for (let k = 0; k < 4; k++) play('place', 3.4 + k * 0.3, { pan: -0.1 + 0.08 * k });
+    play('cardTrade', 5.2);
+    play('pour', 5.75, { duration: 0.3, pan: -0.4 });
+  } else if (name === 'board-details') {
+    // the clickables: open water, a sea lane (shore to shore), the cup
+    play('ripple', 1.0, { pan: -0.4 });
+    play('glint', 2.6, { pan: -0.5, panTo: 0.5, duration: 0.6 });
+    play('rattle', 4.4, { pan: 0.6 });
+    play('ripple', 5.8, { pan: 0.3 });
+    play('glint', 6.6, { pan: 0.4, panTo: -0.2, duration: 0.3 });
+  } else {
+    mark(0, `setEvening(${evening}) · seconds 20–30 of a 30 s render`);
+  }
+  let buffer = await ctx.startRendering();
+  if (evening !== null) {
+    const from = Math.round(20 * sr);
+    const out = new AudioBuffer({ numberOfChannels: 2, length: buffer.length - from, sampleRate: sr });
+    for (let c = 0; c < 2; c++) out.copyToChannel(buffer.getChannelData(c).subarray(from), c);
+    buffer = out;
+  }
+  const chordAt = (t: number) => mixer.chordName(t);
+  for (const m of marks) if (/turnPassed/.test(m.what)) m.what += ` (chord ${chordAt(m.t - 0.2)} → ${chordAt(m.t + 3)})`;
   return { buffer, marks };
 }
 

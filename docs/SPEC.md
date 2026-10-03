@@ -594,6 +594,31 @@ interface AudioEngine {
 - **Levels.** Paper ticks are the quietest tier (−30 LUFS short-term); the bowls are the loudest by ≤ 3 dB; the
   score sits ≈ 9 dB under board-level effects.
 
+**v5 additions (additive; `_claude/v5/PROPOSAL.md` §4 A, B, D, F).** The mapping lives in the header of
+`src/audio/index.ts`; `npm run verify:audio` checks all of it and writes `artifacts/audio/v5/`.
+
+```ts
+type SfxName = /* … v4 … */ | 'ripple' | 'splash' | 'rattle' | 'glint' | 'pour';
+type V5Cue = 'ripple' | 'splash' | 'rattle' | 'glint' | 'pour';   // cue(name) ≡ play(name)
+type SfxVariant = /* … */ | 'pair';                               // hit · pair: one matched pair's verdict
+interface PlayOptions { panTo?: number /* the voice travels pan → panTo over duration */; /* … */ }
+interface AudioEngine {
+  fightCold?(on: boolean): void;   // with the camera lean: the score's top −2 dB, the room tone thins; off ~1 s
+  setEvening?(t: number): void;    // 0 dusk (round 1) … 1 night (round 12+): darker voicings, never tempo
+}
+```
+- **The dice pour.** The renderer calls `diceLand` per die as it lands (60–90 ms apart). Landings within 200 ms are
+  one sequence: three bone timbres in turn, ±4 % rate per die, the first die a touch louder, later dice a little
+  wetter. Dice, splashes and `hit · pair` are exempt from the ≤ 1 cue per 70 ms rule (checked: 5 dice at 60 ms and
+  at 90 ms all play and are heard; two pairs + two splashes on one frame all play).
+- **The verdict.** After the 250 ms hush, per pair: `hit · pair` (the breath plus a tiny tick on the chord's
+  fifth, the tick alone ≈ −30 LUFS) and `splash` on the losing die (pitchless, −27).
+- **Tiers.** splash −27 (die), rattle −27 (ui; default distance 0.3), ripple and glint −30 (tick), pour −22
+  (board). Every new voice fades in over ≥ 15 ms; the sharp family is unchanged (dice, bone, two bowls).
+- **Key-lock.** `glint` and the pair tick land on the chord's fifth; `pour` on the root, then the fifth.
+- **Evening (Pillar 5).** Only which notes and what colour change: every item's time, every pad's length and the
+  random stream are identical at any evening (checked over 30 min of plan). Idle thinning still works on top.
+
 ---
 
 ## 9. Test hooks and verification

@@ -15,11 +15,14 @@ function variationsFor(name: SfxName): number {
   if (name === 'victory' || name === 'eliminated') return 1;
   if (name === 'continent') return 2;
   if (name === 'turnStart' || name === 'cardTrade' || name === 'conquer' || name === 'sheet' || name === 'cupSlide' || name === 'cupSet') return 3;
+  // v5: rarer cues keep three; the dice keep four per timbre (twelve dice in all)
+  if (name === 'rattle' || name === 'ripple' || name === 'glint' || name === 'pour') return 3;
+  if (name === 'diceLand') return 4;
   return 5;
 }
 
 /** Warm-up order: what the first minutes of a game need first. */
-export const WARM_ORDER: { name: SfxName; variant?: SfxVariant }[] = [
+export const WARM_ORDER: { name: SfxName; variant?: SfxVariant; timbre?: number }[] = [
   { name: 'uiClick' },
   { name: 'tick' },
   { name: 'place' },
@@ -33,7 +36,16 @@ export const WARM_ORDER: { name: SfxName; variant?: SfxVariant }[] = [
   { name: 'sheet', variant: 'lift' },
   { name: 'diceShake' },
   { name: 'diceLand' },
+  { name: 'diceLand', timbre: 1 },
+  { name: 'diceLand', timbre: 2 },
   { name: 'hit' },
+  // v5: the verdict, the cup, the pour, the board's details
+  { name: 'hit', variant: 'pair' },
+  { name: 'splash' },
+  { name: 'rattle' },
+  { name: 'pour' },
+  { name: 'ripple' },
+  { name: 'glint' },
   { name: 'conquer' },
   { name: 'march' },
   { name: 'whoosh' },
@@ -61,7 +73,7 @@ export class SoundBank {
   private readonly background: boolean;
   private readonly store = new Map<string, AudioBuffer[]>();
   private readonly last = new Map<string, number>();
-  private readonly queue: { name: SfxName; variant?: SfxVariant; duration?: number }[] = [];
+  private readonly queue: { name: SfxName; variant?: SfxVariant; duration?: number; timbre?: number }[] = [];
   private readonly queued = new Set<string>();
   private pumping = false;
   private disposed = false;
@@ -72,8 +84,8 @@ export class SoundBank {
     this.background = o.background ?? true;
   }
 
-  static key(name: SfxName, variant?: SfxVariant, duration?: number): string {
-    return `${name}|${variant ?? ''}|${duration === undefined ? '' : Math.round(duration * 100)}`;
+  static key(name: SfxName, variant?: SfxVariant, duration?: number, timbre?: number): string {
+    return `${name}|${variant ?? ''}|${duration === undefined ? '' : Math.round(duration * 100)}${timbre ? `|t${timbre}` : ''}`;
   }
 
   /** Motion-following durations are cached in 10 ms steps. */
@@ -86,8 +98,8 @@ export class SoundBank {
   }
 
   /** A cached variation (never the same one twice in a row), or null. */
-  take(name: SfxName, variant?: SfxVariant, duration?: number): AudioBuffer | null {
-    const k = SoundBank.key(name, variant, duration);
+  take(name: SfxName, variant?: SfxVariant, duration?: number, timbre?: number): AudioBuffer | null {
+    const k = SoundBank.key(name, variant, duration, timbre);
     const list = this.store.get(k);
     if (!list || !list.length) return null;
     let i = Math.floor(this.rand() * list.length);
@@ -100,23 +112,23 @@ export class SoundBank {
   }
 
   /** Ask for a key to be cached in the background. */
-  request(name: SfxName, variant?: SfxVariant, duration?: number): void {
-    const k = SoundBank.key(name, variant, duration);
+  request(name: SfxName, variant?: SfxVariant, duration?: number, timbre?: number): void {
+    const k = SoundBank.key(name, variant, duration, timbre);
     if (this.store.has(k) || this.queued.has(k) || this.disposed) return;
     this.queued.add(k);
-    this.queue.push({ name, variant, duration });
+    this.queue.push({ name, variant, duration, timbre });
     if (this.background) this.pump();
   }
 
   warmAll(): void {
-    for (const w of WARM_ORDER) if (!SFX[w.name].silent) this.request(w.name, w.variant, SFX[w.name].duration?.[2]);
+    for (const w of WARM_ORDER) if (!SFX[w.name].silent) this.request(w.name, w.variant, SFX[w.name].duration?.[2], w.timbre);
   }
 
   /** Render and store the variations of a key now (awaitable; used by tests). */
-  async prepare(name: SfxName, variant?: SfxVariant, duration?: number, count = variationsFor(name)): Promise<AudioBuffer[]> {
-    const k = SoundBank.key(name, variant, duration);
+  async prepare(name: SfxName, variant?: SfxVariant, duration?: number, count = variationsFor(name), timbre?: number): Promise<AudioBuffer[]> {
+    const k = SoundBank.key(name, variant, duration, timbre);
     const out: AudioBuffer[] = [];
-    for (let i = 0; i < count; i++) out.push(await this.renderOne(name, variant, duration));
+    for (let i = 0; i < count; i++) out.push(await this.renderOne(name, variant, duration, timbre));
     this.put(k, out);
     return out;
   }
@@ -152,11 +164,11 @@ export class SoundBank {
         this.pumping = false;
         return;
       }
-      const k = SoundBank.key(job.name, job.variant, job.duration);
+      const k = SoundBank.key(job.name, job.variant, job.duration, job.timbre);
       try {
         const list: AudioBuffer[] = [];
         for (let i = 0; i < variationsFor(job.name); i++) {
-          list.push(await this.renderOne(job.name, job.variant, job.duration));
+          list.push(await this.renderOne(job.name, job.variant, job.duration, job.timbre));
           // yield between variations so a long cue never blocks more than one render
           await new Promise<void>((r) => idle(r));
           if (this.disposed) return;
@@ -172,13 +184,13 @@ export class SoundBank {
     idle(() => void step());
   }
 
-  private async renderOne(name: SfxName, variant?: SfxVariant, duration?: number): Promise<AudioBuffer> {
+  private async renderOne(name: SfxName, variant?: SfxVariant, duration?: number, timbre?: number): Promise<AudioBuffer> {
     const meta = SFX[name];
     const sr = this.ctx.sampleRate;
     const extra = meta.duration && duration !== undefined ? Math.max(0, duration - meta.duration[2]) : 0;
     const len = Math.ceil((meta.maxDur + extra + 0.05) * sr);
     const octx = new OfflineAudioContext(2, len, sr);
-    const dur = meta.fn(octx, octx.destination, 0, { rate: 1, rand: this.rand, duration, variant });
+    const dur = meta.fn(octx, octx.destination, 0, { rate: 1, rand: this.rand, duration, variant, timbre });
     const buf = await octx.startRendering();
     const n = Math.min(buf.length, Math.ceil((dur + 0.01) * sr));
     const L = buf.getChannelData(0);
