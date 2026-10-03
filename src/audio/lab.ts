@@ -2,15 +2,17 @@
 // offline analysis the team uses instead of ears. Also exposes window.__audioLab for the verify script.
 
 import '@fontsource-variable/cormorant-garamond';
-import { analyze, encodeWav, fft, longLoudness, speakerHighpass, type SoundStats } from './analyze';
+import { analyze, encodeWav, fft, longLoudness, pitchNear, rt60, speakerHighpass, type SoundStats } from './analyze';
+import { midiHz } from './dsp';
+import { TONIC_PCS, keyPitch, layerOn } from './key';
 import { WARM_ORDER } from './bank';
 import { LIMITS, summarize, type SoundReport } from './checks';
 import { createAudio } from './engine';
 import { LIMITER_MAKEUP_COMP, MAX_VOICES, Mixer } from './mixer';
-import { CHORDS, planScore, type NoteItem } from './music';
-import { OFFLINE_SR, buildSweep, renderBankPair, renderDiceRoll, renderLimiterProbe, renderMoment, renderMusic, renderSfx, renderStress, renderStroke, type RenderOptions } from './offline';
+import { CHORDS, COLD, planScore, type NoteItem } from './music';
+import { OFFLINE_SR, buildSweep, renderBankPair, renderBreath, renderDiceRoll, renderInKey, renderLimiterProbe, renderMoment, renderMusic, renderRoomProbes, renderScene, renderSfx, renderStress, renderStroke, type RenderOptions, type SceneName } from './offline';
 import { SFX } from './sounds';
-import { SFX_NAMES, TIER_TARGET_LUFS, type PlayOptions, type SfxName, type SfxVariant, type StrokeHandle } from './types';
+import { SFX_NAMES, TIER_TARGET_LUFS, V4_CUES, type PlayOptions, type SfxName, type SfxVariant, type StrokeHandle } from './types';
 
 const engine = createAudio({ volume: 0.8 });
 /** Sounds that actually sound (uiHover is silent by design: no hover sounds). */
@@ -21,6 +23,7 @@ const MATERIAL: Record<SfxName, 'paper' | 'brush' | 'wood' | 'bone' | 'bowl'> = 
   uiHover: 'paper', uiClick: 'paper', uiError: 'paper', cardDraw: 'paper', cardTrade: 'paper', turnStart: 'paper',
   whoosh: 'brush', place: 'brush', unplace: 'brush', march: 'brush', hit: 'brush', conquer: 'brush',
   diceShake: 'wood', diceLand: 'bone', continent: 'bowl', eliminated: 'bowl', victory: 'bowl',
+  sheet: 'paper', tick: 'paper', cupSlide: 'wood', cupSet: 'wood', bone: 'bone',
 };
 
 // ---------------------------------------------------------------------------
@@ -151,10 +154,133 @@ async function variants() {
     ['whoosh', { duration: 0.9 }, 'whoosh 900 ms'],
     ['diceLand', { rate: 1.4 }, 'diceLand rate 1.4'],
     ['cardTrade', { rate: 0.75 }, 'cardTrade rate 0.75'],
+    ['sheet', { variant: 'lift' }, 'sheet lift'],
+    ['cupSlide', { duration: 0.25 }, 'cupSlide 250 ms'],
+    ['cupSlide', { duration: 0.8 }, 'cupSlide 800 ms'],
+    ['eliminated', { chord: CHORDS[2].pcs }, 'eliminated over Bbmaj7'],
+    ['continent', { chord: CHORDS[4].pcs }, 'continent over Gm9'],
   ];
   const out = [];
   for (const [name, o, label] of cases) out.push({ label, name, ...o, ...(await measure(name, { ...o, seed: 1 })) });
   return out;
+}
+
+// ---------------------------------------------------------------------------
+// v4: one room, key-lock, the breathing score, distance
+// ---------------------------------------------------------------------------
+
+/** B1: RT60 of diceLand's real tail vs the score's hall (a pad note's room) and the effects' hall send. */
+async function roomCheck() {
+  const p = await renderRoomProbes();
+  const dice = rt60(channelsOf(p.diceLand), p.diceLand.sampleRate, p.diceDrySec + 0.03);
+  const sfx = rt60(channelsOf(p.sfxHall), p.sfxHall.sampleRate, 0.02);
+  const score = rt60(channelsOf(p.scoreHall), p.scoreHall.sampleRate, 0.02);
+  return { diceTail: dice, sfxHall: sfx, scoreHall: score, ratio: dice.rt60 / score.rt60 };
+}
+
+/** The pitched effects and where to listen for their note (s). */
+const PITCHED: { name: SfxName; variant?: SfxVariant; from: number; to: number }[] = [
+  { name: 'continent', from: 0.05, to: 1.6 },
+  { name: 'continent', variant: 'somber', from: 0.03, to: 0.7 },
+  { name: 'eliminated', from: 0.05, to: 1.6 },
+  { name: 'victory', from: 0.05, to: 1.6 },
+  { name: 'turnStart', from: 0.8, to: 2.4 },
+  { name: 'turnStart', variant: 'bright', from: 0.8, to: 2.4 },
+  { name: 'cardTrade', from: 0.6, to: 2.0 },
+  { name: 'cupSet', from: 0.08, to: 0.9 },
+];
+
+/** The role + designed pitch the key-lock uses for this sound/variant. */
+function keySpec(name: SfxName, variant?: SfxVariant): { role: 'root' | 'bright' | 'somber'; ref: number } {
+  const m = SFX[name];
+  if (m.key) return { role: variant === 'somber' && m.key.somberRole ? m.key.somberRole : m.key.role, ref: m.key.ref };
+  const l = m.tone!.find((x) => layerOn(x, variant))!;
+  return { role: l.role, ref: l.ref };
+}
+
+/**
+ * B2: every pitched effect over every chord of the field (and with no score): the pitch the mixer
+ * chose is the role's chord tone and a tone of the chord, and the rendered note sounds there (±25 c).
+ */
+async function keyLock() {
+  const out: { name: string; chord: string; midi: number; expected: number; chordTone: boolean; cents: number; ok: boolean }[] = [];
+  const chords: { name: string; pcs: number[] | null }[] = [...CHORDS.map((c) => ({ name: c.name, pcs: c.pcs })), { name: 'no score (Dm)', pcs: null }];
+  for (const p of PITCHED) {
+    for (const c of chords) {
+      const pcs = c.pcs ?? TONIC_PCS;
+      const spec = keySpec(p.name, p.variant);
+      const expected = keyPitch(pcs, spec.role, spec.ref);
+      const r = await renderInKey(p.name, c.pcs, p.variant);
+      const midi = r.midi ?? NaN;
+      const chordTone = pcs.includes(((midi % 12) + 12) % 12);
+      const det = pitchNear(r.buffer.getChannelData(0), r.buffer.sampleRate, p.from, p.to, midiHz(midi), 2.5);
+      const ok = midi === expected && chordTone && Math.abs(det.cents) <= 25;
+      out.push({ name: p.name + (p.variant ? ` · ${p.variant}` : ''), chord: c.name, midi, expected, chordTone, cents: det.cents, ok });
+    }
+  }
+  return out;
+}
+
+/** A2: the same sound at the table, at 0.6 (the AI) and far. */
+async function distanceCheck() {
+  const out: { name: SfxName; d: number; lk200: number; centroidHz: number; tailShare: number }[] = [];
+  for (const name of ['place', 'bone', 'conquer', 'cupSet'] as SfxName[]) {
+    for (const d of [0, 0.6, 1]) {
+      const r = await renderSfx(name, { seed: 1, distance: d });
+      const ch = channelsOf(r.buffer);
+      const s = analyze(ch, r.buffer.sampleRate);
+      // the share of energy after the sound's own body (the hall)
+      const cut = Math.round((r.reportedDur + 0.02) * r.buffer.sampleRate);
+      let tail = 0,
+        all = 0;
+      for (const c of ch)
+        for (let i = 0; i < c.length; i++) {
+          all += c[i] * c[i];
+          if (i >= cut) tail += c[i] * c[i];
+        }
+      out.push({ name, d, lk200: s.lk200, centroidHz: s.centroidHz, tailShare: tail / (all || 1) });
+    }
+  }
+  return out;
+}
+
+const bandDb = (b: AudioBuffer, from: number, to: number) => {
+  const m = monoOf(b);
+  const a = Math.round(from * b.sampleRate);
+  const z = Math.round(to * b.sampleRate);
+  let e = 0;
+  for (let i = a; i < z; i++) e += m[i] * m[i];
+  return 10 * Math.log10(e / Math.max(1, z - a) + 1e-20);
+};
+
+/** B3: the turn moves the chord change; lean gives one cold chord; the swell is +2 dB; idle thins. */
+async function breathCheck() {
+  const plain = await renderBreath({ seconds: 20 });
+  const turned = await renderBreath({ seconds: 20, turnAt: 9 });
+  const at = (cs: { t: number; chord: string }[], t: number) => cs.filter((c) => c.t <= t + 1e-9).at(-1)!.chord;
+  // the turned render changes chord at the turn (between 8.5 and 9.5 s); the plain one does not
+  const turn = {
+    plain: plain.chords.map((c) => c.chord).join(' '),
+    turned: turned.chords.map((c) => c.chord).join(' '),
+    changedAtTurn: at(turned.chords, 8.5) !== at(turned.chords, 9.5) && at(plain.chords, 8.5) === at(plain.chords, 9.5),
+  };
+  const leaned = await renderBreath({ seconds: 24, leanAt: 9 });
+  const firstChange = leaned.chords.find((c, i) => i > 0 && c.t > 9 && c.chord !== leaned.chords[i - 1].chord);
+  const coldNames = CHORDS.filter((_, i) => COLD[i]).map((c) => c.name);
+  const lean = { at: 9, changeAt: firstChange?.t ?? null, chord: firstChange?.chord ?? null, cold: !!firstChange && coldNames.includes(firstChange.chord) };
+  const swelled = await renderBreath({ seconds: 20, swellAt: 6 });
+  const swell = { atPeakDb: bandDb(swelled.buffer, 7.8, 8.2) - bandDb(plain.buffer, 7.8, 8.2), afterDb: bandDb(swelled.buffer, 17, 19) - bandDb(plain.buffer, 17, 19) };
+  const base40 = await renderBreath({ seconds: 40, sampleRate: 24000 });
+  const idle40 = await renderBreath({ seconds: 40, idleAt: 6, sampleRate: 24000 });
+  const planned = planScore(5, 40).filter((p) => p.kind !== 'pad' && p.t > 11).length;
+  const idle = { plannedNotesAfter11s: planned, heardBase: detectOnsets(monoOf(base40.buffer), 24000).filter((t) => t > 11).length, heardIdle: detectOnsets(monoOf(idle40.buffer), 24000).filter((t) => t > 11).length, levelDropDb: bandDb(idle40.buffer, 11, 40) - bandDb(base40.buffer, 11, 40) };
+  return { turn, lean, swell, idle };
+}
+
+const SCENES: SceneName[] = ['human-turn', 'ai-readable', 'continent-in-key', 'cold-lean', 'idle-thin'];
+async function sceneWav(name: SceneName) {
+  const s = await renderScene(name);
+  return { b64: wavOf(s.buffer), marks: s.marks, stats: analyze(channelsOf(s.buffer), s.buffer.sampleRate) };
 }
 
 // ---------------------------------------------------------------------------
@@ -615,6 +741,7 @@ function build(): void {
   slider('Score', 0, 1, 0.01, 0.7, (v) => v.toFixed(2), (v) => engine.setMusicVolume(v));
   slider('Rate', 0.5, 2, 0.01, 1, (v) => v.toFixed(2), (v) => (opts.rate = v));
   slider('Pan', -1, 1, 0.05, 0, (v) => v.toFixed(2), (v) => (opts.pan = v));
+  slider('Distance', 0, 1, 0.05, 0, (v) => (v === 0 ? 'table' : v.toFixed(2)), (v) => (opts.distance = v || undefined));
   slider('Duration', 0.06, 1.5, 0.01, 0.5, (v) => `${(v * 1000).toFixed(0)} ms`, (v) => {
     opts.duration = v;
     opts.useDuration = true;
@@ -622,7 +749,7 @@ function build(): void {
   const vl = el('label');
   vl.append('Variant');
   const vs = el('select');
-  for (const v of ['', 'bright', 'somber']) vs.append(el('option', { value: v }, v || 'default'));
+  for (const v of ['', 'bright', 'somber', 'lift']) vs.append(el('option', { value: v }, v || 'default'));
   vs.addEventListener('change', () => (opts.variant = (vs.value || undefined) as SfxVariant | undefined));
   vl.append(vs);
   controls.append(vl);
@@ -668,7 +795,7 @@ function build(): void {
       b.append(m);
       cards.set(name, m);
       b.addEventListener('click', () => {
-        const o: PlayOptions = { rate: opts.rate, pan: opts.pan, variant: opts.variant };
+        const o: PlayOptions = { rate: opts.rate, pan: opts.pan, variant: opts.variant, distance: opts.distance };
         if (opts.useDuration) o.duration = opts.duration;
         engine.play(name, o);
         void showOne(name, o);
@@ -688,6 +815,62 @@ function build(): void {
     row.append(b);
   }
   app.append(row);
+
+  // v4: the cues and the breathing score, so a human can audition them
+  const cueH = el('h2', {}, 'v4 cues');
+  cueH.append(el('span', {}, 'audio.cue(name): sheet, cup, bone, tick (Distance applies)'));
+  app.append(cueH);
+  const cueRow = el('div', { class: 'row' });
+  const cueBtn = (label: string, fn: () => void) => {
+    const b = el('button', { class: 'pill', 'data-cue': label }, label);
+    b.addEventListener('click', fn);
+    cueRow.append(b);
+  };
+  for (const c of V4_CUES) cueBtn(c, () => engine.cue?.(c, { pan: opts.pan, distance: opts.distance }));
+  cueBtn('sheet · lift', () => engine.cue?.('sheet', { variant: 'lift', pan: opts.pan, distance: opts.distance }));
+  app.append(cueRow);
+
+  const brH = el('h2', {}, 'the score breathes');
+  brH.append(el('span', {}, 'turnPassed · lean · idle (tempo never changes)'));
+  app.append(brH);
+  const brRow = el('div', { class: 'row' });
+  const brBtn = (label: string, fn: (b: HTMLButtonElement) => void) => {
+    const b = el('button', { class: 'pill', 'data-breath': label }, label);
+    b.addEventListener('click', () => fn(b));
+    brRow.append(b);
+    return b;
+  };
+  brBtn('Turn passes → a human', () => {
+    engine.cue?.('cupSlide', { duration: 0.4 });
+    engine.turnPassed?.(true);
+    engine.cue?.('cupSet', { delay: 0.4 });
+    engine.play('turnStart', { variant: 'bright', delay: 0.65 });
+  });
+  brBtn('Turn passes → an AI', () => {
+    engine.cue?.('cupSlide', { duration: 0.4, distance: 0.6 });
+    engine.turnPassed?.(false);
+    engine.cue?.('cupSet', { delay: 0.4, distance: 0.6 });
+  });
+  brBtn('AI fight (readable, distance 0.6)', () => {
+    const d = 0.6;
+    engine.play('whoosh', { duration: 0.5, distance: d, pan: 0.2 });
+    engine.cue?.('bone', { delay: 0.75, distance: d, pan: 0.2 });
+    engine.play('hit', { delay: 1.2, distance: d, pan: 0.2 });
+    engine.play('conquer', { delay: 1.55, distance: d, pan: 0.2 });
+    engine.play('march', { delay: 1.7, duration: 0.4, distance: d, pan: 0.2 });
+  });
+  brBtn('A human loses a continent (lean cold)', () => {
+    engine.play('continent', { variant: 'somber', distance: 0.6 });
+    engine.lean?.('cold');
+  });
+  let idleOn = false;
+  brBtn('Idle: off', (b) => {
+    idleOn = !idleOn;
+    engine.setIdle?.(idleOn);
+    b.textContent = `Idle: ${idleOn ? 'on' : 'off'}`;
+    b.classList.toggle('on', idleOn);
+  });
+  app.append(brRow);
 
   app.append(el('h2', {}, 'selected sound'));
   const one = el('canvas', { id: 'one', width: '1180', height: '240' });
@@ -720,7 +903,7 @@ function build(): void {
   setInterval(() => {
     const s = engine.stats();
     const live = document.getElementById('live');
-    if (live) live.textContent = `context ${s.state} · voices ${s.voices} · played ${s.played} · dropped ${s.dropped} · score ${s.music ? 'playing' : s.musicWanted ? 'waiting for a tap' : 'off'} · seed ${s.musicSeed}`;
+    if (live) live.textContent = `context ${s.state} · voices ${s.voices} · played ${s.played} · dropped ${s.dropped} · score ${s.music ? 'playing' : s.musicWanted ? 'waiting for a tap' : 'off'} · seed ${s.musicSeed} · chord ${s.chord ?? '–'}${s.idle ? ' · idle' : ''}`;
   }, 250);
   const live = el('div', { id: 'live', class: 'sub' });
   app.insertBefore(live, controls.nextSibling);
@@ -742,7 +925,7 @@ function build(): void {
 
 function renderTable(host: HTMLElement, reports: SoundReport[]): void {
   host.style.display = '';
-  const cols = ['sound', 'material', 'tier', 'target', 'LK200', 'range', 'peak', 'dur ms', 'onset', 'centroid', 'laptop %', '>8k %', 'trim', 'suggest', 'issues'];
+  const cols = ['sound', 'material', 'tier', 'target', 'LK200', 'range', 'peak', 'dur ms', 'onset', 'rise ms', 'centroid', 'laptop %', '>8k %', 'trim', 'suggest', 'issues'];
   const t = el('table');
   const tr = el('tr');
   for (const c of cols) tr.append(el('th', {}, c));
@@ -760,6 +943,7 @@ function renderTable(host: HTMLElement, reports: SoundReport[]): void {
       r.peakMaxDb.toFixed(1),
       (m.durationSec * 1000).toFixed(0),
       m.onsetMs.toFixed(1),
+      m.riseMs.toFixed(0),
       m.centroidHz.toFixed(0),
       (m.laptopShare * 100).toFixed(0),
       (m.hfShare * 100).toFixed(2),
@@ -794,7 +978,7 @@ window.__audioLab = {
   warmKeys: WARM_ORDER.length,
   limits: LIMITS,
   sampleRate: OFFLINE_SR,
-  meta: Object.fromEntries(SFX_NAMES.map((n) => [n, { tier: SFX[n].tier, trimDb: SFX[n].trimDb, maxDur: SFX[n].maxDur, maxVoices: SFX[n].maxVoices, minGapMs: SFX[n].minGapMs, group: SFX[n].group, duration: SFX[n].duration, silent: !!SFX[n].silent, material: MATERIAL[n] }])),
+  meta: Object.fromEntries(SFX_NAMES.map((n) => [n, { tier: SFX[n].tier, trimDb: SFX[n].trimDb, maxDur: SFX[n].maxDur, maxVoices: SFX[n].maxVoices, minGapMs: SFX[n].minGapMs, group: SFX[n].group, duration: SFX[n].duration, silent: !!SFX[n].silent, keyed: !!SFX[n].key, material: MATERIAL[n] }])),
   analyzeSound,
   analyzeAll,
   measure,
@@ -807,6 +991,12 @@ window.__audioLab = {
   musicAnalysis,
   duckTest,
   strokeStats,
+  roomCheck,
+  keyLock,
+  distanceCheck,
+  breathCheck,
+  scenes: SCENES,
+  sceneWav,
   scenarios: Object.keys(scenarios),
   runScenario: (k: string) => scenarios[k]?.(),
   drawAll: (extra?: { label: string; name: SfxName; o: RenderOptions }[]) => drawAll(document.getElementById('all') as HTMLCanvasElement, extra),

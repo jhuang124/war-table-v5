@@ -18,7 +18,13 @@ export type SfxName =
   | 'eliminated'
   | 'victory'
   | 'turnStart'
-  | 'whoosh';
+  | 'whoosh'
+  // v4 cues (also reachable as `cue(name)`): see V4Cue
+  | 'sheet'
+  | 'cupSlide'
+  | 'cupSet'
+  | 'bone'
+  | 'tick';
 
 export const SFX_NAMES: readonly SfxName[] = [
   'uiClick',
@@ -38,7 +44,15 @@ export const SFX_NAMES: readonly SfxName[] = [
   'victory',
   'turnStart',
   'whoosh',
+  'sheet',
+  'cupSlide',
+  'cupSet',
+  'bone',
+  'tick',
 ];
+
+/** v4: the cue names as a list (every V4Cue is also an SfxName, so `play()` accepts them too). */
+export const V4_CUES: readonly V4Cue[] = ['sheet', 'cupSlide', 'cupSet', 'bone', 'tick'];
 
 /**
  * v4 cues (PLAN §4, §7) added as a tolerant string API so callers compile before the bank has them: the
@@ -75,12 +89,13 @@ export interface PlayOptions {
    * extra: 'bright' = turnStart after one or more AI turns (the sheet lifts higher).
    * 'somber' = a human lost it. conquer · somber is the A5 sting (a dry brush snap, then a rougher,
    * darker flood): play it whenever the previous owner is human. continent · somber = the bowl is
-   * hand-damped (your continent was broken).
+   * hand-damped (your continent was broken). v4: 'lift' = sheet lifted off the table (default: laid on).
    */
   variant?: SfxVariant;
 }
 
-export type SfxVariant = 'bright' | 'somber';
+/** v4 adds 'lift' (the sheet cue: lifted off rather than laid on). */
+export type SfxVariant = 'bright' | 'somber' | 'lift';
 
 export interface AudioStats {
   /** 'locked' until the first user gesture creates/resumes the context. */
@@ -96,6 +111,10 @@ export interface AudioStats {
   /** extra: the score's seed (per game) and whether the player wants it on (it pauses while muted/hidden). */
   musicSeed?: number;
   musicWanted?: boolean;
+  /** v4: the chord the effects are tuned to right now (name; 'Dm' = the no-score fallback). */
+  chord?: string;
+  /** v4: setIdle(true) is in effect. */
+  idle?: boolean;
 }
 
 /** extra: a live brush stroke the pointer drives (INK A2: draw your attack). */
@@ -191,6 +210,33 @@ export interface VoiceOpts {
 }
 
 /**
+ * v4 (B2, effects are notes in the music): which chord tone a pitched effect takes.
+ *  root    the chord's root
+ *  bright  the root or the fifth, whichever sits nearer the recipe's designed pitch
+ *  somber  the chord's minor third when it has one; otherwise the open root/fifth
+ */
+export type KeyRole = 'root' | 'bright' | 'somber';
+
+/** v4: a tuned layer the mixer adds under a sound at the chord's pitch (cheap oscillators, never banked). */
+export interface ToneLayer {
+  role: KeyRole;
+  /** Designed pitch (MIDI): the chord tone nearest to it is used. */
+  ref: number;
+  /** Seconds after the sound's start. */
+  at: number;
+  /** Peak amplitude (linear, before the sound's trim). */
+  amp: number;
+  /** Partials: [ratio, relative amp, decay tau seconds]. */
+  partials: [number, number, number][];
+  /** Attack seconds (≥ 0.015: B4). */
+  attack: number;
+  /** Optional second note at +7 semitones (the open fifth) with this relative amp, `spread` s later. */
+  fifth?: { amp: number; spread: number };
+  /** Variants this layer plays on (absent = all). */
+  variants?: (SfxVariant | 'default')[];
+}
+
+/**
  * Builds one sound into `dest`, starting at context time `t`.
  * Returns how long (seconds after t) until it is silent, excluding the shared room tail.
  */
@@ -201,25 +247,29 @@ export type SoundFn = (ctx: BaseAudioContext, dest: AudioNode, t: number, opts: 
  * Targets are short-term (200 ms window, K-weighted) peak loudness in LUFS at volume 1.
  * Ink bank, five materials (paper · brush · wood · bone · bowl):
  *  micro  uiHover (silent: no hover sounds)
- *  ui     uiClick, uiError (paper), whoosh (brush)
- *  die    one diceLand (bone; a 5-die roll sums to about board level)
- *  board  place, unplace, march, hit (brush), diceShake (wood), cardDraw, turnStart (paper)
+ *  tick   uiClick, tick (v4: the pitchless paper ticks are the quietest thing in the mix)
+ *  ui     uiError (paper), whoosh (brush), sheet, cupSlide
+ *  die    one diceLand, bone (a 5-die roll sums to about board level)
+ *  board  place, unplace, march, hit (brush), diceShake, cupSet (wood), cardDraw, turnStart (paper)
  *  cue    conquer (brush flood; somber = the snap), cardTrade (paper)
- *  swing  continent (bowl A4)
- *  drama  eliminated (bowl D3, hard onset)
- *  finale victory (bowl D5)
+ *  swing  continent (bowl, in key)
+ *  drama  eliminated (bowl, in key, hard onset)
+ *  finale victory (bowl, in key)
+ * v4 (one mix): the score sits ~9 dB under board; the bowls are the loudest by ≤ 3 dB over the cue
+ * tier (finale came down from −17 to −18).
  */
-export type LoudnessTier = 'micro' | 'ui' | 'die' | 'board' | 'cue' | 'swing' | 'drama' | 'finale';
+export type LoudnessTier = 'micro' | 'tick' | 'ui' | 'die' | 'board' | 'cue' | 'swing' | 'drama' | 'finale';
 
 export const TIER_TARGET_LUFS: Record<LoudnessTier, number> = {
   micro: -45,
+  tick: -30,
   ui: -27,
   die: -27,
   board: -22,
   cue: -21,
   swing: -19,
   drama: -18,
-  finale: -17,
+  finale: -18,
 };
 
 export interface SfxMeta {
@@ -256,4 +306,16 @@ export interface SfxMeta {
    * spacing. Its own minGapMs and density still apply.
    */
   texture?: boolean;
+  /**
+   * v4 (B4): the voice's fade-in, seconds. Default 0.015 (nothing starts from zero); 0 only for the
+   * one sharp family: diceLand, bone, and the two bowls (continent, eliminated).
+   */
+  attack?: number;
+  /**
+   * v4 (B2): the whole sound is a note: the banked render (designed at `ref`) is re-pitched to the chord
+   * tone `role` picks (by playback rate; the caller's `rate` is ignored). `somberRole` for variant 'somber'.
+   */
+  key?: { role: KeyRole; ref: number; somberRole?: KeyRole };
+  /** v4 (B2): tuned layers added at the chord's pitch (paper and wood keep their unpitched body). */
+  tone?: ToneLayer[];
 }

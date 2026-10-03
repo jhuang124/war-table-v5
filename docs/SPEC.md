@@ -566,6 +566,34 @@ export function createAudio(): AudioEngine;
 Tasteful and short: wooden clacks, felt thuds, brassy stingers. No harsh or piercing sounds; normalize
 loudness across effects. `audio.html` dev page with a button per sound.
 
+**v4 additions (additive; `_claude/v4/PLAN.md` §3 A2, §4 B1–B4).** The full mapping lives in the header of
+`src/audio/index.ts`.
+
+```ts
+type SfxName = /* … as above … */ | 'sheet' | 'cupSlide' | 'cupSet' | 'bone' | 'tick';
+type V4Cue = 'sheet' | 'cupSlide' | 'cupSet' | 'bone' | 'tick';   // cue(name) ≡ play(name)
+interface PlayOptions { distance?: number /* 0 table … 1 far */; variant?: 'bright' | 'somber' | 'lift'; /* … */ }
+interface AudioEngine {
+  cue?(name: V4Cue, opts?: PlayOptions): void;
+  turnPassed?(toHuman: boolean): void;   // the score's next chord change happens now; +2 dB swell if human
+  lean?(colour: 'cold'): void;           // one cold (minor/open) chord, soon, then the walk returns
+  setIdle?(on: boolean): void;           // the score thins to drone + pads (~4 s), back in ~2 s
+}
+```
+- **One room (B1).** Every effect sends into the score's hall (the same impulse, a 2.4 s tap): a die and a pad
+  note decay with the same RT60 (±20 %, checked). Dice and paper ticks stay mostly dry.
+- **Effects are notes (B2).** `turnStart`, `cardTrade`, `cupSet`, `continent`, `eliminated`, `victory` take their
+  pitch from the chord sounding when they play: root or fifth for the bright ones, the minor third (or the open
+  root/fifth) for the somber ones. With the score off they use D minor.
+- **Breathing, never tempo (B3).** Chord changes move to the turn change; a human's turn swells +2 dB; a human's
+  loss leans one chord cold; idle thins. The walk's weights, pad lengths and note density never change.
+- **Attacks (B4).** Every voice fades in over ≥ 15 ms except `diceLand`, `bone` and the two bowls (`continent`,
+  `eliminated`). A faint room tone sits under the score.
+- **Distance (A2).** AI events pass `distance: 0.6` instead of a lower volume: −4 dB·d, a longer hall send and a
+  gentle high-shelf cut, linear in d.
+- **Levels.** Paper ticks are the quietest tier (−30 LUFS short-term); the bowls are the loudest by ≤ 3 dB; the
+  score sits ≈ 9 dB under board-level effects.
+
 ---
 
 ## 9. Test hooks and verification

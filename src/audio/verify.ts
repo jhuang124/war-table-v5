@@ -10,6 +10,11 @@
 //     brush stroke, and the score: 60 s render for level, density (events/min), loop-free variation,
 //     and the duck under a conquest.
 //  4. writes artifacts/audio/ink/{report.json, spectrograms.png, score.png, lab.png, *.wav} for John.
+//  5. v4 (PLAN §4): one room (diceLand's tail RT60 vs the score's hall ±20 %), key-lock (every pitched
+//     effect over every chord lands on the role's chord tone, rendered pitch ±25 c), the attack rule
+//     (≥ 15 ms fade-in except the sharp family), distance (A2), the breathing score (turnPassed moves
+//     the change, lean is cold, +2 dB swell, idle thins), the tier balance, and listening excerpts in
+//     artifacts/audio/v4/*.wav.
 // Exit code 1 on any failure. Uses an existing server on :5363 or starts its own (no HMR).
 
 import { spawn, type ChildProcess } from 'node:child_process';
@@ -22,6 +27,7 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const PORT = Number(process.env.AUDIO_PORT ?? 5363);
 const URL = `http://127.0.0.1:${PORT}/audio.html`;
 const OUT = join(ROOT, 'artifacts/audio/ink');
+const V4 = join(ROOT, 'artifacts/audio/v4');
 const WAV = join(OUT, 'sfx');
 const TMP = join(ROOT, 'artifacts/tmp/audio');
 
@@ -55,9 +61,10 @@ const f1 = (x: number) => (Number.isFinite(x) ? x.toFixed(1) : String(x));
 
 async function main() {
   mkdirSync(WAV, { recursive: true });
+  mkdirSync(V4, { recursive: true });
   mkdirSync(TMP, { recursive: true });
   const server = await ensureServer();
-  const browser = await chromium.launch({ args: ['--use-angle=metal', '--enable-gpu', '--ignore-gpu-blocklist'] });
+  const browser = await chromium.launch({ args: ['--use-angle=metal', '--enable-gpu', '--ignore-gpu-blocklist', '--mute-audio'] });
   const failures: string[] = [];
   const consoleProblems: string[] = [];
   try {
@@ -68,6 +75,9 @@ async function main() {
       if (m.type() === 'error' || m.type() === 'warning') consoleProblems.push(`${m.type()}: ${m.text()}`);
     });
     page.on('pageerror', (e) => consoleProblems.push(`pageerror: ${e.message}`));
+    page.on('response', (r) => {
+      if (r.status() >= 400) consoleProblems.push(`http: ${r.status()} ${r.url()}`);
+    });
     await page.goto(URL, { waitUntil: 'networkidle' });
     await page.waitForFunction(() => !!(window as Any).__audioLab);
     await page.waitForTimeout(500);
@@ -84,6 +94,12 @@ async function main() {
         lab.engine.hush?.(250);
         lab.engine.stroke?.();
         lab.engine.setMusicSeed?.(NaN);
+        lab.engine.cue?.('cupSet');
+        lab.engine.cue?.('nope' as Any);
+        lab.engine.turnPassed?.(true);
+        lab.engine.lean?.('cold');
+        lab.engine.setIdle?.(false);
+        lab.engine.play('place', { distance: NaN });
       } catch {
         threw = true;
       }
@@ -156,6 +172,23 @@ async function main() {
       }
       const afterAll = e.stats();
       const playedAll = afterAll.played - p0;
+      // v4: the cues through cue(), with the score's hooks (tolerant, never throw)
+      const pc = e.stats().played;
+      let v4threw = false;
+      try {
+        for (const c of ['sheet', 'cupSlide', 'cupSet', 'bone', 'tick']) {
+          e.cue(c, { distance: 0.6 });
+          await sleep(90);
+        }
+        e.cue('nope');
+        e.turnPassed(true);
+        e.lean('cold');
+        e.setIdle(true);
+        e.setIdle(false);
+      } catch {
+        v4threw = true;
+      }
+      const cuesPlayed = e.stats().played - pc;
       const pHover = e.stats().played;
       e.play('uiHover');
       const hoverPlayed = e.stats().played - pHover;
@@ -251,12 +284,14 @@ async function main() {
       e.setMuted(true);
       e.setMuted(false);
       e.play('uiClick', { volume: 99, pan: -99, rate: 0, delay: -3, duration: 1e9 });
-      return { state, musicDefault, afterAll, playedAll, hoverPlayed, sameFrameRoutine, shakeWon, inBeat, afterBeat, spam, droppedBySpam: spam.dropped - d0, musicOn, musicWhileMuted, musicAfterUnmute, hidden, shown, seeded, musicOff, blitz, scheduled, afterStop, strokeOk, musicAfterToggle, musicFinal };
+      return { cuesPlayed, v4threw, state, musicDefault, afterAll, playedAll, hoverPlayed, sameFrameRoutine, shakeWon, inBeat, afterBeat, spam, droppedBySpam: spam.dropped - d0, musicOn, musicWhileMuted, musicAfterUnmute, hidden, shown, seeded, musicOff, blitz, scheduled, afterStop, strokeOk, musicAfterToggle, musicFinal };
     });
     if (live.state !== 'running') failures.push(`live: context not running after a click (${live.state})`);
     if (!live.musicDefault) failures.push('live: the score did not start on its own after the first tap');
     if (live.playedAll < (await page.evaluate(() => (window as Any).__audioLab.audible.length))) failures.push(`live: only ${live.playedAll} audible sounds played after unlock`);
     if (live.hoverPlayed !== 0) failures.push('live: uiHover made a sound (no hover sounds)');
+    if (live.v4threw) failures.push('live: a v4 hook threw');
+    if (live.cuesPlayed !== 5) failures.push(`live: ${live.cuesPlayed}/5 v4 cues played through cue()`);
     if (live.sameFrameRoutine !== 1) failures.push(`live: ${live.sameFrameRoutine} routine cues in one frame (≤ 1 per 70 ms)`);
     if (!live.shakeWon) failures.push('live: diceShake did not replace the Roll click in the same frame');
     if (live.inBeat !== 0) failures.push(`live: ${live.inBeat} sounds inside the verdict beat`);
@@ -325,7 +360,7 @@ async function main() {
     const base = Object.fromEntries(reports.map((r) => [r.name, r]));
     for (const v of vars) {
       const m = meta[v.name];
-      const allowed = (m.maxDur + (m.duration && v.duration !== undefined ? Math.max(0, v.duration - m.duration[2]) : 0)) / (v.rate ?? 1);
+      const allowed = (m.maxDur * (m.keyed ? Math.SQRT2 : 1) + (m.duration && v.duration !== undefined ? Math.max(0, v.duration - m.duration[2]) : 0)) / (v.rate ?? 1);
       if (v.reportedDur > allowed + 1e-6) failures.push(`${v.label}: reported ${v.reportedDur.toFixed(3)} s > allowed ${allowed.toFixed(3)} s`);
       if (v.nan) failures.push(`${v.label}: NaN`);
       if (v.peakDb > -1) failures.push(`${v.label}: peak ${f1(v.peakDb)} dBFS`);
@@ -336,6 +371,48 @@ async function main() {
         // the sound's own length (before the room tail) must track the requested motion length
         if (v.reportedDur < v.duration || v.reportedDur > v.duration + 0.25) failures.push(`${v.label}: reported ${v.reportedDur.toFixed(3)} s`);
       }
+    }
+
+    // ------------------------------------------------------------------ v4
+    const room: Any = await page.evaluate(() => (window as Any).__audioLab.roomCheck());
+    if (!(Math.abs(room.ratio - 1) <= 0.2)) failures.push(`B1 one room: diceLand tail RT60 ${room.diceTail.rt60.toFixed(2)} s vs the score's hall ${room.scoreHall.rt60.toFixed(2)} s (ratio ${room.ratio.toFixed(2)}, want 1 ± 0.2)`);
+    const keys: Any[] = await page.evaluate(() => (window as Any).__audioLab.keyLock());
+    for (const k of keys) if (!k.ok) failures.push(`B2 key-lock: ${k.name} over ${k.chord}: midi ${k.midi} (want ${k.expected}, chord tone ${k.chordTone}), rendered ${k.cents} c`);
+    const sharpNames = new Set(['diceLand', 'bone', 'continent', 'eliminated']);
+    for (const r of reports) {
+      const sharp = sharpNames.has(r.name);
+      if (sharp && r.median.riseMs > 8) failures.push(`B4: ${r.name} should be sharp, rises in ${r.median.riseMs.toFixed(0)} ms`);
+    }
+    const dist: Any[] = await page.evaluate(() => (window as Any).__audioLab.distanceCheck());
+    for (const n of new Set(dist.map((d) => d.name))) {
+      const at = (d: number) => dist.find((x) => x.name === n && x.d === d);
+      const near = at(0), mid = at(0.6), far = at(1);
+      if (!(far.lk200 - near.lk200 <= -1.5 && far.lk200 - near.lk200 >= -6)) failures.push(`A2 distance: ${n} far is ${f1(far.lk200 - near.lk200)} dB vs the table (want −1.5…−6)`);
+      if (!(far.tailShare > near.tailShare * 1.5)) failures.push(`A2 distance: ${n} far has no more hall (${far.tailShare.toFixed(3)} vs ${near.tailShare.toFixed(3)})`);
+      if (!(far.centroidHz < near.centroidHz)) failures.push(`A2 distance: ${n} far is not softer on top`);
+      if (!(mid.lk200 <= near.lk200 + 0.2 && mid.lk200 >= far.lk200 - 0.2)) failures.push(`A2 distance: ${n} 0.6 is not between`);
+    }
+    const breath: Any = await page.evaluate(() => (window as Any).__audioLab.breathCheck());
+    if (!breath.turn.changedAtTurn) failures.push(`B3: turnPassed did not move the chord change (${breath.turn.turned})`);
+    if (!breath.lean.cold || breath.lean.changeAt === null || breath.lean.changeAt > 9 + 4.6) failures.push(`B3: lean gave ${breath.lean.chord} at ${breath.lean.changeAt} s (want a cold chord within ~4 s)`);
+    if (!(breath.swell.atPeakDb >= 1.4 && breath.swell.atPeakDb <= 2.6)) failures.push(`B3: swell ${f1(breath.swell.atPeakDb)} dB at its top (want +2)`);
+    if (Math.abs(breath.swell.afterDb) > 0.5) failures.push(`B3: swell has not settled (${f1(breath.swell.afterDb)} dB after 11 s)`);
+    if (breath.idle.heardIdle > 0 || breath.idle.heardBase < 1) failures.push(`B3: idle thin-out: ${breath.idle.heardIdle} notes heard while idle (baseline ${breath.idle.heardBase})`);
+    const tiers: Any = Object.fromEntries(reports.map((r) => [r.name, r.median.lk200]));
+    const bowlMax = Math.max(tiers.continent, tiers.eliminated, tiers.victory);
+    const restMax = Math.max(...reports.filter((r) => !['continent', 'eliminated', 'victory'].includes(r.name)).map((r) => r.median.lk200));
+    const tickMax = Math.max(tiers.uiClick, tiers.tick);
+    const restMin = Math.min(...reports.filter((r) => !['uiClick', 'tick'].includes(r.name)).map((r) => r.median.lk200));
+    if (!(bowlMax > restMax && bowlMax - restMax <= 3.2)) failures.push(`levels: the bowls are ${f1(bowlMax - restMax)} dB over everything else (want loudest by ≤ 3)`);
+    if (!(tickMax < restMin)) failures.push(`levels: paper ticks (${f1(tickMax)}) are not the quietest (${f1(restMin)})`);
+    const scenes: Any[] = [];
+    for (const name of (await page.evaluate(() => (window as Any).__audioLab.scenes)) as string[]) {
+      const s: Any = await page.evaluate((n) => (window as Any).__audioLab.sceneWav(n), name);
+      writeFileSync(join(V4, `${name}.wav`), Buffer.from(s.b64, 'base64'));
+      if (s.stats.peakDb > -0.3) failures.push(`scene ${name}: peak ${f1(s.stats.peakDb)} dBFS`);
+      if (s.stats.nan) failures.push(`scene ${name}: NaN`);
+      delete s.b64;
+      scenes.push({ name, peakDb: s.stats.peakDb, marks: s.marks });
     }
 
     const sweep: string[] = await page.evaluate(() => (window as Any).__audioLab.buildSweep(20));
@@ -389,21 +466,27 @@ async function main() {
     if (moment.stats.nan) failures.push('the moment: NaN');
     delete moment.b64;
 
-    const relevant = consoleProblems.filter((m) => !/Download the React DevTools|\[vite\]/.test(m));
+    // An agent worktree symlinks node_modules from the main checkout, and Vite refuses (403) to serve the
+    // lab's webfont from outside the worktree root. That is the environment, not the audio: ignore exactly it.
+    const fontFromSymlink = consoleProblems.some((m) => /^http: 403 .*\/@fs\/.*\/node_modules\/@fontsource/.test(m));
+    const relevant = consoleProblems.filter(
+      (m) => !/Download the React DevTools|\[vite\]/.test(m) && !(fontFromSymlink && /403/.test(m) && (/@fontsource/.test(m) || /Failed to load resource/.test(m))),
+    );
     for (const m of relevant) failures.push(`console ${m}`);
 
     writeFileSync(join(OUT, 'report.json'), JSON.stringify({ when: new Date().toISOString(), live, warm, reports, composites: comp, score: sc, duck, stroke, moment, variants: vars, bank, cost, sweep, failures }, null, 2));
+    writeFileSync(join(V4, 'report.json'), JSON.stringify({ when: new Date().toISOString(), room, keys, distance: dist, breath, scenes, levels: Object.fromEntries(reports.map((r) => [r.name, { tier: r.tier, target: r.target, lk200: r.median.lk200, riseMs: r.median.riseMs }])), scoreVsBoardDb: sc.vsBoardDb }, null, 2));
 
     // --------------------------------------------------------------- print
     const pad = (s: string, n: number) => s.padEnd(n);
     const lpad = (s: string, n: number) => s.padStart(n);
     console.log(
-      pad('sound', 11) + pad('tier', 8) + lpad('target', 7) + lpad('LK200', 7) + lpad('range', 12) + lpad('LUFS-M', 7) + lpad('RMS', 7) + lpad('peak', 7) + lpad('dur', 6) + lpad('onset', 6) + lpad('cent', 6) + lpad('lap%', 5) + lpad('>8k%', 6) + lpad('dc', 9) + lpad('trim', 6) + lpad('sugg', 6),
+      pad('sound', 11) + pad('tier', 8) + lpad('target', 7) + lpad('LK200', 7) + lpad('range', 12) + lpad('LUFS-M', 7) + lpad('RMS', 7) + lpad('peak', 7) + lpad('dur', 6) + lpad('onset', 6) + lpad('rise', 6) + lpad('cent', 6) + lpad('lap%', 5) + lpad('>8k%', 6) + lpad('dc', 9) + lpad('trim', 6) + lpad('sugg', 6),
     );
     for (const r of reports) {
       const m = r.median;
       console.log(
-        pad(r.name, 11) + pad(r.tier, 8) + lpad(String(r.target), 7) + lpad(f1(m.lk200), 7) + lpad(`${f1(r.lk200Min)}…${f1(r.lk200Max)}`, 12) + lpad(f1(m.lufsM), 7) + lpad(f1(m.rmsDb), 7) + lpad(f1(r.peakMaxDb), 7) + lpad(String(Math.round(m.durationSec * 1000)), 6) + lpad(f1(m.onsetMs), 6) + lpad(String(Math.round(m.centroidHz)), 6) + lpad(String(Math.round(m.laptopShare * 100)), 5) + lpad((m.hfShare * 100).toFixed(2), 6) + lpad(m.dc.toExponential(1), 9) + lpad(f1(r.trimDb), 6) + lpad(f1(r.suggestedTrimDb), 6),
+        pad(r.name, 11) + pad(r.tier, 8) + lpad(String(r.target), 7) + lpad(f1(m.lk200), 7) + lpad(`${f1(r.lk200Min)}…${f1(r.lk200Max)}`, 12) + lpad(f1(m.lufsM), 7) + lpad(f1(m.rmsDb), 7) + lpad(f1(r.peakMaxDb), 7) + lpad(String(Math.round(m.durationSec * 1000)), 6) + lpad(f1(m.onsetMs), 6) + lpad(String(Math.round(m.riseMs)), 6) + lpad(String(Math.round(m.centroidHz)), 6) + lpad(String(Math.round(m.laptopShare * 100)), 5) + lpad((m.hfShare * 100).toFixed(2), 6) + lpad(m.dc.toExponential(1), 9) + lpad(f1(r.trimDb), 6) + lpad(f1(r.suggestedTrimDb), 6),
       );
     }
     console.log(`\n5-die roll: ${f1(roll.lk200)} LUFS, peak ${f1(roll.peakDb)} dBFS`);
@@ -419,6 +502,14 @@ async function main() {
     console.log(`the moment (18 s through the limiter): peak ${f1(moment.stats.peakDb)} dBFS · ${moment.marks.map((m: Any) => `${m.t.toFixed(2)} ${m.what}`).join(' · ')}`);
     console.log('variants:');
     for (const v of vars) console.log(`  ${pad(v.label, 22)} ${f1(v.lk200)} LUFS  peak ${f1(v.peakDb)}  reported ${v.reportedDur.toFixed(3)} s  sound ${Math.round(v.durationSec * 1000)} ms`);
+    console.log(`\nv4 · B1 one room: RT60 diceLand tail ${room.diceTail.rt60.toFixed(2)} s · score hall ${room.scoreHall.rt60.toFixed(2)} s · effects hall ${room.sfxHall.rt60.toFixed(2)} s · ratio ${room.ratio.toFixed(2)}`);
+    const kOk = keys.filter((k) => k.ok).length;
+    console.log(`v4 · B2 key-lock: ${kOk}/${keys.length} (sound × chord) on the chord tone; rendered pitch max |${Math.max(...keys.map((k) => Math.abs(k.cents)))}| c`);
+    for (const n of [...new Set(keys.map((k) => k.name))]) console.log(`    ${pad(n, 20)} ${keys.filter((k) => k.name === n).map((k) => `${k.chord}:${k.midi}`).join(' ')}`);
+    console.log(`v4 · A2 distance (lk200 at 0 / 0.6 / 1): ${[...new Set(dist.map((d) => d.name))].map((n) => `${n} ${dist.filter((d) => d.name === n).map((d) => f1(d.lk200)).join(' / ')}`).join(' · ')}`);
+    console.log(`v4 · B3 breath: turn moved the change ${breath.turn.changedAtTurn} · lean → ${breath.lean.chord} at ${breath.lean.changeAt} s (cold ${breath.lean.cold}) · swell +${f1(breath.swell.atPeakDb)} dB, after ${f1(breath.swell.afterDb)} dB · idle notes heard ${breath.idle.heardIdle} (baseline ${breath.idle.heardBase}, planned ${breath.idle.plannedNotesAfter11s}), level ${f1(breath.idle.levelDropDb)} dB`);
+    console.log(`v4 · levels: bowls loudest by ${f1(bowlMax - restMax)} dB · ticks quietest (${f1(tickMax)} vs next ${f1(restMin)}) · score ${f1(sc.vsBoardDb)} dB vs board`);
+    console.log(`v4 · scenes: ${scenes.map((s) => `${s.name} (pk ${f1(s.peakDb)})`).join(', ')} → artifacts/audio/v4/`);
     console.log(`build sweep: ${sweep.length ? sweep.length + ' failures' : 'every sound × variant × rate/duration extreme × 20 seeds built cleanly'}`);
     console.log(`bank: max |Δ loudness| ${Math.max(...bank.map((b) => Math.abs(b.dLk))).toFixed(3)} dB · mono keys ${bank.filter((b) => b.channels === 1).map((b) => b.name).join(', ')}`);
     console.log(`warm-up after unlock: ${Math.round(warm.ms)} ms · unlock-click task ${warm.unlockTaskMs.join(', ') || '<50'} ms (browser audio-device init) · other long tasks: ${warm.otherLongTasksMs.length ? warm.otherLongTasksMs.join(', ') + ' ms' : 'none'} · of them our script: ${warm.longScripts.length ? warm.longScripts.join(', ') : 'none'}`);
