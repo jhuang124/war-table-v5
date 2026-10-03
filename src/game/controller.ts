@@ -180,7 +180,7 @@ export interface RollMetric {
   blitz: boolean;
   count: number;
   ms: number;
-  style: 'full' | 'brief';
+  style: 'full' | 'brief' | 'readable';
 }
 
 export interface Metrics {
@@ -289,7 +289,7 @@ interface Engagement {
   defLost: number;
   blitz: boolean;
   winP: number;
-  style: 'full' | 'brief';
+  style: 'full' | 'brief' | 'readable';
   conquered: boolean;
   startedAt: number;
   lastRollEnd: number;
@@ -1109,7 +1109,7 @@ class Controller {
 
   private enqueue(
     list: { ev: GameEvent; after: GameState; end: boolean }[],
-    opts: { ai: boolean; style?: 'full' | 'brief'; skip?: boolean; stagger?: number; beat?: number; speed?: number },
+    opts: { ai: boolean; style?: 'full' | 'brief' | 'readable'; skip?: boolean; stagger?: number; beat?: number; speed?: number },
   ): void {
     const beat = opts.beat ?? this.beat++;
     const rolls = list.filter((x) => x.ev.type === 'diceRolled').length;

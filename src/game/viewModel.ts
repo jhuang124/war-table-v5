@@ -9,7 +9,7 @@
 // at most two buttons). The dice tray header, one banner, the cards sheet and the menu sheets come and go.
 
 import type { AudioEngine } from '../audio/types';
-import type { AiDifficulty, AiPersonality, CardSymbol, ContinentId, PlayerColorId, PlayerId, PlayerKind, PlayerStats, TimelinePoint } from '../engine/types';
+import type { AiDifficulty, AiPersonality, CardSymbol, ContinentId, PlayerColorId, PlayerId, PlayerKind, PlayerStats, TerritoryId, TimelinePoint } from '../engine/types';
 import type { ViewportInsets } from '../render/BoardView';
 
 // ---------------------------------------------------------------------------
@@ -394,6 +394,34 @@ export interface GameVM {
    * while it is held (hover doesn't exist on touch). null / absent = none.
    */
   nameCard?: NameCardVM | null;
+  /**
+   * Additive (v4, PLAN §3 A3; sitting 2026-10-03: the receipt is THE channel for bot turns): the
+   * "While you were away" sheet, shown when a human gets the cup back after one or more AI turns. null /
+   * absent = none. The UI writes the lines one at a time (≈ 600 ms apart) and sends 'receiptLine' as each
+   * begins so the board can pulse its territories; any tap sends 'dismissReceipt'.
+   */
+  receipt?: ReceiptVM | null;
+}
+
+/** The "While you were away" receipt (v4). One line per AI seat that acted, in turn order. */
+export interface ReceiptVM {
+  /** Bumps per receipt; the UI restarts its writing when it changes. */
+  key: number;
+  /** 'While you were away' · 'Since your last turn' on a resumed game. */
+  title: string;
+  lines: ReceiptLineVM[];
+  /** The one line about the reader, if any: 'You lost 5 territories · you hold 7' (plain, numbered). */
+  summary: string | null;
+}
+
+export interface ReceiptLineVM {
+  seat: SeatRef;
+  /** 'Ochre took Brazil, Peru and Argentina from you · now 15 territories, 41 armies'. ≤ ~90 characters. */
+  text: string;
+  /** The territories this line is about, pulsed on the board as it writes. */
+  territories: TerritoryId[];
+  /** true when the reader lost something in this line: the line is set in the seat's pigment, not ivory. */
+  stings: boolean;
 }
 
 /** The long-press name card: territory, continent + bonus, owner, armies; anchored at the finger. */
@@ -484,6 +512,9 @@ export type UiIntent =
   | { type: 'proposeTruce'; to: PlayerId }
   /** Additive (v3): the event line's 'Update ready · reload': save and reload onto the new build. */
   | { type: 'reloadForUpdate' }
+  /** v4 receipt: line `index` began writing (the board pulses its territories) · any tap dismisses. */
+  | { type: 'receiptLine'; index: number }
+  | { type: 'dismissReceipt' }
   // victory
   | { type: 'rematch' }
   // settings

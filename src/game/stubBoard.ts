@@ -352,7 +352,7 @@ export function createStubBoard(opts: StubBoardOptions): BoardView {
   layout();
   requestAnimationFrame(loop);
 
-  const playSound = (e: GameEvent, style: 'full' | 'brief') => {
+  const playSound = (e: GameEvent, style: 'full' | 'brief' | 'readable') => {
     if (!audio) return;
     const vol = style === 'brief' ? 0.6 : 1;
     switch (e.type) {

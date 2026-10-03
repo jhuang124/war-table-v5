@@ -2,7 +2,7 @@
 // The renderer implements `createBoardView` in src/render/index.ts. The controller only talks
 // to the board through this interface.
 
-import type { GameEvent, GameState, PlayerId, TerritoryId } from '../engine/types';
+import type { PlayerColorId, GameEvent, GameState, PlayerId, TerritoryId } from '../engine/types';
 import type { BoardGeometry } from '../map/types';
 import type { AudioEngine } from '../audio/types';
 
@@ -24,6 +24,18 @@ export interface BoardHighlights {
   /** Staged/preview counts drawn as "+N" beside the token (only while a placement is staged). */
   pending?: Partial<Record<TerritoryId, number>>;
   dimOthers?: boolean;
+  /**
+   * Additive (v4, PLAN §3 A4 "losing leaves a mark"): territories a human seat lost since its last turn, each
+   * with the loser's colour. The renderer draws a thin ring (edge ladder: Hair weight, the seat's pigment)
+   * around the stone; the controller clears an entry when that loser's next turn ends.
+   */
+  loserRings?: { territory: TerritoryId; color: PlayerColorId }[];
+  /**
+   * Additive (v4, PLAN §3 A3 the receipt): territories to pulse once (a tier-0 swell of the stone and a brief
+   * lift of the wash), as a receipt line writes. The renderer plays the pulse when the array changes and
+   * does not hold any state for it.
+   */
+  pulse?: TerritoryId[];
 }
 
 export interface TerritoryPointerInfo {
@@ -70,8 +82,20 @@ export interface BoardStats {
 }
 
 export interface PlayEventOptions {
-  /** 'full' (default): dice tray + full timings. 'brief': AI-vs-AI; no dice, <= 0.8 s per engagement. */
-  style?: 'full' | 'brief';
+  /**
+   * 'full' (default): dice tray + full timings. 'brief': AI-vs-AI; no dice, <= 0.8 s per engagement.
+   * 'readable' (v4, _claude/v4/PLAN.md §8a Q7): every AI engagement, never the dice show. One steady beat a
+   * person can follow: the stroke draws, a short bone click stands in for the roll, the verdict flood, the
+   * sentence completes. No snapping, no wall-clock stall. Target ≈ 900 ms per engagement at 1×.
+   */
+  style?: 'full' | 'brief' | 'readable';
+  /**
+   * Additive (v4, PLAN §5b E5 "one motion ladder"): the stakes tier the controller assigned this event.
+   * 0 tick (160–290 ms) · 1 stroke (400–650) · 2 soak (650–1200) · 3 breath (1600–2400). The renderer keeps
+   * the event's motion inside the tier's band; the audit in tests/e2e checks it. Absent = the renderer's
+   * own default for the event type (the v3 numbers).
+   */
+  tier?: 0 | 1 | 2 | 3;
   /**
    * For consecutive diceRolled events of one engagement (blitz or repeated rolls): 0-based index and
    * total count, so the renderer can compress to the blitz cap and slow the final roll.

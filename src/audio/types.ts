@@ -40,9 +40,26 @@ export const SFX_NAMES: readonly SfxName[] = [
   'whoosh',
 ];
 
+/**
+ * v4 cues (PLAN §4, §7) added as a tolerant string API so callers compile before the bank has them: the
+ * audio builder maps each to a real recipe; unknown = silent no-op.
+ *   sheet     a sheet of paper laid on / lifted off the table (overlays open and close)
+ *   cupSlide  the cup slides along the seat strip (turn passes)
+ *   cupSet    the cup set down at the next seat (every seat; a human's gets turnStart on top)
+ *   bone      one short bone click: the AI's roll in 'readable' style (never the dice show)
+ *   tick      a paper tick: tap a territory, the deal's flips, the round numeral re-inking
+ */
+export type V4Cue = 'sheet' | 'cupSlide' | 'cupSet' | 'bone' | 'tick';
+
 export interface PlayOptions {
   /** Per-play gain, 0..2 (1 = designed level). */
   volume?: number;
+  /**
+   * v4 (PLAN §3 A2 "distance, not silence"): 0 = at the table (dry, full), 1 = far across the room (longer
+   * hall send, −4 dB, softened top). AI events pass ≈ 0.6 instead of volume 0.5. The engine ignores it
+   * until the audio builder wires the shared hall (B1).
+   */
+  distance?: number;
   /** Stereo position, -1 (left) .. 1 (right). */
   pan?: number;
   /** Playback rate, 0.5..2: scales pitch and timing together (tape-style). */
@@ -123,6 +140,20 @@ export interface AudioEngine {
   stroke?(o?: { pan?: number }): StrokeHandle | null;
   /** extra: fade out every playing/scheduled SFX voice (use with skipAnimations). Music is untouched. */
   stopAll(): void;
+  /** v4: play a V4Cue (see the type). Absent on older engines; callers use `audio.cue?.(…)`. */
+  cue?(name: V4Cue, opts?: PlayOptions): void;
+  /**
+   * v4 (PLAN §4 B3 "the score breathes"): the turn passed. The score takes its next chord change now (the
+   * walk keeps its weights; only the moment moves). `toHuman` adds the +2 dB swell over 2 s.
+   */
+  turnPassed?(toHuman: boolean): void;
+  /**
+   * v4 (B3): a human lost a continent or a seat was eliminated: bias the walk to the open/minor voicings for
+   * one chord, then return. 'cold' is the only colour for now.
+   */
+  lean?(colour: 'cold'): void;
+  /** v4 (B3, §7.14): idle. true = the score thins to pad only over ~4 s; false = back over ~2 s. */
+  setIdle?(on: boolean): void;
   /** extra: true once the AudioContext exists and has been asked to run. */
   isUnlocked(): boolean;
   /** extra: counters for debugging / tests. */
