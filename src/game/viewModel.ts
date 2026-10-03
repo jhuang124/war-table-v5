@@ -255,7 +255,11 @@ export interface StripVM {
   track: TrackVM;
   /** 3 px top edge. */
   accent: PlayerColorId;
-  /** The one line: ≤ ~50 characters, real names and numbers. */
+  /**
+   * The one line: ≤ ~50 characters, real names and numbers. v4 (sitting 2026-10-03 Q4): the single current
+   * sentence above the rule, the only line the HUD shows (no transcript). An AI engagement writes
+   * 'Sage attacks Ural…' and then completes it in place ('… and takes it' / '… and is thrown back').
+   */
   line: string;
   /** 'rejection' while a refused-click reason is swapped in (2 s); 'narration' during AI turns. */
   lineKind: 'normal' | 'rejection' | 'narration';
@@ -264,6 +268,13 @@ export interface StripVM {
   count: CountVM | null;
   /** The action zone (right end): ≤ 2, in reading order: the secondary (if any), then the primary. */
   buttons: ButtonVM[];
+  /**
+   * Additive (v4, PLAN §3 A5): a truce offer waiting for the driver's answer. It never takes the line, the
+   * count or the buttons (Place N stays the one gold): it is a secondary line under the main one, with
+   * 'Accept' and 'Decline' as small words (ButtonVM, never primary; the HUD sends them as 'button' intents).
+   * text: 'Sage proposes a truce with John · 3 rounds · you share a border in Asia'. null / absent = none.
+   */
+  offer?: { text: string; buttons: ButtonVM[] } | null;
 }
 
 export interface BattleSideVM {
@@ -315,7 +326,12 @@ export interface LogLineVM {
   seat: SeatRef | null;
   /** 'truce' (v3, additive): a diplomacy event's sentence (truceSentence). */
   kind: 'engagement' | 'turn' | 'recap' | 'card' | 'continent' | 'elimination' | 'system' | 'truce';
-  text: string; // 'Cobalt blitzed Siam from India: 9 vs 3 → took it, lost 2'
+  text: string; // 'Vermilion took Brazil from Ochre · 4 vs 1 · lost 0'
+  /**
+   * Additive (v4, PLAN §3 A5): the line's detail for the Ledger, kept out of the line itself. An
+   * engagement's origin territory: 'from Venezuela'. Absent = none.
+   */
+  detail?: string;
 }
 
 /** The one banner slot (docs/SIMPLIFY.md §5). */
@@ -368,7 +384,11 @@ export interface GameVM {
   log: LogLineVM[];
   /** Additive (v3, PLAN §3): the round on the displayed board ("Round 6" in the dock). */
   round?: number;
-  /** Additive (v3, PLAN §3): the ledger's last lines, oldest first (the dock's event line: the latest, and on desktop the one before it). */
+  /**
+   * Additive (v3, PLAN §3): the ledger's last lines, oldest first. v4 (sitting 2026-10-03, Q4 "one line"):
+   * the HUD shows ONE line above the rule, `StripVM.line`; the faded history goes. These last two lines
+   * stay only for the HUD's own use (e.g. what to show when the strip is hidden); never as a transcript.
+   */
   events?: LogLineVM[];
   /**
    * Additive (v3): a new build has taken over (the service worker's controllerchange) while a game is on.
@@ -401,6 +421,12 @@ export interface GameVM {
    * begins so the board can pulse its territories; any tap sends 'dismissReceipt'.
    */
   receipt?: ReceiptVM | null;
+}
+
+/** Additive (v4, HUD): the saved board as owners' colours, for the title's Continue thumbnail. */
+export interface SaveSketchVM {
+  mapId?: string;
+  owners: Partial<Record<TerritoryId, PlayerColorId>>;
 }
 
 /** The "While you were away" receipt (v4). One line per AI seat that acted, in turn order. */
@@ -467,7 +493,11 @@ export interface ViewModel {
   /** settings.reduceMotion || prefers-reduced-motion. */
   reducedMotion: boolean;
   /** Continue button: null = no save. */
-  save: { summary: string } | null; // 'Round 7 · John vs Sam + 2 AI'
+  /**
+   * 'Round 7 · John vs Sam + 2 AI'. Additive (v4, HUD): `sketch`, the saved board's owners for the title's
+   * Continue thumbnail (null / absent = no thumbnail).
+   */
+  save: { summary: string; sketch?: SaveSketchVM | null } | null;
   newGame: NewGameVM;
   game: GameVM | null;
   victory: VictoryVM | null;

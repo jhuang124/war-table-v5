@@ -173,7 +173,8 @@ describe('R1-05 / R1-11 the tray header and the line across a conquest', () => {
     expect([...headers].some((x) => x === 'NEW GUINEA 3 vs INDONESIA 0' || x === 'Indonesia captured')).toBe(true);
     expect([...headers]).toContain('Indonesia captured');
     expect([...lines].some((l) => /from New Guinea · \d/.test(l) && /New Guinea \(1\)/.test(l))).toBe(false);
-    expect([...lines]).toContain('You took Indonesia');
+    // v4 A5: an auto-occupy says what moved in ('You took Indonesia · 2 armies move in').
+    expect([...lines].some((l) => /^You took Indonesia( · (1 army moves|\d+ armies move) in)?$/.test(l))).toBe(true);
     expect(c.hooks.ui().line).toBe('Attack from Indonesia · click an enemy');
     c.dispose();
   });
@@ -250,8 +251,8 @@ describe('ROUND2 §A Enter is the one brass thing', () => {
   });
 });
 
-describe('R1-23 AI turns mid-game at watch', () => {
-  it('1 human + 3 AI, rounds 4–7: median ≤ 5 s, ≤ 2 full-dice fights per AI turn', async () => {
+describe('R1-23 AI turns mid-game at watch (v4: the readable reel)', () => {
+  it('1 human + 3 AI, rounds 4–7: median ≤ 6 s, p95 ≤ 12 s, no AI fight in full', async () => {
     const { chooseAiAction } = await import('../../src/engine');
     const late: number[] = [];
     const all: number[] = [];
@@ -318,9 +319,12 @@ describe('R1-23 AI turns mid-game at watch', () => {
       `[R1-23] AI turns n=${all.length} median ${q(all, 0.5)} p95 ${q(all, 0.95)} | rounds 4+: n=${late.length} median ${q(late, 0.5)} p95 ${q(late, 0.95)} max ${Math.max(...late)} | max full fights/turn ${maxFull}\n`,
     );
     expect(late.length).toBeGreaterThan(10);
-    expect(q(late, 0.5)).toBeLessThanOrEqual(5000);
-    expect(q(all, 0.95)).toBeLessThanOrEqual(10000);
-    expect(maxFull).toBeLessThanOrEqual(2);
+    // v4 A1 (sitting 2026-10-03): no AI fight plays in full; the readable reel stays in the round budget
+    // (median ≤ 6 s, p95 ≤ 12 s at Watch; v3 measured median 5.0 s, p95 9.1 s here).
+    expect(q(late, 0.5)).toBeLessThanOrEqual(6000);
+    expect(q(all, 0.5)).toBeLessThanOrEqual(6000);
+    expect(q(all, 0.95)).toBeLessThanOrEqual(12000);
+    expect(maxFull).toBe(0);
   }, 180_000);
 });
 

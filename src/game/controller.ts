@@ -51,11 +51,13 @@ import {
   type PlayerId,
   type TerritoryId,
 } from '../engine';
+import { truceReason } from '../engine/ai/diplomacy';
 import { DEFAULT_MAP_ID, activeMapId, isKnownMap, listMaps } from '../map/registry';
-import type { AudioEngine, PlayOptions, SfxName } from '../audio/types';
+import type { AudioEngine, PlayOptions, SfxName, V4Cue } from '../audio/types';
 import type { BoardHighlights, BoardView, PlayEventOptions, TerritoryPointerInfo, ViewportInsets } from '../render/BoardView';
-import { buildStrip, buildTrack, emptySel, placeLeft, placeValue, selectionTargets, stagedTotal, trackLockReason, type Placement, type Sel } from './strip';
-import { SEP, armies, cName, click, pName, pct, poss, seatRef, setTouchCopy, tName, upper } from './copy';
+import { buildStrip, buildTrack, emptySel, placeLeft, placeValue, selectionTargets, stagedTotal, tookLine, trackLockReason, withOffer, type Placement, type Sel } from './strip';
+import { SEP, armies, attackBegins, attackTakes, attackThrownBack, cName, click, goesFirst, pName, pct, poss, seatRef, setTouchCopy, tName, upper } from './copy';
+import { eventTier } from './timingModel';
 import { createHaptics, type Haptics } from './haptics';
 import { applyEventToDisplay, isBlocking } from './display';
 import { explainTerritory, type ClickPlan, type ExplainUi, type Explanation } from './explain';
@@ -74,7 +76,21 @@ import {
 } from './presets';
 import { reconcile } from './reconcile';
 import { effectiveUiScale } from '../ui/uiScale';
-import { buildAwards, buildRecap, emptyAwards, recordAward, recordRecap, type AwardLedger, type RecapLedger } from './recap';
+import {
+  buildAwards,
+  buildRecap,
+  buildReceipt,
+  emptyAwards,
+  emptyReceipts,
+  noteTurnStart,
+  receiptSince,
+  recordAward,
+  recordReceipt,
+  recordRecap,
+  type AwardLedger,
+  type RecapLedger,
+  type ReceiptLedger,
+} from './recap';
 import {
   DEFAULT_SETTINGS,
   SAVE_KEY,
@@ -113,6 +129,8 @@ import type {
   ViewModel,
   VictoryVM,
   NewGameVM,
+  ReceiptVM,
+  SaveSketchVM,
 } from './viewModel';
 
 // ---------------------------------------------------------------------------
@@ -228,6 +246,10 @@ export interface UiSnapshot {
   gold: string | null;
   /** The banner's serif line ('John · 3 armies', 'Sam · taken by John · round 9'), or null. */
   bannerLine: string | null;
+  /** Additive (v4 A5): a truce offer's secondary line and its small words, or null. */
+  offer: { text: string; buttons: string[] } | null;
+  /** Additive (v4 A3): the receipt's title and lines, or null. */
+  receipt: { title: string; lines: string[]; summary: string | null } | null;
 }
 
 export interface RiskHooks {
@@ -248,6 +270,12 @@ export interface RiskHooks {
   map(): string;
   metrics(): Metrics;
   resetMetrics(): void;
+  /** Additive (v4): the receipt showing now ('While you were away'), or null. */
+  receipt(): ReceiptVM | null;
+  /** Additive (v4): dismiss the receipt (what any tap on it does). */
+  dismissReceipt(): void;
+  /** Additive (v4 A4): the loser's rings on the board now. */
+  loserRings(): NonNullable<BoardHighlights['loserRings']>;
 }
 
 export interface GameController extends ControllerApi {
@@ -273,8 +301,10 @@ interface Entry {
   /** Stagger before firing (AI placement beats). */
   delayMs?: number;
   ai: boolean;
-  /** Board speed for this entry (compressed AI-vs-AI engagements); default = the seat's speed. */
+  /** Board speed for this entry (an AI turn's even pace, compressed on a long turn); default = the seat's speed. */
   speed?: number;
+  /** v4 A1: the last roll of an AI engagement that did not take the territory (the line completes on it). */
+  verdict?: 'held';
 }
 
 interface Engagement {
@@ -308,22 +338,19 @@ interface BannerItem {
   sound?: { name: SfxName; opts?: PlayOptions };
 }
 
+/**
+ * One AI turn's pacing (v4 A1, the readable reel). Every event gets its tier's beat at one even pace; a turn
+ * with more beats than the cap compresses every beat by the same factor (Pillar 5), never by snapping the tail.
+ */
 interface AiTurnCtx {
   key: string;
   player: PlayerId;
   startedAt: number;
   first: boolean;
-  /** AI-vs-AI engagements played this turn (headline compression from the 3rd). */
-  briefCount: number;
-  /** Past the cap: the rest of the turn plays at instant. */
-  capped: boolean;
-  /** 10 s normally; 5 s for opening turns before any human has played (Start → first click ≤ 20 s). */
-  capMs: number;
-  headlineMs: number;
-  /** The n-th AI-vs-AI engagement of the turn from which they play at 2×. */
-  compressFrom: number;
-  /** Full-dice fights against a human played this turn (capped at AI_FULL_FIGHTS_PER_TURN). */
-  fullCount: number;
+  /** Beats this turn will play (engagements + a fortify), from a dry run of the AI on a copy of the state. */
+  beats: number;
+  /** 1 = full beats; < 1 = every beat shortened by this factor (≥ AI_MIN_SCALE). */
+  scale: number;
 }
 
 interface GameMeta {
@@ -339,6 +366,12 @@ interface GameMeta {
   lastTurnKind: 'human' | 'ai' | null;
   /** Who knocked each seat out, and in which round (the empty seat ring, docs/INK.md A5). */
   out?: Record<number, { by: PlayerId; round: number }>;
+  /** v4 A3: what the AI seats did since each human's last turn (the receipt). */
+  receipts?: ReceiptLedger;
+  /** v4 A4: per human seat, the territories it lost since its last turn (the loser's rings). */
+  rings?: Record<number, TerritoryId[]>;
+  /** v4 A5: someone has made the game's first move (the 'Sage goes first' beat is spent). */
+  firstMoved?: boolean;
 }
 
 interface UiFile {
@@ -357,23 +390,26 @@ const defaultClock = (): Clock => ({
   },
 });
 
-const THINK_TURN_START = 350;
-const THINK_BETWEEN = 200;
-/** Between AI-vs-AI engagements once they run compressed (the 3rd+ in a turn, or past the headline point). */
-const THINK_BETWEEN_COMPRESSED = 140;
-/** The beat after a snapped AI-vs-AI conquest (a human's instant speed keeps 250 ms, UX.md §8.2). */
-const SNAP_BEAT_MS = 170;
-const AI_TURN_CAP_MS = 10_000;
-/** Past this point in an AI turn, AI-vs-AI engagements snap; fights against a human keep their weight. */
-const AI_HEADLINE_MS = 6_000;
-/** From round 4 the board is crowded and turns run long: the headline point comes sooner. */
-const AI_HEADLINE_LATE_MS = 4_000;
-const AI_HEADLINE_LATE_ROUND = 4;
-/** Full-dice fights against a human per AI turn; later ones play brief (arrow, ticks, flip, one log line). */
-const AI_FULL_FIGHTS_PER_TURN = 2;
-/** Round-1 AI turns before any human has moved: nothing is at stake yet, so they stay short. */
-const AI_OPENING_CAP_MS = 5_000;
-const TELEGRAPH_MS = 400;
+// v4 A1, the readable reel: steady beats, no wall-clock caps. At Watch every beat plays at 1×, at Fast at
+// 2× (spacing, never pitch), at Skip the turn applies at once and the receipt carries it.
+/** The breath before an AI turn's first move. */
+const THINK_TURN_START = 300;
+/** The breath before each AI engagement (× the turn's compression): the room reads one line, then the next. */
+const AI_GAP_MS = 160;
+/** An AI's placements land within this (tier-0 swells, staggered). */
+const AI_PLACE_MS = 600;
+/** Beats in an AI turn before every beat is shortened proportionally (Pillar 5: a round stays in budget). */
+const AI_BEATS_CAP = 5;
+/** Round-1 AI turns before any human has moved: nothing is at stake yet (Start → first click ≤ 20 s). */
+const AI_BEATS_CAP_OPENING = 3;
+/** The most a long turn is compressed (4×): past this a rampage takes its beats. */
+const AI_MIN_SCALE = 0.25;
+/** 'Sage goes first': the line holds before the opening AI move (A5). */
+const FIRST_BEAT_MS = 1200;
+/** No input and no events this long on a human's turn: the score thins (B3, §7.14). */
+const IDLE_MS = 60_000;
+/** 'You took Brazil · 3 armies move in' holds this long after the click, then the next instruction returns. */
+const AUTO_MOVED_MS = 2500;
 const PLAY_SAFETY_MS = 15_000;
 /** A refused click's reason holds the line this long. */
 const REJECT_MS = 2000;
@@ -403,7 +439,7 @@ function restoreMeta(id: string, saved: Partial<GameMeta> | undefined): GameMeta
     for (const [k, v] of Object.entries(saved.recap)) if (v && typeof v === 'object' && v.lost && typeof v.lost === 'object') m.recap[Number(k)] = { lost: v.lost };
   }
   if (saved.awards && typeof saved.awards === 'object') m.awards = { ...m.awards, ...saved.awards };
-  if (Array.isArray(saved.log)) m.log = saved.log.map((l) => ({ id: l.id, round: l.round, seat: l.seat, kind: l.kind, text: l.text }));
+  if (Array.isArray(saved.log)) m.log = saved.log.map((l) => ({ id: l.id, round: l.round, seat: l.seat, kind: l.kind, text: l.text, ...(l.detail ? { detail: l.detail } : {}) }));
   if (typeof saved.logId === 'number') m.logId = saved.logId;
   if (Array.isArray(saved.nearGoal)) m.nearGoal = saved.nearGoal;
   m.finalRoundShown = !!saved.finalRoundShown;
@@ -413,6 +449,15 @@ function restoreMeta(id: string, saved: Partial<GameMeta> | undefined): GameMeta
     m.out = {};
     for (const [k, v] of Object.entries(saved.out)) if (v && typeof v.by === 'number' && typeof v.round === 'number') m.out[Number(k)] = { by: v.by, round: v.round };
   }
+  const r = saved.receipts;
+  if (r && Array.isArray(r.items) && Array.isArray(r.aiTurns) && r.last && typeof r.last === 'object') {
+    m.receipts = { items: r.items, aiTurns: r.aiTurns, last: { ...r.last }, pending: r.pending ?? null, done: r.done ?? null };
+  }
+  if (saved.rings && typeof saved.rings === 'object') {
+    m.rings = {};
+    for (const [k, v] of Object.entries(saved.rings)) if (Array.isArray(v)) m.rings[Number(k)] = v.filter((t) => (TERRITORY_IDS as readonly string[]).includes(t));
+  }
+  m.firstMoved = !!saved.firstMoved;
   return m;
 }
 
@@ -519,7 +564,7 @@ class Controller {
   private reloadFn: (() => void) | null;
   /** The map this page's board was booted on. */
   readonly bootMap: string;
-  private saveSummary: { summary: string } | null = null;
+  private saveSummary: ViewModel['save'] = null;
   private sessionAiSpeed: AiSpeed | null = null;
   private autoplayOn = false;
 
@@ -573,6 +618,23 @@ class Controller {
   private aiScheduled = false;
   /** A human seat has started a main turn this game (ends the short "opening" AI turns). */
   private humanHasPlayed = false;
+  /** The begun line of the AI engagement playing now ('Sage attacks Ural…'), completed by its verdict. */
+  private narrBegun: string | null = null;
+
+  // v4: the receipt, the loser's rings, idle
+  /** The receipt showing now, for `seat`'s turn `turn` (input to the board waits on it; any tap dismisses). */
+  private receipt: (ReceiptVM & { seat: PlayerId; turn: number }) | null = null;
+  private receiptKey = 0;
+  /** The territories of the receipt line writing now (BoardHighlights.pulse). */
+  private pulse: TerritoryId[] = [];
+  /** The turn banner held back while the receipt shows; it writes once the receipt is dismissed. */
+  private bannerAfterReceipt: (() => void) | null = null;
+  /** The game was just resumed: the next receipt reads 'Since your last turn'. */
+  private resumedTitle = false;
+  private idleOn = false;
+  private lastActive = 0;
+  /** The engine moved the armies in itself after the driver's conquest: the line says so (A5). */
+  private autoMoved: { to: TerritoryId; n: number; chain: TerritoryId | null; turn: number; until: number } | null = null;
 
   // Presentation
   private eng: Engagement | null = null;
@@ -956,6 +1018,14 @@ class Controller {
     this.curTurn = null;
     this.lastBoardSpeed = -1;
     this.truceMode = false;
+    this.narrBegun = null;
+    this.receipt = null;
+    this.pulse = [];
+    this.bannerAfterReceipt = null;
+    this.resumedTitle = false;
+    this.autoMoved = null;
+    this.lastActive = this.now();
+    this.setIdle(false);
   }
 
   private loadSave(): boolean {
@@ -981,11 +1051,21 @@ class Controller {
     this.victory = null;
     this.applyBoardSpeed();
     this.humanHasPlayed = s.round > 1 || !!this.meta.lastTurnKind;
+    if (s.turn > 0) this.meta.firstMoved = true;
+    // v4 A3: a receipt still unread when the game was left shows again ('Since your last turn'); otherwise
+    // the next one this session reads that way.
+    this.resumedTitle = true;
+    const pend = this.meta.receipts?.pending;
+    if (s.round > 0 && !this.isAiDriven(s.currentPlayer) && pend && pend.seat === s.currentPlayer && pend.turn === s.turn) {
+      this.openReceipt(s.currentPlayer, s.turn, pend.since);
+    }
     // A fresh turn banner so the room knows whose turn it is (the army count only when it's still true).
     if (s.round > 0 && !this.isAiDriven(s.currentPlayer)) {
       const ph = s.phase;
       const fresh = ph.kind === 'reinforce' && !ph.midTurn && Object.keys(ph.placed).length === 0;
-      this.showTurnBanner(s.currentPlayer, fresh ? reinforcementsFor(s, s.currentPlayer).total : null, null, s);
+      const show = () => this.showTurnBanner(s.currentPlayer, fresh ? reinforcementsFor(s, s.currentPlayer).total : null, null, s);
+      if (this.receipt) this.bannerAfterReceipt = show;
+      else show();
     }
     if (s.round > 0) this.openTurnMetric(s.currentPlayer);
     this.invalidate();
@@ -1067,7 +1147,13 @@ class Controller {
           ? `${humans[0]} vs ${ais} AI`
           : `${humans.join(' vs ')}${ais ? ` + ${ais} AI` : ''}`;
     const when = s.round > 0 ? `Round ${s.round}` : 'Setup';
-    this.saveSummary = { summary: `${when}${SEP}${who}` };
+    // v4 (HUD): the Continue card's ink thumbnail (§7.13): who holds what, in seat colours.
+    const owners: NonNullable<SaveSketchVM['owners']> = {};
+    for (const [t, ts] of Object.entries(s.territories)) {
+      const p = ts && ts.owner >= 0 ? s.players[ts.owner] : null;
+      if (p) owners[t as TerritoryId] = p.color;
+    }
+    this.saveSummary = { summary: `${when}${SEP}${who}`, sketch: { mapId: s.config.mapId, owners } };
   }
 
   private rememberDraft(): void {
@@ -1100,6 +1186,8 @@ class Controller {
       return r;
     }
     if (!this.frozenSel && r.events.some(isBlocking)) this.frozenSel = { ...before, staged: { ...before.staged } };
+    if (this.meta) this.meta.firstMoved = true;
+    this.autoMoved = null;
     this.enqueue(
       r.events.map((ev, i) => ({ ev, after: r.state, end: i === r.events.length - 1 })),
       { ai: false, style: 'full' },
@@ -1108,7 +1196,7 @@ class Controller {
   }
 
   private enqueue(
-    list: { ev: GameEvent; after: GameState; end: boolean }[],
+    list: { ev: GameEvent; after: GameState; end: boolean; verdict?: 'held' }[],
     opts: { ai: boolean; style?: 'full' | 'brief' | 'readable'; skip?: boolean; stagger?: number; beat?: number; speed?: number },
   ): void {
     const beat = opts.beat ?? this.beat++;
@@ -1136,6 +1224,8 @@ class Controller {
       if (opts.stagger && x.ev.type === 'armiesPlaced') {
         e.delayMs = placeIndex++ === 0 ? 0 : opts.stagger;
       }
+      // v4 E5: every playEvent carries its stakes tier (motion, sound and line land in the same band).
+      e.opts = { ...(e.opts ?? {}), tier: eventTier(x.ev) };
       this.queue.push(e);
     }
     void this.pump();
@@ -1163,6 +1253,8 @@ class Controller {
         const next = this.queue[0];
         if (next.ev.type === 'turnStarted' && this.needsHandoff(next.ev.player) && !this.handoff) {
           this.handoff = { player: next.ev.player };
+          // v4 A3: the cover reads the receipt before 'start turn' resolves (2+ humans).
+          this.openReceipt(next.ev.player, next.ev.turn);
           this.invalidate();
         }
         if (this.handoff) {
@@ -1184,7 +1276,8 @@ class Controller {
           this.boardStale = false;
           this.board.syncState(this.disp);
         }
-        if (!skip) this.setBoardSpeed(e.ai && this.aiCtx?.capped && e.ev.type !== 'turnStarted' ? 0 : (e.speed ?? this.seatSpeed()));
+        if (!skip) this.setBoardSpeed(e.speed ?? this.seatSpeed());
+        if (!skip) this.lastActive = this.now();
         this.onEventStart(e, skip);
         if (earlyDisplay) this.applyDisplay(e);
         if (skip) {
@@ -1216,8 +1309,7 @@ class Controller {
           }
           await this.withSafety(p);
           // Instant speed still leaves a 250 ms beat after each conquest (UX.md §8.2).
-          // A snapped AI-vs-AI headline (past the turn's headline point) gets a shorter beat.
-          if (e.ev.type === 'territoryConquered' && this.lastBoardSpeed === 0 && !this.isSkipping(e)) await this.sleep(e.ai && e.speed === 0 ? SNAP_BEAT_MS : 250);
+          if (e.ev.type === 'territoryConquered' && this.lastBoardSpeed === 0 && !this.isSkipping(e)) await this.sleep(250);
           this.blockingNow = null;
           this.rolling = false;
           if (epoch !== this.epoch || !this.disp) continue;
@@ -1363,34 +1455,63 @@ class Controller {
   private onEventStart(e: Entry, skip: boolean): void {
     const ev = e.ev;
     const d = this.disp!;
-    const aiVol = (players: PlayerId[]) => (players.some((p) => this.isHumanSeat(p)) ? 1 : 0.5);
+    // v4 A2 "distance, not silence": an AI-vs-AI event plays far across the room, never quieter.
+    const aiFar = (players: PlayerId[]): PlayOptions => (players.some((p) => this.isHumanSeat(p)) ? {} : { distance: 0.6 });
     switch (ev.type) {
       case 'turnStarted': {
         this.closeEngagement();
         this.closeTurnMetric();
         const human = this.isHumanSeat(ev.player) && !this.autoplayOn;
+        const aiTurn = this.isAiDriven(ev.player);
         if (human) this.humanHasPlayed = true;
         const prevKind = this.meta?.lastTurnKind ?? null;
         if (human && prevKind === 'human') this.guardUntil = this.now() + 250;
-        if (this.meta) this.meta.lastTurnKind = this.isAiDriven(ev.player) ? 'ai' : 'human';
+        // v4 A4: the seat whose turn just ended has seen its rings through that turn: they go.
+        if (this.meta?.rings && d.turn > 0 && this.meta.rings[d.currentPlayer]) delete this.meta.rings[d.currentPlayer];
+        if (this.meta) this.meta.lastTurnKind = aiTurn ? 'ai' : 'human';
         this.openTurnMetric(ev.player);
         this.sel = emptySel();
         this.frozenSel = null;
         this.cardsOpen = false;
         this.truceMode = false;
-        this.narration = this.isAiDriven(ev.player) ? `${pName(d, ev.player)} gets ${armies(ev.reinforcements.total)}` : null;
+        this.autoMoved = null;
+        this.narration = aiTurn ? `${pName(d, ev.player)} gets ${armies(ev.reinforcements.total)}` : null;
+        this.narrBegun = null;
         this.narrPlaced = 0;
         this.aiHighlights = null;
         this.aiPreview = null;
         let recap: string | null = null;
         if (this.meta && this.isHumanSeat(ev.player) && ev.round >= 2) {
+          // The grudge line stays in the Ledger; v4 the receipt replaces it on screen.
           recap = buildRecap(this.meta.recap[ev.player], d);
           delete this.meta.recap[ev.player];
           if (recap) this.log('recap', ev.player, recap, ev.round);
         }
-        // The turn banner is for the humans at the table; an AI turn is named by the step indicator.
-        if (!this.isAiDriven(ev.player)) this.showTurnBanner(ev.player, ev.reinforcements.total, recap, d, ev.round);
+        // v4 A3: the receipt, when this human gets the cup back after AI turns (built before the ledger
+        // marks this as the seat's last turn).
+        if (human) this.openReceipt(ev.player, ev.turn, undefined, e.after);
+        if (this.meta && !this.autoplayOn) noteTurnStart(this.receipts(), e.after, ev.player, ev.turn, aiTurn);
+        // The turn banner is for the humans at the table; an AI turn is named by the step indicator. While
+        // the receipt shows, the banner waits and writes once it is dismissed.
+        if (!aiTurn) {
+          const show = () => this.showTurnBanner(ev.player, ev.reinforcements.total, null, d, ev.round);
+          if (this.receipt) this.bannerAfterReceipt = show;
+          else show();
+        }
         this.log('turn', ev.player, `${poss(pName(d, ev.player))} turn${SEP}${ev.reinforcements.total} to place`, ev.round);
+        // v4 A2 / B3: the cup slides and is set down at every seat; the score turns with it. A human's
+        // turn adds the turnStart (bright after AI turns) and the swell.
+        if (!this.autoplayOn) {
+          this.cue('cupSlide');
+          try {
+            this.audio.turnPassed?.(human);
+          } catch {
+            /* audio is best-effort */
+          }
+          this.cue('cupSet', { delay: 0.3 });
+          // §7.9: a new round re-inks the round numeral, with a paper tick.
+          if (ev.round > d.round && d.round > 0) this.cue('tick', { delay: 0.45 });
+        }
         if (human) this.play('turnStart', { variant: prevKind === 'ai' ? 'bright' : undefined });
         // Boards that implement setAutoCamera return home themselves on turnStarted.
         if (this.settings.autoCamera && !skip && !this.board.setAutoCamera) this.board.focusTerritories([]);
@@ -1420,12 +1541,23 @@ class Controller {
         break;
       case 'diceRolled':
         this.onRollStart(ev, e);
-        if (e.ai) this.narration = `${pName(d, ev.player)} attacks ${tName(ev.to)}`;
+        if (e.ai) {
+          // v4 A1: the line begins with the stroke and completes with the verdict.
+          const begun = attackBegins(pName(d, ev.player), tName(ev.to));
+          if (this.narrBegun !== begun) this.narrBegun = begun;
+          this.narration = begun;
+        }
         break;
       case 'territoryConquered':
         this.lastConquest = { attacker: ev.player, victim: ev.previousOwner };
         if (ev.previousOwner >= 0) this.lostKeys[ev.previousOwner] = (this.lostKeys[ev.previousOwner] ?? 0) + 1;
-        if (e.ai) this.narration = `${pName(d, ev.player)} takes ${tName(ev.to)}`;
+        if (e.ai) this.narration = attackTakes(this.narrBegun ?? attackBegins(pName(d, ev.player), tName(ev.to)));
+        // v4 A4: the loser's ring, as the territory falls on the board.
+        if (ev.previousOwner >= 0 && this.isHumanSeat(ev.previousOwner) && !this.autoplayOn && this.meta) {
+          const rings = (this.meta.rings ??= {});
+          const list = (rings[ev.previousOwner] ??= []);
+          if (!list.includes(ev.to)) rings[ev.previousOwner] = [...list, ev.to];
+        }
         break;
       case 'armiesMoved':
         if (e.ai && ev.reason === 'fortify') this.narration = `${pName(d, ev.player)} moves ${ev.count} into ${tName(ev.to)}`;
@@ -1443,9 +1575,9 @@ class Controller {
         if (involved) {
           this.announce('continent', `${upper(name)} HOLDS ${upper(cName(c))}${SEP}+${bonus}`, ev.player, {
             name: 'continent',
-            opts: { volume: aiVol([ev.player]) },
+            opts: aiFar([ev.player]),
           }, `${name} holds ${cName(c)}${SEP}+${bonus}`);
-        } else this.play('continent', { volume: 0.5 });
+        } else this.play('continent', { distance: 0.6 });
         this.log('continent', ev.player, `${name} holds ${cName(c)}${SEP}+${bonus} a turn`);
         break;
       }
@@ -1453,13 +1585,19 @@ class Controller {
         const by = pName(d, ev.to);
         const victim = pName(d, ev.player);
         this.log('continent', ev.to, `${by} broke ${poss(victim)} ${cName(ev.continent)}`);
-        // Losing stings (docs/INK.md A5): a human's broken continent gets the hand-damped bowl.
-        if (this.isHumanSeat(ev.player) && !this.autoplayOn && !skip) this.play('continent', { variant: 'somber' });
+        // Losing stings (docs/INK.md A5): a human's broken continent gets the hand-damped bowl, and (v4 B3)
+        // the score leans cold for one chord.
+        if (this.isHumanSeat(ev.player) && !this.autoplayOn && !skip) {
+          this.play('continent', { variant: 'somber' });
+          this.lean();
+        }
         break;
       }
       case 'playerEliminated': {
         if (e.ai) this.narration = `${pName(d, ev.by)} knocks out ${pName(d, ev.player)}`;
         if (this.meta) this.meta.out = { ...(this.meta.out ?? {}), [ev.player]: { by: ev.by, round: d.round } };
+        if (this.meta?.rings) delete this.meta.rings[ev.player];
+        if (this.isHumanSeat(ev.player) && !this.autoplayOn) this.lean();
         this.holdUntil = this.now() + 500;
         this.audio.stopAll?.();
         this.play('eliminated', { delay: 0.15 });
@@ -1469,19 +1607,23 @@ class Controller {
         const v = ev.armies;
         if (e.ai) this.narration = `${pName(d, ev.player)} trades cards for +${v}`;
         const rate = v >= 20 ? 0.72 : 1 - ((Math.max(4, v) - 4) / 16) * 0.28;
-        this.play('cardTrade', { rate, volume: (v > 10 ? 1.26 : 1) * aiVol([ev.player]) });
+        this.play('cardTrade', { rate, volume: v > 10 ? 1.26 : 1, ...aiFar([ev.player]) });
         break;
       }
       case 'cardDrawn':
-        this.play('cardDraw', { volume: aiVol([ev.player]) });
+        this.play('cardDraw', aiFar([ev.player]));
+        break;
+      case 'territoriesDealt':
+        if (!skip) this.dealTicks(ev.owners);
         break;
       case 'truceProposed':
       case 'truceAccepted':
       case 'truceDeclined':
       case 'truceBroken':
       case 'truceExpired': {
-        // Diplomacy (v3): one plain sentence in the event line and the ledger, as it lands; no wait.
-        const text = truceSentence(e.after, ev);
+        // Diplomacy (v3): one plain sentence in the event line and the ledger, as it lands; no wait. v4 A5:
+        // an AI's offer states its reason.
+        const text = ev.type === 'truceProposed' ? this.offerSentence(e.after, ev) : truceSentence(e.after, ev);
         const actor =
           ev.type === 'truceBroken' ? ev.by : ev.type === 'truceAccepted' || (ev.type === 'truceDeclined' && ev.reason === 'declined') ? ev.to : ev.from;
         if (text) {
@@ -1521,6 +1663,8 @@ class Controller {
     switch (ev.type) {
       case 'diceRolled':
         this.onRollEnd(ev);
+        // v4 A1: the engagement ended without taking it: the line completes.
+        if (e.ai && e.verdict === 'held') this.narration = attackThrownBack(this.narrBegun ?? attackBegins(pName(d, ev.player), tName(ev.to)));
         if (!skip && e.opts?.style !== 'brief' && (this.isHumanSeat(ev.player) || this.isHumanSeat(ev.defender))) this.haptics.play('dice');
         break;
       case 'territoryConquered': {
@@ -1587,6 +1731,8 @@ class Controller {
     if (meta) {
       recordAward(meta.awards, d, ev);
       recordRecap(meta.recap, d, ev);
+      // v4 A3: what an AI did on its own turn, for the receipt (skipped events too: Skip is receipt only).
+      if (e.ai && !this.autoplayOn && d.turn > 0 && this.isAiDriven(d.currentPlayer)) recordReceipt(this.receipts(), d, ev);
     }
     if (e.end && meta && ev.type !== 'gameOver') this.saveMeta();
   }
@@ -1627,7 +1773,8 @@ class Controller {
     }
     if (ev.phase !== 'attack' && ev.phase !== 'fortify') return;
     if (this.isAiDriven(ev.player)) {
-      if (e.ai) this.play('place', { rate: 0.82, volume: 0.35 });
+      // v4 A2: the AI's marker clacks across the room (distance), not at a whisper.
+      if (e.ai) this.play('place', { rate: 0.82, volume: 0.9, distance: 0.6 });
       return;
     }
     // The occupy step returning to attack is not an advance.
@@ -1694,13 +1841,15 @@ class Controller {
   private engagementText(final: boolean): string {
     const g = this.eng!;
     const d = this.disp!;
-    // The house voice (v3 ledger): middle dots, no colon, no arrow. 'John took Siberia from Ural · 19 vs 1 · lost 1'
+    // The house voice (v3 ledger): middle dots, no colon, no arrow. v4 A5: the line names the owner it was
+    // taken from ('Vermilion took Brazil from Ochre · 4 vs 1 · lost 0'); the origin goes to the detail.
     const A = pName(d, g.attacker);
+    const D = pName(d, g.defender);
     const odds = `${g.startA} vs ${g.startD}`;
     const upset = g.upset ? `${SEP}${g.upset}` : '';
-    if (g.conquered) return `${A} took ${tName(g.to)} from ${tName(g.from)}${SEP}${odds}${SEP}lost ${g.attLost}${upset}`;
-    if (final) return `${pName(d, g.defender)} held ${tName(g.to)} against ${A}${SEP}${odds}${SEP}${A} lost ${g.attLost}${upset}`;
-    return `${A} ${g.blitz ? 'blitzes' : 'attacks'} ${tName(g.to)} from ${tName(g.from)}${SEP}${odds}${SEP}now ${d.territories[g.from].armies} vs ${d.territories[g.to].armies}`;
+    if (g.conquered) return `${A} took ${tName(g.to)} from ${D}${SEP}${odds}${SEP}lost ${g.attLost}${upset}`;
+    if (final) return `${D} held ${tName(g.to)} against ${A}${SEP}${odds}${SEP}${A} lost ${g.attLost}${upset}`;
+    return `${A} ${g.blitz ? 'blitzes' : 'attacks'} ${poss(D)} ${tName(g.to)}${SEP}${odds}${SEP}now ${d.territories[g.from].armies} vs ${d.territories[g.to].armies}`;
   }
 
   private writeEngagementLog(final: boolean): void {
@@ -1708,16 +1857,17 @@ class Controller {
     const meta = this.meta;
     if (!g || !meta) return;
     const text = this.engagementText(final);
+    const detail = `from ${tName(g.from)}`;
     if (g.logId) {
       const i = meta.log.findIndex((l) => l.id === g.logId);
       if (i >= 0) {
         // Immutable update: the HUD short-circuits on the lines array's identity.
-        meta.log = meta.log.map((l, j) => (j === i ? { ...l, text } : l));
+        meta.log = meta.log.map((l, j) => (j === i ? { ...l, text, detail } : l));
         this.invalidate();
         return;
       }
     }
-    g.logId = this.log('engagement', g.attacker, text);
+    g.logId = this.log('engagement', g.attacker, text, undefined, detail);
   }
 
   /** The engagement is decided (conquest, or the attacker stopped): log, upsets, metrics. */
@@ -1851,13 +2001,15 @@ class Controller {
     this.tickBanners();
   }
 
-  private log(kind: LogLineVM['kind'], player: PlayerId | null, text: string, round?: number): number {
+  private log(kind: LogLineVM['kind'], player: PlayerId | null, text: string, round?: number, detail?: string): number {
     const meta = this.meta;
     const d = this.disp;
     if (!meta || !d) return 0;
     const id = meta.logId++;
     // A new array every time: the HUD short-circuits on the lines array's identity.
-    const next = [...meta.log, { id, round: round ?? d.round, seat: player !== null && d.players[player] ? seatRef(d, player) : null, kind, text }];
+    const line: LogLineVM = { id, round: round ?? d.round, seat: player !== null && d.players[player] ? seatRef(d, player) : null, kind, text };
+    if (detail) line.detail = detail;
+    const next = [...meta.log, line];
     meta.log = next.length > LOG_CAP ? next.slice(next.length - LOG_CAP) : next;
     this.invalidate();
     return id;
@@ -1870,6 +2022,126 @@ class Controller {
     } catch {
       /* audio is best-effort */
     }
+  }
+
+  // =========================================================================
+  // v4: cues, the score's lean and idle, the receipt (PLAN §3 A2–A3, §4 B3, §7)
+  // =========================================================================
+
+  /** A v4 cue; engines without `cue` stay silent. */
+  private cue(name: V4Cue, opts?: PlayOptions): void {
+    try {
+      this.audio.cue?.(name, opts);
+    } catch {
+      /* audio is best-effort */
+    }
+  }
+
+  /**
+   * A sheet of paper laid on the table (open) or lifted off it (close): overlays, the cards sheet, a
+   * confirm, the receipt. ('lift' is the audio branch's SfxVariant; cast until that type lands here.)
+   */
+  private sheet(open: boolean): void {
+    this.cue('sheet', open ? undefined : ({ variant: 'lift' } as unknown as PlayOptions));
+  }
+
+  /** A human lost a continent or a seat: the score leans cold for one chord (B3). */
+  private lean(): void {
+    try {
+      this.audio.lean?.('cold');
+    } catch {
+      /* audio is best-effort */
+    }
+  }
+
+  /** The table waits: the score thins after a minute untouched on a human's turn; any input brings it back. */
+  private setIdle(on: boolean): void {
+    if (on === this.idleOn) return;
+    this.idleOn = on;
+    try {
+      this.audio.setIdle?.(on);
+    } catch {
+      /* audio is best-effort */
+    }
+  }
+
+  /** Any input: the idle clock restarts and a thinned score comes back. */
+  private markActive(): void {
+    this.lastActive = this.now();
+    this.setIdle(false);
+  }
+
+  /** The deal (§7.1): one paper tick per flip, panned to where it lands, spread over the deal. */
+  private dealTicks(owners: Partial<Record<TerritoryId, PlayerId>>): void {
+    const ts = Object.keys(owners) as TerritoryId[];
+    const w = typeof window !== 'undefined' && window.innerWidth ? window.innerWidth : 0;
+    const span = 2.2 / Math.max(1, ts.length);
+    ts.forEach((t, i) => {
+      let pan: number | undefined;
+      if (w) {
+        const p = this.board.getScreenPosition(t);
+        if (p) pan = Math.max(-1, Math.min(1, (p.x / w) * 2 - 1));
+      }
+      this.cue('tick', { delay: i * span, ...(pan !== undefined ? { pan } : {}) });
+    });
+  }
+
+  private receipts(): ReceiptLedger {
+    const m = this.meta!;
+    return (m.receipts ??= emptyReceipts());
+  }
+
+  /**
+   * Open the receipt for `seat`'s turn `turn` if AI turns were played since its last one (A3). Idempotent
+   * per turn: the hand-off cover opens it first, the turn start finds it open (or already dismissed).
+   */
+  private openReceipt(seat: PlayerId, turn: number, sinceIn?: number, at?: GameState): void {
+    const meta = this.meta;
+    const s = at ?? this.state;
+    if (!meta || !s || this.autoplayOn || s.players[seat]?.kind !== 'human') return;
+    if (this.receipt && this.receipt.seat === seat && this.receipt.turn === turn) return;
+    const l = this.receipts();
+    if (l.done && l.done.seat === seat && l.done.turn === turn) return;
+    const since = sinceIn ?? receiptSince(l, seat);
+    if (since === null || since >= turn) return;
+    const title = this.resumedTitle ? 'Since your last turn' : 'While you were away';
+    const vm = buildReceipt(l, s, seat, since, title, ++this.receiptKey);
+    if (!vm) return;
+    this.resumedTitle = false;
+    this.receipt = { ...vm, seat, turn };
+    l.pending = { seat, turn, since };
+    this.pulse = [];
+    this.sheet(true);
+    this.saveMeta();
+    this.invalidate();
+  }
+
+  /** Any tap on the receipt: it lifts, and the turn banner it held back writes. */
+  private dismissReceipt(): void {
+    const r = this.receipt;
+    if (!r) return;
+    this.receipt = null;
+    this.pulse = [];
+    if (this.meta) {
+      const l = this.receipts();
+      l.pending = null;
+      l.done = { seat: r.seat, turn: r.turn };
+      this.saveMeta();
+    }
+    this.sheet(false);
+    const show = this.bannerAfterReceipt;
+    this.bannerAfterReceipt = null;
+    show?.();
+    // Behind the receipt the driver's first tap was spent on it: never carry it into the turn.
+    this.guardUntil = Math.max(this.guardUntil, this.now() + 150);
+    this.invalidate();
+  }
+
+  /** An offer's sentence; an AI's states its reason (A5): '… · 3 rounds · you share a border in Asia'. */
+  private offerSentence(s: GameState, o: { from: PlayerId; to: PlayerId; rounds: number; kind: Extract<GameEvent, { type: 'truceProposed' }>['kind'] }): string {
+    const base = truceSentence(s, { type: 'truceProposed', from: o.from, to: o.to, rounds: o.rounds, kind: o.kind }) ?? '';
+    const why = s.players[o.from]?.kind === 'ai' ? truceReason(s, o.from, o.to) : null;
+    return why ? `${base}${SEP}${why}` : base;
   }
 
   // =========================================================================
@@ -1906,9 +2178,16 @@ class Controller {
       this.hideNameCard();
       return;
     }
+    if (!this.showNameCard(info)) return this.hideNameCard();
+    this.haptics.play('select');
+  }
+
+  /** The name card for `info`'s territory at the pointer (touch long-press; v4 desktop click). */
+  private showNameCard(info: TerritoryPointerInfo): boolean {
+    const d = this.disp;
     const t = info.territory;
-    const tile = d.territories[t];
-    if (!tile) return this.hideNameCard();
+    const tile = d?.territories[t];
+    if (!d || !tile) return false;
     const c = TERRITORIES[t].continent;
     const owner = tile.owner >= 0 && d.players[tile.owner] ? seatRef(d, tile.owner) : null;
     this.nameCard = {
@@ -1921,8 +2200,8 @@ class Controller {
       y: info.clientY,
       key: ++this.nameCardKey,
     };
-    this.haptics.play('select');
     this.invalidate();
+    return true;
   }
 
   private hideNameCard(): void {
@@ -1934,6 +2213,12 @@ class Controller {
   private onBoardClick(info: TerritoryPointerInfo): void {
     this.boardClicks++;
     this.hideNameCard();
+    this.markActive();
+    // v4 A3: input to the board waits on the receipt; the tap dismisses it and does nothing else.
+    if (this.receipt && !this.overlay && !this.confirm) {
+      this.dismissReceipt();
+      return;
+    }
     if (this.turnBanner) this.dismissTurnBanner();
     const s = this.state;
     if (!s || this.screen !== 'game' || this.overlay || this.confirm) return;
@@ -1956,7 +2241,13 @@ class Controller {
     }
     const before = this.selKey();
     this.handleClick(info);
-    if (this.selKey() !== before) this.haptics.play('select');
+    if (this.selKey() !== before) {
+      this.haptics.play('select');
+      // §7.3: a tapped territory answers with a paper tick, and (desktop) its name card; the UI holds the
+      // card about a second and dries it.
+      this.cue('tick');
+      if (!this.touch) this.showNameCard(info);
+    }
   }
 
   /**
@@ -1972,6 +2263,12 @@ class Controller {
     if (live !== this.strokeLive) {
       this.strokeLive = live;
       this.invalidate();
+    }
+    this.markActive();
+    // v4 A3: no stroke arms anything while the receipt shows (a finished one dismisses it, like a tap).
+    if (this.receipt) {
+      if (st.done) this.dismissReceipt();
+      return;
     }
     if (!st.done) {
       this.hideNameCard();
@@ -2200,8 +2497,14 @@ class Controller {
       return;
     }
     if (after.territories[to].owner === me) {
-      // Auto-occupied conquest: chain.
-      this.sel = { ...emptySel(), selected: autoChain(after, from, to) };
+      // Auto-occupied conquest: chain. v4 A5: no choice was offered, so the line says what moved in.
+      const chain = autoChain(after, from, to);
+      this.sel = { ...emptySel(), selected: chain };
+      const mv = r.events.find((x): x is Extract<GameEvent, { type: 'armiesMoved' }> => x.type === 'armiesMoved' && x.reason === 'occupy');
+      if (mv) {
+        this.autoMoved = { to, n: mv.count, chain, turn: after.turn, until: this.now() + AUTO_MOVED_MS };
+        this.timer(() => this.invalidate(), AUTO_MOVED_MS + 20);
+      }
       return;
     }
     if (after.territories[from].armies < 2) this.sel = emptySel();
@@ -2229,6 +2532,11 @@ class Controller {
   }
 
   pressButton(id: ButtonId): void {
+    this.markActive();
+    if (this.receipt) {
+      this.dismissReceipt();
+      return;
+    }
     if (this.turnBanner) this.dismissTurnBanner();
     const s = this.state;
     if (!s || this.screen !== 'game') return;
@@ -2258,9 +2566,11 @@ class Controller {
       return;
     }
     const strip = this.currentStrip();
-    // The Cards sheet's own Trade button works whenever the sheet offers it.
+    // The Cards sheet's own Trade button works whenever the sheet offers it; a truce offer's small words
+    // (v4: the offer's own line) whenever it shows.
     const fromSheet = id === 'trade' && !!this.getViewModel().game?.cards?.trade;
-    if (!strip?.buttons.some((b) => b.id === id) && !fromSheet) return;
+    const fromOffer = !!strip?.offer?.buttons.some((b) => b.id === id);
+    if (!strip?.buttons.some((b) => b.id === id) && !fromSheet && !fromOffer) return;
     this.clearRejection();
     this.runButton(id);
     this.saveMeta();
@@ -2290,6 +2600,7 @@ class Controller {
       }
       case 'cards':
         this.cardsOpen = !this.cardsOpen;
+        this.sheet(this.cardsOpen);
         break;
       case 'roll':
         this.doAttack(false);
@@ -2369,6 +2680,11 @@ class Controller {
 
   /** A Turn Track click. Past and current segments are inert; a locked one explains itself. */
   pressTrack(seg: TrackSegId): void {
+    this.markActive();
+    if (this.receipt) {
+      this.dismissReceipt();
+      return;
+    }
     if (this.turnBanner) this.dismissTurnBanner();
     const s = this.state;
     if (!s || this.screen !== 'game') return;
@@ -2521,6 +2837,12 @@ class Controller {
    * Returns true when the key was consumed.
    */
   handleKey(key: string, repeat = false): boolean {
+    this.markActive();
+    // v4 A3: Enter, Space or Esc on the receipt dismisses it (and does nothing else).
+    if (this.receipt && !this.overlay && !this.confirm && this.screen === 'game' && (key === 'Enter' || key === ' ' || key === 'Escape')) {
+      if (!repeat) this.dismissReceipt();
+      return true;
+    }
     if (!this.menuKeys && (this.confirm || this.overlay || this.screen !== 'game' || this.handoff)) {
       // src/ui owns keys on menus, overlays, confirms and the hand-off cover.
       return false;
@@ -2609,6 +2931,9 @@ class Controller {
     if (o === 'rules' || o === 'settings' || o === 'log') {
       this.overlayReturn = this.overlay === 'rules' || this.overlay === 'settings' || this.overlay === 'log' ? this.overlayReturn : this.overlay;
     } else this.overlayReturn = null;
+    // §7.12 / E8: a sheet laid on the table or lifted off it.
+    // Switching one sheet for another (menu → settings) lays the new one down; closing lifts it.
+    if (o !== this.overlay) this.sheet(!!o);
     this.overlay = o;
     if (o) this.cardsOpen = false;
     this.invalidate();
@@ -2616,7 +2941,17 @@ class Controller {
   }
 
   intent(i: UiIntent): void {
+    this.markActive();
     switch (i.type) {
+      case 'receiptLine': {
+        // The line writing now pulses its territories on the board; the next line (or dismiss) clears it.
+        const line = this.receipt?.lines[i.index];
+        this.pulse = line ? [...line.territories] : [];
+        break;
+      }
+      case 'dismissReceipt':
+        this.dismissReceipt();
+        break;
       case 'nav':
         this.screen = i.screen;
         this.overlay = null;
@@ -2696,13 +3031,18 @@ class Controller {
       case 'setCount':
         this.setCount(i.value);
         break;
-      case 'cardsPanel':
+      case 'cardsPanel': {
+        const was = this.cardsOpen;
         this.cardsOpen = i.open && !!this.state && this.interactive() && this.state.phase.kind === 'reinforce';
+        if (was !== this.cardsOpen) this.sheet(this.cardsOpen);
         break;
+      }
       case 'handoffAccept':
         if (this.handoff) {
           this.handoff = null;
           this.guardUntil = this.now() + 250;
+          // The cover carried the receipt; starting the turn puts it away.
+          this.dismissReceipt();
         }
         break;
       case 'dismissTurnBanner':
@@ -2714,13 +3054,16 @@ class Controller {
           break;
         }
         this.confirm = { kind: 'endGame', text: this.endGameText() };
+        this.sheet(true);
         break;
       case 'restart':
         this.confirm = { kind: 'restart', text: `Restart this game?${SEP}Same seats, a new deal.` };
+        this.sheet(true);
         break;
       case 'confirm': {
         const c = this.confirm;
         this.confirm = null;
+        if (c) this.sheet(false);
         if (c && i.yes) {
           // Both leave the paused game behind: close the menu they were opened from.
           this.overlay = null;
@@ -2919,34 +3262,33 @@ class Controller {
     let s = this.state!;
     const p = s.currentPlayer;
     const key = this.aiTurnKey(s);
+    const speed = this.aiSpeed();
     if (!this.aiCtx || this.aiCtx.key !== key || this.aiCtx.player !== p) {
-      const opening = s.round === 1 && !this.humanHasPlayed;
-      const fresh: AiTurnCtx = {
-        key,
-        player: p,
-        startedAt: this.now(),
-        first: true,
-        briefCount: 0,
-        capped: false,
-        capMs: opening ? AI_OPENING_CAP_MS : AI_TURN_CAP_MS,
-        // Round 1 is a land grab: AI-vs-AI fights are pure headline there.
-        headlineMs: s.round <= 1 ? AI_OPENING_CAP_MS * 0.6 : s.round >= AI_HEADLINE_LATE_ROUND ? AI_HEADLINE_LATE_MS : AI_HEADLINE_MS,
-        compressFrom: s.round <= 1 ? 2 : 3,
-        fullCount: 0,
-      };
-      this.aiCtx = fresh;
-      if (s.turn > 0) this.timer(() => this.capAiTurn(fresh), fresh.capMs);
+      // v4 A1: count the turn's beats up front (a dry run of the AI on a copy), and compress every beat by
+      // the same factor when there are more than the cap. Nothing is ever snapped.
+      const opening = s.round <= 1 && !this.humanHasPlayed;
+      const beats = s.turn > 0 && speed !== 'instant' ? this.planAiBeats(s) : 0;
+      const cap = opening ? AI_BEATS_CAP_OPENING : AI_BEATS_CAP;
+      this.aiCtx = { key, player: p, startedAt: this.now(), first: true, beats, scale: beats > cap ? Math.max(AI_MIN_SCALE, cap / beats) : 1 };
     }
     const ctx = this.aiCtx;
-    const speed = this.aiSpeed();
-    const k = speed === 'fast' ? 0.4 : 1;
-    const overCap = ctx.capped || (s.turn > 0 && this.now() - ctx.startedAt > ctx.capMs);
-    const name = pName(s, p);
+    // Watch = beats at 1×, Fast = 2× (spacing, never pitch); a long turn's beats run faster by 1/scale.
+    const pace = (speed === 'fast' ? 2 : 1) / ctx.scale;
+    const k = 1 / pace;
     this.applyBoardSpeed();
 
-    if (speed === 'instant' || overCap) {
-      await this.aiInstantTurn(overCap && speed !== 'instant');
+    if (speed === 'instant') {
+      await this.aiInstantTurn();
       return;
+    }
+
+    // A5: the opening move of the game is an AI's: the room hears who goes first before anything moves.
+    if (this.meta && !this.meta.firstMoved) {
+      this.meta.firstMoved = true;
+      this.narration = goesFirst(pName(s, p));
+      this.invalidate();
+      await this.sleep(FIRST_BEAT_MS * k);
+      if (this.state !== s || !this.aiShouldAct()) return;
     }
 
     const ph = s.phase.kind;
@@ -2954,7 +3296,7 @@ class Controller {
       const a = this.chooseFor(s);
       const r = this.applyRaw(a);
       if (!r.ok) return this.aiFallback();
-      this.enqueue(r.events.map((ev, i) => ({ ev, after: r.state, end: i === r.events.length - 1 })), { ai: true });
+      this.enqueue(r.events.map((ev, i) => ({ ev, after: r.state, end: i === r.events.length - 1 })), { ai: true, style: 'readable', speed: pace });
       await this.sleep(120 * k);
       return;
     }
@@ -2978,37 +3320,35 @@ class Controller {
         r.events.forEach((ev, i) => collected.push({ ev, after: r.state, end: i === r.events.length - 1 }));
         if (a.type === 'endReinforce') break;
       }
-      // The narration follows the drops as they land (onEventStart).
+      // The narration follows the drops as they land (onEventStart): tier-0 swells inside one short beat.
       const drops = collected.filter((x) => x.ev.type === 'armiesPlaced').length;
-      const budget = ph === 'setup-place' ? 800 : 1000;
-      const stagger = drops > 1 ? Math.min(50 * k, (budget - 290) / (drops - 1)) : 0;
-      this.enqueue(collected, { ai: true, style: 'brief', stagger: Math.max(10, stagger) });
+      const budget = (ph === 'setup-place' ? 600 : AI_PLACE_MS) * k;
+      const stagger = drops > 1 ? Math.min(50 * k, Math.max(0, budget - 290 * k) / (drops - 1)) : 0;
+      this.enqueue(collected, { ai: true, style: 'readable', stagger: Math.max(10, stagger), speed: pace });
       return;
     }
 
     if (ph === 'occupy') {
       const r = this.applyRaw(this.chooseFor(s));
-      if (!r.ok) return this.aiFallback();
-      this.enqueue(r.events.map((ev, i) => ({ ev, after: r.state, end: i === r.events.length - 1 })), { ai: true });
+      if (!r.ok) return this.aiFallback(pace);
+      this.enqueue(r.events.map((ev, i) => ({ ev, after: r.state, end: i === r.events.length - 1 })), { ai: true, style: 'readable', speed: pace });
       return;
     }
 
     if (ph === 'attack') {
       const a0 = this.chooseFor(s);
       if (isAttackAction(a0)) {
-        // Once AI-vs-AI fights are compressed (2× / snapped), the pause between them shrinks too.
-        const late = this.now() - ctx.startedAt > ctx.headlineMs;
-        const between = ctx.briefCount >= ctx.compressFrom || late ? THINK_BETWEEN_COMPRESSED : THINK_BETWEEN;
-        await this.sleep((ctx.first ? THINK_TURN_START : between) * k);
+        // One even breath before each engagement, so the line is read before the next begins.
+        await this.sleep((ctx.first ? THINK_TURN_START : AI_GAP_MS) * k);
         ctx.first = false;
         if (this.state !== s || !this.aiShouldAct()) return;
-        await this.aiEngagement(a0, speed, ctx);
+        await this.aiEngagement(a0, pace);
         return;
       }
       ctx.first = false;
       const r = this.applyRaw(a0);
-      if (!r.ok) return this.aiFallback();
-      this.enqueue(r.events.map((ev, i) => ({ ev, after: r.state, end: i === r.events.length - 1 })), { ai: true });
+      if (!r.ok) return this.aiFallback(pace);
+      this.enqueue(r.events.map((ev, i) => ({ ev, after: r.state, end: i === r.events.length - 1 })), { ai: true, style: 'readable', speed: pace });
       return;
     }
 
@@ -3017,32 +3357,54 @@ class Controller {
       if (a.type === 'fortify') {
         this.aiHighlights = { arrow: { from: a.from, to: a.to, kind: 'fortify', path: fortifyPath(s, a.from, a.to) ?? undefined } };
         this.invalidate();
+        await this.sleep(AI_GAP_MS * k);
+        if (this.state !== s || !this.aiShouldAct()) return;
       }
       const r = this.applyRaw(a);
-      if (!r.ok) return this.aiFallback();
-      this.enqueue(r.events.map((ev, i) => ({ ev, after: r.state, end: i === r.events.length - 1 })), { ai: true });
+      if (!r.ok) return this.aiFallback(pace);
+      this.enqueue(r.events.map((ev, i) => ({ ev, after: r.state, end: i === r.events.length - 1 })), { ai: true, style: 'readable', speed: pace });
       return;
     }
   }
 
-  /** 10 s into an AI turn: finish what's animating now and play the rest at instant (UX.md §6.1). */
-  private capAiTurn(ctx: AiTurnCtx): void {
-    const s = this.state;
-    if (this.aiCtx !== ctx || !s || s.currentPlayer !== ctx.player || s.phase.kind === 'game-over' || this.aiSpeed() === 'instant') return;
-    const d = this.disp;
-    if (!d || d.currentPlayer !== ctx.player) return;
-    ctx.capped = true;
-    for (const e of this.queue) if (e.ai && e.ev.type !== 'turnStarted') e.speed = 0;
-    this.setBoardSpeed(0);
-    this.board.skipAnimations();
-    this.wakeAll();
+  /**
+   * The beats this AI turn will play (engagements, plus one for a fortify), from a dry run of the AI on a
+   * copy of the state. The engine is deterministic, so the count matches the turn about to be played.
+   */
+  private planAiBeats(s0: GameState): number {
+    const p = s0.currentPlayer;
+    let s = s0;
+    let beats = 0;
+    let pair = '';
+    try {
+      for (let guard = 0; guard < 2000; guard++) {
+        if (s.phase.kind === 'game-over' || s.currentPlayer !== p || s.turn !== s0.turn) break;
+        let a = chooseAiAction(s, p);
+        let r = applyAction(s, a);
+        if (!r.ok) {
+          a = fallbackAction(s, p);
+          r = applyAction(s, a);
+          if (!r.ok) break;
+        }
+        if (isAttackAction(a)) {
+          const k = `${a.from}>${a.to}`;
+          if (k !== pair) beats++;
+          pair = k;
+        } else if (a.type !== 'occupy') pair = '';
+        if (a.type === 'fortify') beats++;
+        s = r.state;
+      }
+    } catch {
+      return beats;
+    }
+    return beats;
   }
 
-  private aiFallback(): void {
+  private aiFallback(pace?: number): void {
     const s = this.state;
     if (!s) return;
     const r = this.applyRaw(fallbackAction(s, s.currentPlayer));
-    if (r.ok) this.enqueue(r.events.map((ev, i) => ({ ev, after: r.state, end: i === r.events.length - 1 })), { ai: true });
+    if (r.ok) this.enqueue(r.events.map((ev, i) => ({ ev, after: r.state, end: i === r.events.length - 1 })), { ai: true, style: 'readable', ...(pace ? { speed: pace } : {}) });
   }
 
   private onScreenForAi(t: TerritoryId): boolean {
@@ -3072,20 +3434,16 @@ class Controller {
     }
   }
 
-  private async aiEngagement(first: Extract<Action, { type: 'attack' | 'blitz' }>, speed: AiSpeed, ctx: AiTurnCtx): Promise<void> {
+  /**
+   * One AI engagement as a readable beat (v4 A1, sitting 2026-10-03 Q7): never the dice show, never snapped.
+   * The stroke draws, one bone click stands in for every roll, the verdict floods, and the line completes:
+   * 'Sage attacks Ural…' → '… and takes it' / '… and is thrown back'. `pace` is the turn's board speed.
+   */
+  private async aiEngagement(first: Extract<Action, { type: 'attack' | 'blitz' }>, pace: number): Promise<void> {
     const s0 = this.state!;
     const p = s0.currentPlayer;
     const { from, to } = first;
-    const defender = s0.territories[to].owner;
-    // Fights against a human get the full show; once the turn is past its headline point, later ones
-    // play brief (still visible: arrow, badge ticks, flip) instead of stalling the room.
-    const pastHeadline = this.now() - ctx.startedAt > ctx.headlineMs;
-    const full =
-      speed === 'watch' && this.isHumanSeat(defender, s0) && !this.autoplayOn && !pastHeadline && ctx.fullCount < AI_FULL_FIGHTS_PER_TURN;
-    if (full) ctx.fullCount++;
-    const vsHuman = this.isHumanSeat(defender, s0) && !this.autoplayOn;
-    const style: 'full' | 'brief' = full ? 'full' : 'brief';
-    const collected: { ev: GameEvent; after: GameState; end: boolean }[] = [];
+    const collected: { ev: GameEvent; after: GameState; end: boolean; verdict?: 'held' }[] = [];
     let act: Action = first;
     for (let guard = 0; guard < 60; guard++) {
       const r = this.applyRaw(act);
@@ -3109,39 +3467,27 @@ class Controller {
     }
     const d = this.disp!;
     const planned = this.state;
-    this.narration = `${pName(d, p)} attacks ${tName(to)}`;
-    // Camera: frame the fight once if it's off-screen, before the arrow (UX.md §8.3).
+    this.narrBegun = attackBegins(pName(d, p), tName(to));
+    this.narration = this.narrBegun;
+    // No conquest: the last roll carries the verdict, and the line completes on it.
+    if (!collected.some((x) => x.ev.type === 'territoryConquered')) {
+      for (let i = collected.length - 1; i >= 0; i--) {
+        if (collected[i].ev.type === 'diceRolled') {
+          collected[i] = { ...collected[i], verdict: 'held' };
+          break;
+        }
+      }
+    }
+    // Camera: frame the fight once if it's off-screen, before the arrow (UX.md §8.3). The camera leans.
     if (!this.onScreenForAi(from) || !this.onScreenForAi(to)) {
       this.board.focusTerritories([from, to]);
       await this.waitCamera();
       if (this.state !== planned) return;
     }
-    // A snapped fight (AI vs AI past the headline point) plays at once and its own event dries the arrow;
-    // a telegraph set now would land after that and redraw the stroke over the next turn's start (INK F6).
-    const snapped = !full && !vsHuman && pastHeadline;
-    if (!snapped) this.aiHighlights = { selected: from, targets: [to], arrow: { from, to, kind: 'attack' } };
-    if (full) {
-      this.aiPreview = { from, to };
-      this.invalidate();
-      await this.sleep(TELEGRAPH_MS);
-    }
     if (this.state !== planned) return;
+    this.aiHighlights = { selected: from, targets: [to], arrow: { from, to, kind: 'attack' } };
     this.invalidate();
-    // Weight follows stakes: AI-vs-AI fights are headlines. From the third one in a turn they run at 2×,
-    // and once the turn is past its headline point (6 s; 4 s from round 4) they snap (the result still lands).
-    let boardSpeed: number | undefined;
-    let snap = false;
-    if (!full && !vsHuman) {
-      ctx.briefCount++;
-      if (ctx.briefCount >= ctx.compressFrom && speed === 'watch') boardSpeed = 2;
-      if (snapped) snap = true;
-    } else if (!full && vsHuman && speed === 'watch') {
-      // Past the headline point or the full-fight cap, fights against a human stay visible (arrow, ticks,
-      // flip; never snapped) but run at 2×, so a rampage doesn't stall the room. The recap lists them.
-      boardSpeed = 2;
-    }
-    // (A snapped conquest still gets the instant-speed 250 ms beat in the pump.)
-    this.enqueue(collected, { ai: true, style, speed: snap ? 0 : boardSpeed });
+    this.enqueue(collected, { ai: true, style: 'readable', speed: pace });
     const beat = this.beat - 1;
     // Clear the telegraph once this engagement's events have played.
     const clear = () => {
@@ -3156,8 +3502,8 @@ class Controller {
     this.timer(clear, 50);
   }
 
-  /** Instant AI speed (and the 10 s cap): the rest of the turn snaps, then a 300 ms beat. */
-  private async aiInstantTurn(capped: boolean): Promise<void> {
+  /** Skip (AI speed 'instant'): the turn applies at once, then a 300 ms beat; the receipt carries it (A1). */
+  private async aiInstantTurn(): Promise<void> {
     const s0 = this.state!;
     const p = s0.currentPlayer;
     const turn = s0.turn;
@@ -3172,7 +3518,8 @@ class Controller {
       const rr = r;
       rr.events.forEach((ev, i) => collected.push({ ev, after: rr.state, end: i === rr.events.length - 1 }));
     }
-    this.narration = capped ? `${pName(s0, p)} finishes the turn` : `${pName(s0, p)} is playing`;
+    this.narration = `${pName(s0, p)} is playing`;
+    this.narrBegun = null;
     this.aiHighlights = null;
     this.aiPreview = null;
     this.enqueue(collected, { ai: true, skip: true });
@@ -3220,7 +3567,9 @@ class Controller {
       cards,
       log: this.meta.log,
       round: d.round,
+      // v4: the HUD shows ONE line (strip.line); these two stay for the HUD's own use, never a transcript.
       events: this.meta.log.slice(-2),
+      receipt: this.receiptVM(),
       ...(this.updateReady ? { updateReady: true } : {}),
       banner,
       handoff: this.handoff ? { seat: seatRef(d, this.handoff.player), subline: this.handoffSubline(this.handoff.player) } : null,
@@ -3250,6 +3599,16 @@ class Controller {
     if (strip.mode === 'idle') return null;
     const cur = tr.segments.find((x) => x.state === 'current');
     return cur ? { kind: 'segment', seg: cur.id } : null;
+  }
+
+  /** The receipt as the UI sees it (no controller bookkeeping); stable while unchanged. */
+  private receiptVM(): ReceiptVM | null {
+    const r = this.receipt;
+    if (!r) return null;
+    const { seat: _s, turn: _t, ...vm } = r;
+    void _s;
+    void _t;
+    return vm;
   }
 
   private handoffSubline(p: PlayerId): string {
@@ -3348,6 +3707,7 @@ class Controller {
       d.territories[sel.selected].owner === me && d.territories[sel.target].owner === me
         ? sel.target
         : null;
+    const am = this.autoMoved && this.autoMoved.turn === d.turn && this.now() < this.autoMoved.until ? this.autoMoved : null;
     const strip = buildStrip({
       s: d,
       sel,
@@ -3362,36 +3722,39 @@ class Controller {
       rolling: this.fightPlaying(),
       boardPreview: this.boardPreview(),
       took,
+      tookMoved: am && took === am.to ? am.n : null,
     });
+    // v4 A5: after the conquest has played, the auto-move stays said until the driver picks something else.
+    if (
+      interactive && am && !took && strip.mode === 'attack' && strip.lineKind !== 'rejection' &&
+      sel.selected === am.chain && !sel.target && d.territories[am.to].owner === me
+    ) {
+      strip.line = tookLine(am.to, am.n);
+    }
     // The cards sheet's `Trade for +N` is the brass thing while it's open: one brass fill on screen.
     if (this.cardsOpen && interactive && d.phase.kind === 'reinforce' && bestSet(d, me)) {
       strip.buttons = strip.buttons.map((b) => (b.primary ? { ...b, primary: false } : b));
       strip.track = { ...strip.track, primary: false };
     }
-    // Diplomacy (v3). An offer to the driver asks first: the line is its sentence, the dock says Accept
-    // (in the brush ring, the one gold; the track's underline yields) and Decline (bare). Otherwise, in
-    // Attack with nothing armed, `Truce` sits bare in the secondary slot while someone can take one.
+    // Diplomacy (v3; v4 A5 the review's bug). An offer to the driver never takes the line, the count or the
+    // buttons: it rides as a secondary line with 'Accept' / 'Decline' as small words, and `Place N` stays
+    // the one gold. Otherwise, in Attack with nothing armed, `Truce` sits bare in the secondary slot while
+    // someone can take one.
+    let out = strip;
     if (interactive) {
       const offer = this.pendingOffer();
       if (offer) {
-        const said = truceSentence(d, { type: 'truceProposed', from: offer.from, to: offer.to, rounds: offer.rounds, kind: offer.kind }) ?? '';
-        if (strip.lineKind !== 'rejection') strip.line = said;
-        strip.count = null;
-        strip.buttons = [
-          { id: 'declineTruce', label: 'Decline', primary: false },
-          { id: 'acceptTruce', label: 'Accept', primary: true },
-        ];
-        strip.track = { ...strip.track, primary: false };
+        out = withOffer(strip, this.offerSentence(d, offer));
       } else if (strip.mode === 'attack' && strip.buttons.length === 0 && this.truceSeats().length > 0) {
-        strip.buttons = [{ id: 'truce', label: 'Truce', primary: false }];
-        if (this.truceMode && strip.lineKind !== 'rejection') strip.line = `Offer a ${TRUCE_ROUNDS}-round truce${SEP}${click()} a seat`;
+        out.buttons = [{ id: 'truce', label: 'Truce', primary: false }];
+        if (this.truceMode && strip.lineKind !== 'rejection') out.line = `Offer a ${TRUCE_ROUNDS}-round truce${SEP}${click()} a seat`;
       }
     }
-    if (this.now() < this.holdUntil && strip.buttons.length) {
-      strip.buttons = strip.buttons.map((b) => (b.primary ? { ...b, busy: true } : b));
+    if (this.now() < this.holdUntil && out.buttons.length) {
+      out.buttons = out.buttons.map((b) => (b.primary ? { ...b, busy: true } : b));
       this.timer(() => this.invalidate(), this.holdUntil - this.now() + 10);
     }
-    return strip;
+    return out;
   }
 
   private buildBattle(d: GameState, sel: Sel, interactive: boolean): BattleVM | null {
@@ -3472,7 +3835,32 @@ class Controller {
     return TERRITORY_IDS.filter((t) => out.has(t));
   }
 
+  /**
+   * The board's highlights: the driver's (or the AI's telegraph), plus v4's loser's rings (A4) and the
+   * receipt line's pulse (A3). While the receipt shows, the board offers nothing to click.
+   */
   private buildHighlights(): BoardHighlights {
+    const base = this.receipt ? {} : this.baseHighlights();
+    const rings = this.loserRings();
+    if (!rings.length && !this.pulse.length) return base;
+    return { ...base, ...(rings.length ? { loserRings: rings } : {}), ...(this.pulse.length ? { pulse: this.pulse } : {}) };
+  }
+
+  /** Territories each human lost since its last turn, still held by someone else, in the loser's colour. */
+  private loserRings(): NonNullable<BoardHighlights['loserRings']> {
+    const d = this.disp;
+    const rings = this.meta?.rings;
+    if (!d || !rings || this.screen !== 'game') return [];
+    const out: NonNullable<BoardHighlights['loserRings']> = [];
+    for (const [k, ts] of Object.entries(rings)) {
+      const seat = d.players[Number(k)];
+      if (!seat || seat.eliminated) continue;
+      for (const t of ts) if (d.territories[t] && d.territories[t].owner !== seat.id) out.push({ territory: t, color: seat.color });
+    }
+    return out;
+  }
+
+  private baseHighlights(): BoardHighlights {
     const s = this.state;
     const d = this.disp;
     if (!s || !d || this.screen !== 'game') return {};
@@ -3648,6 +4036,10 @@ class Controller {
 
   private sampleCamera(): void {
     const tick = () => {
+      // v4 B3 / §7.14: a minute untouched on a human's turn (no input, no events), the table waits.
+      if (!this.idleOn && this.screen === 'game' && this.interactive() && this.queue.length === 0 && !this.blockingNow && this.now() - this.lastActive >= IDLE_MS) {
+        this.setIdle(true);
+      }
       if (this.screen === 'game') {
         const moved = this.boardDisplaced();
         if (moved !== null && moved !== this.viewMoved) {
@@ -3683,6 +4075,7 @@ class Controller {
     const onCtx = () => this.countClick();
     const onPointer = () => {
       this.pointerActiveUntil = this.now() + 1000;
+      this.markActive();
     };
     // Ocean clicks: the board reports territory clicks synchronously from its canvas pointerup, so a
     // short press on the canvas that produced no territory click by the time it bubbles here missed land.
@@ -3834,6 +4227,16 @@ class Controller {
     }
   }
 
+  /** Test hook (v4): the receipt showing now. */
+  receiptHook(): ReceiptVM | null {
+    return this.receiptVM();
+  }
+
+  /** Test hook (v4): the loser's rings on the board now. */
+  loserRingsHook(): NonNullable<BoardHighlights['loserRings']> {
+    return this.loserRings();
+  }
+
   /** Test hook (v3): the ledger, oldest first. */
   ledgerHook(): { id: number; round: number; kind: string; text: string }[] {
     return (this.meta?.log ?? []).map((l) => ({ id: l.id, round: l.round, kind: l.kind, text: l.text }));
@@ -3880,6 +4283,8 @@ class Controller {
       viewMoved: !!g?.viewMoved,
       gold: !g?.gold ? null : g.gold.kind === 'button' ? `button:${g.gold.id}` : g.gold.kind === 'segment' ? `segment:${g.gold.seg}` : g.gold.kind,
       bannerLine: g?.banner?.line ?? null,
+      offer: strip?.offer ? { text: strip.offer.text, buttons: strip.offer.buttons.map((x) => x.label) } : null,
+      receipt: g?.receipt ? { title: g.receipt.title, lines: g.receipt.lines.map((l) => l.text), summary: g.receipt.summary } : null,
     };
   }
 
@@ -3999,6 +4404,9 @@ export function createController(opts: { board: BoardView; audio: AudioEngine } 
     },
     metrics: () => c.metrics(),
     resetMetrics: () => c.resetMetrics(),
+    receipt: () => c.receiptHook(),
+    dismissReceipt: () => c.intent({ type: 'dismissReceipt' }),
+    loserRings: () => c.loserRingsHook(),
   };
   return {
     getViewModel: () => c.getViewModel(),
