@@ -5,21 +5,25 @@ A world-conquest board game in the classic Risk mold, for John and up to three f
 laptop, TV or phone: "ready for me to play with my friends." It should feel like sitting inside a quiet
 ink painting that the table fights over. The calm is the point, and the fights are punctuation. The board
 stays easy to read, so the room supplies the noise.
+Built for the friend who just looked up from their phone: intermittent attention, couch distance. The host
+explains the rules; the board explains the state. (Added 2026-10-03, from the v4 sitting.)
 
 ## The moment
 Round 6, on the couch. Indigo paper fills the screen, silver ink coastlines faintly breathing, mist drifting
 over the ocean, and a soft score somewhere underneath. Sam drags from Ural toward Siberia; a gold brush stroke
 follows his finger. Bone dice click into the tray, and a breath later John's figure dissolves into ink smoke.
 Sam's color soaks across the border. John says "you'll pay for that". Then the board settles back into
-its slow drift, and nobody had to ask what happened.
+its slow drift, and nobody had to ask what happened. The cup slides to Priya, the score leans a shade warmer,
+and Priya knows it is her turn before anyone says so.
 **And after:** someone demands a rematch because of Siberia.
 
 ## Pillars
 1. **The calm is the experience, not a pause between action.** John's words: "the calm itself" is the peak. Test:
    an idle board is something you'd leave on screen; it drifts and breathes like clouds, never static, never busy.
-2. **Readable at a glance, not decorated.** "Game UI benefits from a more minimalist aesthetic given how much
-   information is shown." Test: from across a room, every territory's owner and army count reads instantly;
-   nothing on screen that isn't information or the one thing happening now.
+2. **Readable from the couch, not decorated.** "Game UI benefits from a more minimalist aesthetic given how much
+   information is shown." Test: a non-acting player answers in one second from the couch: whose turn, who holds
+   Asia, where the biggest army is, what just happened. Nothing on screen that isn't information or the one
+   thing happening now. (Rewritten 2026-10-03; the four questions are the glance test.)
 3. **Ink linework as structure, not Japan-shop props.** The linework must be honored ("doesn't honor the
    japanese ink linework style"), but the prop-heavy sumi-e board was "a bit of a mess". Test: brush strokes
    are the board's own lines; no kanji, seals, blossoms, Fuji, or proverbs anywhere.
@@ -38,6 +42,9 @@ its slow drift, and nobody had to ask what happened.
 - **Komorebi**: take how simple and beautiful it is; leave its UI patterns ("definitely not great for a game").
 - **John's portrait-site reference (`john-ref-2-portrait-site.webp`)**: take the elegant serif and the soft
   ink-and-wash warmth; leave the light theme.
+- **Wingspan's evening** (the digital edition, chosen 2026-10-03 as the touchstone for *cozy*): take one
+  continuous soundscape with the effects living inside it, warm light, nothing abrupt; leave its light palette
+  and its card-heavy UI.
 
 ## Feel
 - Look: deep indigo paper, silver-ivory ink, muted pigment washes, a single gold for what's happening now.
@@ -45,7 +52,15 @@ its slow drift, and nobody had to ask what happened.
   quick sure strokes in action.
 - Hands: tapping the board only picks; a button or a finished brush stroke commits. Nothing new makes you
   wait, and a tap during motion finishes it.
-- Sound: a soft ambient score always underneath; paper, brush, wood and bone when something happens.
+- Sound: a soft ambient score always underneath; paper, brush, wood and bone when something happens. One room:
+  the score is the air, every effect is a thing happening in that air, in its key and its hall. Nothing is a
+  notification. (2026-10-03)
+- Cozy at rest, sharp in the moment (2026-10-03): the room is warm (paper, a candle gold, a warm vignette at the
+  margins, a score in warm colours, slow drift you can see). The fights are the one place the room goes cold for
+  a breath. Cozy never means polite: see Pillar 4.
+- Physicality (2026-09-30): everything on the board is a painted thing; a piece is a thing because it has an
+  edge, a painted shadow and it moves. Never lit, never 3D. Armies are painted stones sized by strength with the
+  unit figure standing on them; the figures never leave the board again.
 - Words: plain English with real names and numbers; no poetry, no proverbs, no exclamation marks.
 
 ## Open
@@ -63,6 +78,13 @@ the Turn Track, and "board clicks select, buttons commit" are in docs/ROUND2.md 
 - 2026-09-28 · Claude and Fable plans: both proposed pure stillness; John wants slow, cloud-like motion. Both
   kept a ghost of the old owner's color, which muddies reading. Claude's generated haiku wasn't wanted. Both
   made elimination purely gentle; John wants losing to sting. Both had music off; John wants a soft score.
+- 2026-09-30 · v3 disc stacks: lacquered chips with specular light and a tilted camera on a matte painted board.
+  Missed "one medium". Meant: painted things, one light, flat board ("the stacks don't look good").
+- 2026-09-30 · v3 first stones: figures removed to make the stone the mark. Missed the touchstone (ivory figure
+  on an owner-coloured blot). John: "Bring the icons back."
+- 2026-09-30 · v3 at rest: 42 equal-weight marks, three light models, six edge weights, a grey transcript. Read as
+  "fundamentally very busy and ugly" and "a standard video game with abstracted UI". Meant: one hand, three
+  layers of contrast, the board announces (v4).
 
 ## Before you plan, delegate, or call it done
 1. Hold the plan or build against the moment and each pillar: serves it,
