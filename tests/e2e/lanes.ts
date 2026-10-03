@@ -61,6 +61,7 @@ export const FLOWS: Record<string, FlowSpec> = {
     lane: 'logic',
     why: 'v3 table cues: stacks drawn with their counts, the cup beside the current seat, one ledger line per event, a held continent inked in its holder, the turn banner ≤ 300 ms after the turn starts (instant speed: a sanity bound, the banner is set in the same frame)',
   },
+  v4: { lane: 'logic', realtime: true, why: 'v4 audits: type scale and numeral floor, drift ≥ 1 px / 2 s, tier bands on a real fight, a pending truce never hides Place N' },
   squint: { lane: 'logic', why: 'v3 squint guard: at 30 % scale, the five tallest stacks and the continent outlines out-contrast the washes (numbers reported)' },
   pwa: { lane: 'logic', why: 'manifest, service worker, offline boot (its own production build and server)' },
   surfaces: {
