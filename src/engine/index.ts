@@ -90,3 +90,4 @@ export {
   TRUCE_MAX_ROUNDS,
 } from './diplomacy';
 export { NEUTRAL_SETUP } from './setup';
+export { standingOf, standingReason, canAskPeace, type Standing } from './standing';

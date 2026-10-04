@@ -164,6 +164,17 @@ export interface SeatChipVM {
   /** Additive (v5 D): the one plain line this AI said last ('Sage remembers that'), shown in its light tint. */
   voiceLine?: string | null;
   /**
+   * Additive (v5.1 C): this AI seat's standing toward the reader (the current human), for the small ink mark beside
+   * its ring: hollow (ally) → filling → solid in the seat's deep tone (hostile). Absent for humans / when unknown.
+   */
+  standing?: 'ally' | 'even' | 'wary' | 'hostile' | null;
+  /** Additive (v5.1 C): the reason, one plain sentence, written in the one line on hover / long-press. */
+  standingReason?: string | null;
+  /** Additive (v5.1 C): the reader may ask this seat for peace now (a tap offers 'Ask Sage for peace'). */
+  canAskPeace?: boolean;
+  /** Additive (v5.1 C): AI-to-AI understanding: the seat ids this AI currently holds a truce with (a hairline tie). */
+  understandingWith?: PlayerId[];
+  /**
    * Additive (ink overhaul, docs/INK.md A5 "your seat ring dims for 300 ms"): bumps each time this seat
    * loses a territory on the displayed board (as the conquest plays), so the UI can re-run the dim. 0 = never.
    */
@@ -615,6 +626,9 @@ export type UiIntent =
   | { type: 'tapLane'; from: TerritoryId; to: TerritoryId }
   | { type: 'hoverSeat'; player: PlayerId | null }
   | { type: 'stoneHistory'; territory: TerritoryId | null }
+  /** v5.1 standing: hover / long-press a seat ring for its reason (null on leave); tap → 'Ask X for peace' offered; confirm. */
+  | { type: 'seatStanding'; player: PlayerId | null }
+  | { type: 'askPeace'; to: PlayerId }
   /**
    * Additive (v5 G): long-press of a seat mark. For the seat whose turn it is (a live human turn, no cover), its
    * secret mission writes on the line for a moment; for anyone else nothing (missions are secret). null = released.

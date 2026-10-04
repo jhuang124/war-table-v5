@@ -24,7 +24,7 @@ and Priya knows it is her turn before anyone says so.
    information is shown." Test: a non-acting player answers in one second from the couch: whose turn, who holds
    Asia, where the biggest army is, what just happened. Nothing on screen that isn't information or the one
    thing happening now. (Rewritten 2026-10-03; the four questions are the glance test.)
-3. **Ink linework as structure, not Japan-shop props.** The linework must be honored ("doesn't honor the
+3. **Ink linework as structure, not Japan-shop props, and no objects as UI.** The linework must be honored ("doesn't honor the
    japanese ink linework style"), but the prop-heavy sumi-e board was "a bit of a mess". Test: brush strokes
    are the board's own lines; no kanji, seals, blossoms, Fuji, or proverbs anywhere.
 4. **Losing stings; the rivalry is real, not polite.** Test: when you lose a territory or get knocked out, you
@@ -58,6 +58,13 @@ and Priya knows it is her turn before anyone says so.
 - Cozy at rest, sharp in the moment (2026-10-03): the room is warm (paper, a candle gold, a warm vignette at the
   margins, a score in warm colours, slow drift you can see). The fights are the one place the room goes cold for
   a breath. Cozy never means polite: see Pillar 4.
+- Decide, don't ask (2026-10-04): the game picks sensible defaults and never presents a window, token or prompt
+  whose only purpose is to be dismissed or configured. Anything on screen that is not information or the one
+  thing happening now goes. Whose turn, what happened and what you may do are carried by colour, weight and the
+  one line, never by a screen.
+- No objects as UI (2026-10-04): the board is ink and the HUD is type and the gold rule. A rendered object that
+  stands in for a state (a cup for "whose turn") reads as a prop however well it is painted. Of the table cues,
+  three survive as information: stone size, printed continents, visible water. The cup does not.
 - Physicality (2026-09-30): everything on the board is a painted thing; a piece is a thing because it has an
   edge, a painted shadow and it moves. Never lit, never 3D. Armies are painted stones sized by strength with the
   unit figure standing on them; the figures never leave the board again.
@@ -85,6 +92,9 @@ the Turn Track, and "board clicks select, buttons commit" are in docs/ROUND2.md 
 - 2026-09-30 · v3 at rest: 42 equal-weight marks, three light models, six edge weights, a grey transcript. Read as
   "fundamentally very busy and ugly" and "a standard video game with abstracted UI". Meant: one hand, three
   layers of contrast, the board announces (v4).
+- 2026-10-03 · v4/v5 ceremony: the hand-off cover, the cup, the truce offer protocol and the personality picker
+  asked the player to operate the software ("don't need a whole window", "cup still feels in the wrong style",
+  "truces don't work intuitively", "just randomize"). Meant: decide, don't ask; no objects as UI.
 
 ## Before you plan, delegate, or call it done
 1. Hold the plan or build against the moment and each pillar: serves it,

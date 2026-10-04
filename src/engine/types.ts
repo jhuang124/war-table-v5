@@ -345,7 +345,13 @@ export type Action =
    */
   | { type: 'proposeTruce'; player: PlayerId; to: PlayerId; rounds: number; kind: TruceKind }
   /** Additive. A human answers a pending offer from `from`. Allowed out of turn. */
-  | { type: 'answerTruce'; player: PlayerId; from: PlayerId; accept: boolean };
+  | { type: 'answerTruce'; player: PlayerId; from: PlayerId; accept: boolean }
+  /**
+   * v5.1 (standing): a human asks an AI for peace on its main turn. The engine answers at once from the AI's
+   * standing (event `peaceAnswered`); agreed peace pins standing to ally for `rounds`; attacking during it is
+   * `peaceBroken` and drops the breaker to hostile for the rest of the game.
+   */
+  | { type: 'askPeace'; player: PlayerId; to: PlayerId };
 
 export type ActionType = Action['type'];
 
@@ -418,6 +424,12 @@ export type GameEvent =
   | { type: 'controllerChanged'; player: PlayerId; kind: PlayerKind; difficulty?: AiDifficulty; personality?: AiPersonality }
   // Diplomacy (additive). `truceSentence(state, event)` gives each one plain-English line.
   | { type: 'truceProposed'; from: PlayerId; to: PlayerId; rounds: number; kind: TruceKind }
+  /** v5.1: the AI's answer to askPeace, at once, with its reason ('Sage agrees · three rounds' / 'Sage refuses · you took Ural'). */
+  | { type: 'peaceAnswered'; from: PlayerId; to: PlayerId; accepted: boolean; rounds: number; reason: string }
+  /** v5.1: `by` attacked `against` while at peace; `by` is hostile to `against` for the rest of the game. */
+  | { type: 'peaceBroken'; by: PlayerId; against: PlayerId }
+  /** v5.1: an AI's standing toward a seat changed (for the seat mark and the one line). */
+  | { type: 'standingChanged'; ai: PlayerId; toward: PlayerId; standing: 'ally' | 'even' | 'wary' | 'hostile' }
   | { type: 'truceAccepted'; from: PlayerId; to: PlayerId; rounds: number; kind: TruceKind; until: number }
   | { type: 'truceDeclined'; from: PlayerId; to: PlayerId; rounds: number; kind: TruceKind; reason: 'declined' | 'lapsed' }
   /** `by` attacked `against` while a truce held. Emitted before the attack's first diceRolled. */
