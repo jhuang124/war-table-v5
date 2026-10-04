@@ -360,6 +360,10 @@ function validateInner(state: GameState, action: Action): string | null {
       if (state.diplomacy?.proposedOn[a.player] === state.turn) return 'One truce offer per turn.';
       return null;
     }
+    case 'askPeace': {
+      if (typeof a.to !== 'number' || !Number.isInteger(a.to) || !state.players[a.to]) return 'No such player.';
+      return peaceAskBlock(state, a.player, a.to);
+    }
   }
   return "That action isn't recognized.";
 }
@@ -536,6 +540,7 @@ function doAskPeace(d: Draft, human: PlayerId, ai: PlayerId): void {
     clearHardened(s, ai, human);
   }
   emit(d, { type: 'peaceAnswered', from: ai, to: human, accepted: ans.accepted, rounds: PEACE_ROUNDS, reason: ans.reason });
+  if (!ans.accepted) return; // a refusal changes nothing
   const ch = noteStanding(s, ai, human);
   if (ch) emit(d, ch);
 }

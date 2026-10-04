@@ -24,7 +24,18 @@ export const WARY_ACCEPT: Record<AiPersonality | 'classic', number> = { turtle: 
 // Band edges on the heat score: ≤ ALLY_MAX ally, < EVEN_MAX even, < WARY_MAX wary, else hostile.
 const ALLY_MAX = -0.5;
 const EVEN_MAX = 1.0;
-const WARY_MAX = 2.2;
+const WARY_MAX = 2.8;
+/** A band cools only once the heat is this far under its edge (no flicker from turn to turn). */
+const HYSTERESIS = 0.4;
+/** Grudge counts up to this many points (three territories); past it, more losses do not add heat. */
+const GRUDGE_SATURATE = 3;
+/** A grudge under this (about a territory four rounds ago) no longer colours standing. */
+const GRUDGE_NOTICE = 0.4;
+/**
+ * Hostile from losses is kept for the main aggressor: a seat whose grudge is under this share of the AI's largest
+ * grudge stays wary at most (unless it leads the table or broke the peace).
+ */
+const MAIN_AGGRESSOR = 0.8;
 
 /** Heat added by sharing a border (alone it reads as even). */
 const BORDER = 0.5;
@@ -48,10 +59,10 @@ interface Disposition {
 
 /** The Turtle forgives and leans ally with seats it does not touch; the Warlord hardens fastest. */
 const DISPOSITION: Record<AiPersonality | 'classic', Disposition> = {
-  turtle: { grudge: 0.6, leader: 1.0, common: -0.8, apart: -0.6, base: -0.3 },
-  opportunist: { grudge: 0.8, leader: 1.6, common: -0.8, apart: 0, base: 0 },
+  turtle: { grudge: 0.6, leader: 1.0, common: -1.0, apart: -0.6, base: -0.3 },
+  opportunist: { grudge: 0.8, leader: 1.6, common: -1.0, apart: 0, base: 0 },
   warlord: { grudge: 1.2, leader: 1.2, common: -0.6, apart: 0, base: 0.1 },
-  classic: { grudge: 0.8, leader: 1.2, common: -0.8, apart: 0, base: 0 },
+  classic: { grudge: 0.8, leader: 1.2, common: -1.0, apart: 0, base: 0 },
 };
 
 type FactorKey = 'grudge' | 'pressure' | 'border' | 'leader' | 'common' | 'apart';
@@ -114,6 +125,20 @@ function hardened(s: GameState, ai: PlayerId, toward: PlayerId): boolean {
   return s.diplomacy?.hardened?.includes(pairKey(ai, toward)) ?? false;
 }
 
+/** The heat edge crossed going from band `a` to band `b` (the nearer edge to `a` in that direction). */
+function edgeBetween(a: Standing, b: Standing): number {
+  const edges = [ALLY_MAX, EVEN_MAX, WARY_MAX];
+  const ra = rank(a);
+  const rb = rank(b);
+  return rb > ra ? edges[ra] : edges[ra - 1];
+}
+
+function maxGrudge(s: GameState, ai: PlayerId): number {
+  let m = 0;
+  for (const [k, v] of Object.entries(s.players[ai]?.grudges ?? {})) if (inPlay(s, Number(k))) m = Math.max(m, v ?? 0);
+  return m;
+}
+
 function bandOf(heat: number): Standing {
   if (heat <= ALLY_MAX) return 'ally';
   if (heat < EVEN_MAX) return 'even';
@@ -152,13 +177,19 @@ function read(s: GameState, ai: PlayerId, toward: PlayerId): Reading {
     if (theirs >= PRESSURE_MIN && theirs > PRESSURE_RATIO * mine) factors.pressure = PRESSURE;
   } else if (D.apart) factors.apart = D.apart;
   const g = grudgeOf(s, ai, toward);
-  if (g > 0) factors.grudge = g * D.grudge;
+  if (g >= GRUDGE_NOTICE) factors.grudge = Math.min(GRUDGE_SATURATE, g) * D.grudge;
   const leader = tableLeader(s);
   if (leader === toward) factors.leader = D.leader;
   else if (leader >= 0 && leader !== ai) factors.common = D.common;
   let heat = D.base;
   for (const v of Object.values(factors)) heat += v ?? 0;
   let band = bandOf(heat);
+  // Hysteresis, softening only: a loss hardens at once (you feel it), but a band cools only once the heat is
+  // clearly under the edge, so a fading grudge does not flicker between two bands turn after turn.
+  const was = s.diplomacy?.standings?.[pairKey(ai, toward)];
+  if (was && rank(band) < rank(was) && edgeBetween(was, band) - heat < HYSTERESIS) band = was;
+  // Hostile from losses alone is for the main aggressor.
+  if (band === 'hostile' && leader !== toward && g < MAIN_AGGRESSOR * maxGrudge(s, ai)) band = 'wary';
   let leaderFloor = false;
   if (leader === toward && rank(band) < rank('wary')) {
     band = 'wary';

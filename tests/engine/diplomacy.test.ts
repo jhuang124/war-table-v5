@@ -193,8 +193,16 @@ describe('truces', () => {
     return s;
   }
 
-  it('an AI on two fronts proposes to the stronger neighbour, and an AI partner accepts', () => {
-    const s = twoFronts();
+  it('an AI proposes an understanding only to an AI it stands at ally with, and the partner accepts', () => {
+    // v5.1: Ann (turtle, Australia) and Ben (turtle, South America) share no border while Cat holds the rest and
+    // leads the table: each stands at ally toward the other. (The v4 two-fronts proposal is retired.)
+    const terr: Record<string, [number, number]> = {};
+    for (const t of ['indonesia', 'new_guinea', 'western_australia', 'eastern_australia']) terr[t] = [0, 3];
+    for (const t of ['venezuela', 'peru', 'brazil', 'argentina']) terr[t] = [1, 3];
+    const s = scenario({ players: 3, fill: 2, terr: terr as never, phase: { kind: 'reinforce', remaining: 3, mustTrade: false, placed: {}, midTurn: false } });
+    asAi(s, 0, 'turtle');
+    asAi(s, 1, 'turtle');
+    asAi(s, 2, 'warlord');
     const a = chooseAiAction(s, 0);
     expect(a).toEqual({ type: 'proposeTruce', player: 0, to: 1, rounds: 3, kind: 'noAttack' });
     const r = act(s, a);
@@ -203,6 +211,8 @@ describe('truces', () => {
     // One offer per turn; the AI carries on with its turn.
     reject(r.state, { type: 'proposeTruce', player: 0, to: 2, rounds: 2, kind: 'noAttack' });
     expect(chooseAiAction(r.state, 0).type).not.toBe('proposeTruce');
+    // The neighbour it does not stand at ally with is refused.
+    expect(act(s, { type: 'proposeTruce', player: 0, to: 2, rounds: 3, kind: 'noAttack' }).events[1]).toMatchObject({ type: 'truceDeclined' });
   });
 
   it('a personality AI keeps the truce: no attack on its partner even when it is easy', () => {
@@ -256,27 +266,27 @@ describe('truces', () => {
     expect(chooseAiAction(s, 0).type).not.toBe('proposeTruce');
   });
 
-  it('humans are gated behind config.diplomacy; with it on, a human answers out of turn', () => {
+  it('v5.1: no AI offers a human a truce (diplomacy on or off); a legacy offer in a save still answers and lapses', () => {
     const off = twoFronts();
     off.players[1] = { ...off.players[1], kind: 'human' };
     delete off.players[1].difficulty;
     reject(off, { type: 'proposeTruce', player: 0, to: 1, rounds: 3, kind: 'noAttack' });
     expect(chooseAiAction(off, 0).type).not.toBe('proposeTruce');
-
     const on = cloneState(off);
     on.config = { ...on.config, diplomacy: true };
-    const a = chooseAiAction(on, 0);
-    expect(a).toMatchObject({ type: 'proposeTruce', to: 1 });
-    const r = act(on, a);
-    expect(types(r.events)).toEqual(['truceProposed']);
-    expect(r.state.diplomacy!.offers).toHaveLength(1);
-    reject(r.state, { type: 'answerTruce', player: 2, from: 0, accept: true });
-    const yes = act(r.state, { type: 'answerTruce', player: 1, from: 0, accept: true });
+    reject(on, { type: 'proposeTruce', player: 0, to: 1, rounds: 3, kind: 'noAttack' });
+    expect(chooseAiAction(on, 0).type).not.toBe('proposeTruce');
+
+    // An offer already waiting in an old save: the human may still answer it, out of turn.
+    const saved = cloneState(on);
+    saved.diplomacy = { truces: [], offers: [{ from: 0, to: 1, rounds: 3, kind: 'noAttack', turn: saved.turn }], proposedOn: { 0: saved.turn }, rebuffs: [] };
+    reject(saved, { type: 'answerTruce', player: 2, from: 0, accept: true });
+    const yes = act(saved, { type: 'answerTruce', player: 1, from: 0, accept: true });
     expect(yes.events).toEqual([{ type: 'truceAccepted', from: 0, to: 1, rounds: 3, kind: 'noAttack', until: 5 }]);
     expect(yes.state.diplomacy!.offers).toEqual([]);
 
     // Unanswered, the offer lapses when the human's next turn ends.
-    let s = r.state;
+    let s = saved;
     const seen: GameEvent[] = [];
     for (let k = 0; k < 2; k++) {
       const p = passTurn(s);
@@ -333,16 +343,16 @@ describe('truces', () => {
   });
 
   it('truces, offers and grudges survive a save/restore, and play continues identically', () => {
-    const cfg = aiConfig(['normal', 'normal', 'normal', 'normal'], { seed: 5150, diplomacy: true });
-    cfg.players.forEach((p, k) => (p.personality = PERS[k % 3]));
-    cfg.players[3] = { ...cfg.players[3], kind: 'human' };
-    delete cfg.players[3].difficulty;
-    delete cfg.players[3].personality;
-    // Drive the game (the human seat on autoplay-style classic moves) until diplomacy state exists.
-    let s = createGame(cfg).state;
-    for (let k = 0; k < 4000 && s.phase.kind !== 'game-over'; k++) {
-      if (s.diplomacy?.truces.length && Object.values(s.players).some((p) => p.grudges && Object.keys(p.grudges).length)) break;
-      s = act(s, chooseAiAction(s, s.currentPlayer)).state;
+    // v5.1: truces are AI-AI understandings; drive personality games until one holds.
+    let s = createGame(aiConfig(['normal', 'normal', 'normal', 'normal'], { seed: 5169 })).state;
+    for (let seed = 5169; seed < 5175 && !s.diplomacy?.truces.length; seed++) {
+      const cfg = aiConfig(['normal', 'normal', 'normal', 'normal'], { seed });
+      cfg.players.forEach((p, k) => (p.personality = PERS[(k + seed) % 3]));
+      s = createGame(cfg).state;
+      for (let k = 0; k < 4000 && s.phase.kind !== 'game-over'; k++) {
+        if (s.diplomacy?.truces.length && Object.values(s.players).some((p) => p.grudges && Object.keys(p.grudges).length)) break;
+        s = act(s, chooseAiAction(s, s.currentPlayer)).state;
+      }
     }
     expect(s.diplomacy?.truces.length).toBeGreaterThan(0);
     const restored = JSON.parse(JSON.stringify(s)) as GameState;
@@ -363,11 +373,13 @@ describe('truces', () => {
   });
 
   it('AI↔AI truces happen in personality games without any human input', () => {
-    const cfg = aiConfig(['normal', 'normal', 'normal', 'normal'], { seed: 616 });
-    cfg.players.forEach((p, k) => (p.personality = PERS[k % 3]));
+    // v5.1: understandings come from standing (two AIs at ally), so they are rarer than v4's offers: about one
+    // 4-seat game in ten (npm run sim, Standing section). Seeds 5169–5174 hold the first one.
     let seen = 0;
-    for (let i = 0; i < 4 && seen === 0; i++) {
-      const g = playAi({ ...cfg, seed: 616 + i });
+    for (let seed = 5169; seed < 5175 && seen === 0; seed++) {
+      const cfg = aiConfig(['normal', 'normal', 'normal', 'normal'], { seed });
+      cfg.players.forEach((p, k) => (p.personality = PERS[(k + seed) % 3]));
+      const g = playAi(cfg);
       expect(g.rawIllegal).toEqual([]);
       seen += g.events.filter((e) => e.type === 'truceAccepted').length;
     }
