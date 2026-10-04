@@ -172,21 +172,9 @@ export async function setCount(page: Page, n: number): Promise<void> {
  * v3 diplomacy: a truce offer to the driver takes the dock (Decline / Accept) until it's answered, as a
  * player would answer it first. Answers it (Decline by default) when one is showing; no-op otherwise.
  */
-export async function answerOffer(page: Page, accept = false): Promise<boolean> {
-  const id = accept ? 'btn-acceptTruce' : 'btn-declineTruce';
-  let answered = false;
-  // several AIs may have asked: one offer at a time, oldest first
-  const asked = async () => {
-    const u = (await ui(page)) as { buttons: string[]; offer?: { buttons: string[] } | null };
-    return u.offer?.buttons.includes('Accept') || u.buttons.includes('Accept');
-  };
-  for (let i = 0; i < 4 && (await asked()); i++) {
-    const n = (await state(page))?.diplomacy?.offers.length ?? 0;
-    await clickBtn(page, id);
-    await page.waitForFunction((k) => (window.__risk.getState()?.diplomacy?.offers.length ?? 0) < k && window.__risk.isIdle(), n, { timeout: 3000 }).catch(() => undefined);
-    answered = true;
-  }
-  return answered;
+/** v5.1 C: the human truce protocol went (no offers, no Accept / Decline). Kept for older flows: a no-op. */
+export async function answerOffer(_page: Page, _accept = false): Promise<boolean> {
+  return false;
 }
 
 /** Place: pick `t`, set the count to `n` (default: all), press Place. (A truce offer showing is declined first.) */

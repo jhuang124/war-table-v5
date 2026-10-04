@@ -81,7 +81,8 @@ describe('Turn Track states', () => {
     const v = strip(s);
     expect(v.track.disabled).toBe(true);
     expect(v.line).toBe('Move into Siberia');
-    expect(v.count).toEqual({ control: 'slider', value: 15, min: 3, max: 15 });
+    expect(v.count).toEqual({ control: 'slider', value: 15, min: 3, max: 15, collapsed: true });
+    expect(strip(s, { ...emptySel(), occupyCount: 15, countTouched: true }).count?.collapsed).toBeUndefined();
     const touched = strip(s, { ...emptySel(), occupyCount: 9, countTouched: true });
     expect(touched.line).toBe('Ural 7 · Siberia 9');
     expect(touched.buttons.map((b) => b.label)).toEqual(['Move 9']);

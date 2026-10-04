@@ -420,7 +420,7 @@ describe('controller: rematch, holding, hover odds, clickables, fight hooks', ()
     c.dispose();
   });
 
-  it('clickables: a continent, the cup, the ensō (twice opens the Ledger), a lane, a stone, a seat ring, open water', async () => {
+  it('clickables: a continent, the ensō (tapCup a no-op) (twice opens the Ledger), a lane, a stone, a seat ring, open water', async () => {
     const { c, fb, au } = await humanGame();
     const s = c.hooks.getState()!;
     c.intent({ type: 'tapContinent', id: 'asia' });
@@ -428,9 +428,11 @@ describe('controller: rematch, holding, hover odds, clickables, fight hooks', ()
     expect(fb.highlights.pulse).toEqual(CONTINENTS.asia.territories);
     await vi.advanceTimersByTimeAsync(1500);
     expect(c.hooks.ui().line).not.toMatch(/^Asia/);
+    // v5.1 B: the cup went; a stray tapCup from an older HUD does nothing.
+    const lineBefore = c.hooks.ui().line;
     c.intent({ type: 'tapCup' });
-    expect(au.calls).toContain('cue:rattle');
-    expect(c.hooks.ui().line).toBe(`${s.players[s.currentPlayer].name}'s turn`);
+    expect(au.calls).not.toContain('cue:rattle');
+    expect(c.hooks.ui().line).toBe(lineBefore);
     c.intent({ type: 'tapEnso' });
     expect(c.hooks.ui().line).toBe(`Round ${s.round}`);
     c.intent({ type: 'tapEnso' });
