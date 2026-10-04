@@ -202,9 +202,9 @@
 .brush-ul { position: absolute; left: -5%; width: 110%; height: 0.55rem; pointer-events: none; overflow: visible; }
 
 /* Words that act (menus, title): a hairline appears under the word on hover / focus */
-.menu-item, .title-item, .seg-opt, .house-toggle { --u: transparent; }
+.menu-item, .title-item, .seg-opt { --u: transparent; }
 .ui-root .menu-item:focus-visible, .ui-root .title-item:not(.gold):focus-visible, .ui-root .seg-opt:focus-visible,
-.ui-root .house-toggle:focus-visible, .ui-root .switch:focus-visible, .ui-root .btn.link:focus-visible, .ui-root .btn.role-exit:focus-visible,
+.ui-root .more-word:focus-visible, .ui-root .switch:focus-visible, .ui-root .btn.link:focus-visible, .ui-root .btn.role-exit:focus-visible,
 .ui-root .ts-reset:focus-visible {
   outline: none; text-decoration: underline; text-decoration-color: var(--gold); text-decoration-thickness: 1px; text-underline-offset: 0.3em;
 }
@@ -437,12 +437,10 @@
 .track.is-live:not(.is-disabled) .tr-seg.gold.is-eligible:hover { color: var(--gold-hi); }
 .tr-seg.is-down { color: var(--ivory-70); }
 /* A sheet or confirm over the board carries the one gold: the HUD's gold steps down to ivory beneath it. */
-.overlay-open .hud .tr-seg.gold, .ui-root:has(> .handoff:not(.hidden)) .hud .tr-seg.gold { color: var(--ivory-78); }
-.overlay-open .hud .tr-seg.gold .tr-ul, .ui-root:has(> .handoff:not(.hidden)) .hud .tr-seg.gold .tr-ul,
-.overlay-open .hud .btn.gold > .btn-ring, .overlay-open .title-screen .btn.gold > .btn-ring,
-.ui-root:has(> .handoff:not(.hidden)) .hud .btn.gold > .btn-ring { color: var(--ivory-55); }
-.overlay-open .hud .gold, .overlay-open .hud .gold *, .overlay-open .title-screen .gold, .overlay-open .title-screen .gold *,
-.ui-root:has(> .handoff:not(.hidden)) .hud .gold, .ui-root:has(> .handoff:not(.hidden)) .hud .gold * { transition: none; }
+.overlay-open .hud .tr-seg.gold { color: var(--ivory-78); }
+.overlay-open .hud .tr-seg.gold .tr-ul,
+.overlay-open .hud .btn.gold > .btn-ring, .overlay-open .title-screen .btn.gold > .btn-ring { color: var(--ivory-55); }
+.overlay-open .hud .gold, .overlay-open .hud .gold *, .overlay-open .title-screen .gold, .overlay-open .title-screen .gold * { transition: none; }
 /* Disabled (a roll, a mandatory occupy or trade): the whole track steps back */
 .track.is-disabled .tr-seg:not(.is-current) { opacity: 0.5; }
 .track.is-disabled .tr-ul.on { opacity: 0.55; }
@@ -455,11 +453,17 @@
 .st-buttons { flex: none; display: flex; align-items: center; gap: 0.5rem; }
 .st-buttons:empty { display: none; }
 .st-buttons .btn { min-width: 5.5rem; }
-/* v4: a truce offer waits on its own line: the sentence in ivory-70, Decline / Accept as bare words */
-.st-offer { display: flex; align-items: center; gap: 0.5rem; margin-left: 0.75rem; padding-left: 0.75rem; border-left: 1px solid var(--ivory-20, rgba(236, 229, 214, 0.2)); }
-.st-offer-text { font-size: 14px; color: var(--ivory-70, rgba(236, 229, 214, 0.7)); white-space: nowrap; }
-.st-offer .btn { min-width: 0; }
-.st-offer.hidden { display: none; }
+/* v5.1 C: 'Ask', the bare word that confirms 'Ask Sage for peace' (never the gold) */
+.st-ask { min-width: 0; }
+.st-ask.hidden { display: none; }
+/* v5.1 E2: a collapsed count is its number alone, a bare word beside the primary; a tap opens the control */
+.count-word {
+  appearance: none; min-width: 2.75rem; min-height: 2.75rem; padding: 0 0.5rem; background: none; border: 0; cursor: pointer;
+  font: 600 1.125rem/1 var(--serif); color: var(--ivory-78); text-decoration: underline; text-decoration-color: var(--ivory-28);
+  text-decoration-thickness: 1px; text-underline-offset: 0.3em;
+}
+.count-word:hover { color: var(--ivory); text-decoration-color: var(--ivory-55); }
+.count-word.hidden { display: none; }
 .st-zone.is-empty { display: none; }
 
 /* Count, ≤ 6 options: −  3  +  as words (the − and + are 44 px transparent hit boxes) */
@@ -540,18 +544,6 @@
 .card-sym { font-size: 0.875rem; font-weight: 600; }
 .card-terr { font-size: 0.875rem; color: var(--ivory-55); text-align: center; line-height: 1.1; min-height: 2.1em; display: flex; align-items: center; }
 .card-bonus { position: absolute; top: 0.35rem; right: 0.45rem; font-size: 1.125rem; font-weight: 600; color: var(--ivory); }
-
-/* Hand-off cover: the board dims to indigo; the seat's ring, "Pass to Sam", the words in one gold brush ring */
-.handoff {
-  position: absolute; inset: 0; z-index: 60; pointer-events: auto; display: grid; place-items: center;
-  background: rgba(11, 18, 36, 0.93); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
-}
-.ho-box { display: flex; flex-direction: column; align-items: center; gap: 0.9rem; text-align: center; }
-.ho-emb { width: 6rem; height: 6rem; color: var(--seat); margin-bottom: 0.4rem; }
-.ho-emb .enso { width: 100%; height: 100%; }
-.ho-title { font-weight: 500; font-size: 2.5rem; line-height: 1.05; letter-spacing: 0.01em; }
-.ho-sub { font-size: 1.125rem; color: var(--ivory-70); margin-bottom: 0.8rem; }
-.ho-box .btn.big { height: 3.6rem; padding: 0 2.2rem; }
 
 /* Scrims: the board dims 40 % and softens; the paper sheets sit on it */
 .scrim {
@@ -715,15 +707,6 @@
 .remove-seat.is-disabled { opacity: 0.2; }
 .add-seat { align-self: flex-start; margin-top: 0.4rem; font-size: 1.125rem; }
 .add-seat::before { content: '+'; font-size: 1.125rem; margin-right: 0.1rem; }
-.house-toggle {
-  appearance: none; pointer-events: auto; display: flex; align-items: baseline; gap: 0.5rem; padding: 0.35rem 0; background: transparent; border: 0;
-  color: var(--ivory-70); font: 600 1.125rem/1 var(--serif); cursor: pointer; justify-self: start;
-}
-.house-toggle:hover { color: var(--ivory); }
-.house-toggle::before { content: '+'; font-weight: 500; color: var(--ivory-40); width: 0.7rem; }
-.house-toggle.open::before { content: '−'; }
-.house-sum { font-weight: 500; color: var(--ivory-40); margin-left: 0.25rem; }
-.house-sum::before { content: '· '; }
 .house { padding: 0.4rem 0 0.2rem; border-top: 1px solid var(--ivory-06); }
 .house-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem 2.25rem; align-items: start; }
 .house-grid .switch { padding-top: 0.2rem; }
@@ -819,7 +802,6 @@
 
 /* ---- v3 table cues (_claude/v3/PLAN.md §2–3) ------------------------------------------------------- */
 /* The seat strip keeps its look; under each ring: held continents (ticks in their printed tint) and cards. */
-.seat-chip { padding-left: var(--cup-slot, 3.1rem); }
 .sc-col { position: relative; flex: none; display: flex; flex-direction: column; align-items: center; }
 .sc-marks { position: absolute; top: 100%; left: 50%; transform: translateX(-50%); display: flex; align-items: center; justify-content: center; gap: 0.22rem; height: 1.15rem; margin-top: -0.05rem; color: var(--ivory-55); font-size: 1.125rem; line-height: 1; white-space: nowrap; }
 .sc-marks.empty { visibility: hidden; }
@@ -829,15 +811,6 @@
 /* The card glyph at 12 px wide (v4 E6) beside its count at the numeral floor. */
 .sc-cards svg { width: 0.75rem; height: 1.03rem; }
 .seat-chip.out .sc-marks { visibility: hidden; }
-/* The cup: an object on the paper beside the current seat's ring (cup.ts). */
-.ts-cup { position: absolute; left: 0; top: 0; width: 0; height: 0; pointer-events: none; z-index: 1; }
-/* The largest mark in the strip (v4 §6): taller than the seat rings, so the turn token is found first. */
-.ts-cup .cup-body { position: absolute; right: -0.15rem; bottom: -0.55rem; width: 3rem; height: 3.45rem; transform-origin: 30% 86%; }
-.ts-cup .cup-svg, .ho-cup .cup-svg { display: block; width: 100%; height: 100%; overflow: visible; }
-.cup-die { position: fixed; z-index: 30; width: 9px; height: 9px; margin: -4.5px 0 0 -4.5px; pointer-events: none; }
-.cup-die svg { display: block; width: 100%; height: 100%; }
-.ho-emb { position: relative; }
-.ho-cup { position: absolute; left: 50%; top: 50%; width: 54%; height: 62%; transform: translate(-50%, -52%); }
 /* The dock (v4 Q4): one line of ink above the rule. "Round 6" at the left of its row is the way into the
    Ledger (a click opens it); the ledger's latest sentence is for screen readers only. */
 .st-events { position: absolute; left: 0; bottom: 0.1rem; display: flex; align-items: flex-end; pointer-events: auto; cursor: pointer; color: var(--ivory-55); }
@@ -866,20 +839,9 @@
 .seat-chip.current .sc-pers { color: var(--ivory-55); }
 /* A grudge ≥ 2: one short slanted tick in the grudged seat's colour, before the continent ticks. */
 .sc-grudge { margin-right: 0.12rem; }
-/* The 2-player neutral seat: its ring and count, dimmed; never underlined, never the cup. */
+/* The 2-player neutral seat: its ring and count, dimmed; never underlined, never filled. */
 .seat-chip.neutral { opacity: 0.6; }
 .seat-chip.neutral .sc-name::after { display: none; }
-/* Choosing a truce partner: the lit rings come up to full ink, a hairline of ivory round them; the rest step back. */
-.ts-seats.picking .seat-chip:not(.truce-target) { opacity: 0.32; }
-.ts-seats.picking .seat-chip.neutral:not(.truce-target) { opacity: 0.2; }
-.seat-chip.truce-target { cursor: pointer; color: var(--ivory); }
-.seat-chip.truce-target .sc-ring { opacity: 1; }
-.sc-halo { position: absolute; left: -0.32rem; top: -0.32rem; width: calc(100% + 0.64rem); height: calc(100% + 0.64rem); color: var(--ivory-70); display: none; pointer-events: none; overflow: visible; }
-.seat-chip.truce-target .sc-halo { display: block; animation: truce-lit 2400ms ease-in-out infinite; }
-@keyframes truce-lit { 0%, 100% { opacity: 0.55; } 50% { opacity: 1; } }
-.rm .seat-chip.truce-target .sc-halo { animation: none; }
-.seat-chip.truce-target:focus-visible { outline: none; }
-.seat-chip.truce-target:focus-visible .sc-name { text-decoration: underline; text-decoration-color: var(--gold); text-decoration-thickness: 1px; text-underline-offset: 0.3em; }
 /* A new build took over: the event line's two bare words. */
 .st-update .ev-update { appearance: none; border: 0; background: none; padding: 0.35rem 0.5rem; min-height: 2.75rem; display: inline-flex; align-items: flex-end; font: 500 0.875rem/1.2 var(--serif); color: var(--ivory); opacity: 0.78; cursor: pointer; pointer-events: auto; }
 .st-update .ev-update:hover { opacity: 1; }
@@ -908,7 +870,7 @@
 .ui-root .map-opt:focus-visible .map-name { text-decoration: underline; text-decoration-color: var(--gold); text-decoration-thickness: 1px; text-underline-offset: 0.3em; }
 .pers-wrap { position: relative; transition: opacity 160ms; }
 .pers-wrap.off { opacity: 0; pointer-events: none; }
-.seg-pers { gap: 1.05rem; }
+.seg-pers { gap: 0.9rem; flex-wrap: nowrap; }
 .pers-line { position: absolute; left: 0; top: calc(100% - 0.35rem); font-size: 0.875rem; line-height: 1.2; color: var(--ivory-40); white-space: nowrap; pointer-events: none; }
 .pers-wrap.off .pers-line { visibility: hidden; }
 .seat-row.has-pers { padding-bottom: 1.15rem; }
@@ -993,11 +955,55 @@
 .st-break { position: absolute; left: 0; right: 0; top: calc(100% + 0.05rem); z-index: 2; text-align: center; font-size: 0.875rem; font-style: italic; font-weight: 500; line-height: 1.1; color: var(--ivory-90); text-shadow: 0 0 0.35em rgba(11, 18, 36, 0.9), 0 0 0.12em rgba(11, 18, 36, 0.9); white-space: nowrap; pointer-events: none; }
 .st-break.hidden { display: none; }
 
-/* F · Clickables (never required): the cup and the ensō on the rule answer a tap. */
-.ts-cup .cup-body { pointer-events: auto; cursor: pointer; }
+/* F · Clickables (never required): the ensō on the rule answers a tap. */
 .sr-enso { pointer-events: auto; cursor: pointer; }
-.ts-cup.hidden .cup-body { pointer-events: none; }
 
-/* G · The hand-off cover's secret mission: one line under the armies line, in the seat's light tint. */
-.ho-mission { font-size: 1.125rem; font-weight: 500; font-style: italic; color: var(--seat-light); margin: -0.5rem 0 0.8rem; }
-.ho-box.has-mission .ho-sub { margin-bottom: 0; }
+/* ---- v5.1 · decide, don't ask (_claude/v5/QUIETER.md §3) ------------------------------------------- */
+/* A/B · Whose turn: the current seat's ring FILLED in its pigment, the count in ivory on it, the largest mark in
+   the strip (no cup). The others stay rings. */
+.sc-disc { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; transition: opacity 320ms var(--dry, ease-out); }
+.sc-disc-fill { fill: var(--seat); }
+.seat-chip.current .sc-ring { width: 3.5rem; height: 3.5rem; }
+.seat-chip.current .sc-disc { opacity: 1; }
+.seat-chip.current .sc-enso { filter: none; color: color-mix(in oklab, var(--seat) 70%, #f2ede2); }
+.seat-chip.current .sc-terr { font-size: 1.5rem; text-shadow: 0 0 0.25em rgba(11, 18, 36, 0.55); }
+.seat-chip.current .sc-name { color: color-mix(in oklab, var(--seat-light) 80%, var(--ivory)); }
+.seat-chip.neutral .sc-disc, .seat-chip.out .sc-disc { opacity: 0; }
+
+/* C · Standing: one small ink mark beside an AI's ring (its lower right), toward you. Hollow (ally), half
+   (even), filled (wary), deep and a touch larger (hostile). */
+.sc-stand { position: absolute; right: -0.32rem; bottom: -0.05rem; width: 0.75rem; height: 0.75rem; overflow: visible; pointer-events: none; }
+.sc-stand.st-hostile { width: 0.875rem; height: 0.875rem; right: -0.4rem; bottom: -0.12rem; }
+.sc-stand.hidden { display: none; }
+.seat-chip.can-ask { cursor: pointer; }
+.seat-chip.can-ask:focus-visible { outline: none; }
+.seat-chip.can-ask:focus-visible .sc-name { text-decoration: underline; text-decoration-color: var(--ivory-70); text-decoration-thickness: 1px; text-underline-offset: 0.3em; }
+/* An understanding between two AIs: a brush hairline tied between their rings, in their light tints. */
+.ts-ties { position: absolute; left: 0; top: 0; width: 100%; height: 100%; overflow: visible; pointer-events: none; z-index: 0; opacity: 0.85; }
+.ts-ties.hidden { display: none; }
+
+/* D/E · 'More': one bare word that folds the rest open in place (New game, Settings). */
+.more-word {
+  appearance: none; justify-self: start; align-self: start; min-height: 2.75rem; padding: 0.35rem 0; background: none; border: 0; cursor: pointer;
+  font: 600 1.125rem/1 var(--serif); color: var(--ivory-70); pointer-events: auto;
+}
+.more-word:hover { color: var(--ivory); }
+.more-word.open { color: var(--ivory); }
+.more-label { position: relative; display: inline-block; padding-bottom: 0.3rem; }
+.more-ul { top: auto; bottom: -0.2rem; color: var(--ivory-70); opacity: 0; clip-path: inset(0 100% 0 0); transition: opacity 140ms var(--dry), clip-path 0ms linear 140ms; }
+.more-word.open .more-ul { opacity: 1; clip-path: inset(0 0 0 0); transition: clip-path 240ms var(--brush), opacity 60ms ease-out; }
+.fold.hidden { display: none; }
+
+/* D · New game: Seats (name, Human · AI, emblem) and Length on the sheet; the rest under More. */
+.ng-more-body { grid-column: 1 / -1; padding-top: 0.6rem; border-top: 1px solid var(--ivory-06); }
+.ng-more-grid { display: grid; }
+.house-label { cursor: default; }
+.ng-sheet:not(.more-open) .seat-row { grid-template-columns: 1.4rem auto minmax(7rem, 1fr) auto 2.75rem; }
+.ng-sheet:not(.more-open) .seat-row > .diff-wrap, .ng-sheet:not(.more-open) .seat-row > .pers-wrap { display: none; }
+.ng-sheet:not(.more-open) .seat-row.has-pers { padding-bottom: 0.35rem; }
+
+/* E3 · Settings: the four things people change, then More. */
+.settings-primary { display: grid; grid-template-columns: 1fr 1fr; gap: 1.1rem 2.25rem; }
+.settings-sheet > .more-word { margin-top: 0.6rem; }
+.settings-more-body { padding-top: 0.6rem; border-top: 1px solid var(--ivory-06); }
+

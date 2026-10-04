@@ -192,9 +192,6 @@ function react(i: UiIntent) {
     case 'confirm':
       if (g) push({ ...vm, game: { ...g, confirm: null } });
       return;
-    case 'handoffAccept':
-      if (g) push({ ...vm, game: { ...g, handoff: null } });
-      return;
     case 'skipReplay':
       if (g?.replay) push({ ...vm, game: { ...g, replay: null } });
       return;
@@ -231,6 +228,7 @@ vm = text ? { ...fx.vm, settings: { ...fx.vm.settings, textSize: text } } : fx.v
 mountUi(document.getElementById('ui')!, api);
 layoutBoard();
 if (fx.after === 'openHouse') uiDebug().openHouseRules();
+if (fx.after === 'openMore') uiDebug().openMore();
 if (fx.after === 'skipVictoryIntro') setTimeout(() => uiDebug().skipVictoryIntro(), 50);
 const idx = buildIndex();
 if (!stateId || params.get('index') === '1') idx.classList.add('open');

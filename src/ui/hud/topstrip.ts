@@ -534,10 +534,10 @@ export class TopStrip {
       const cb = this.chips[b]?.ringCentre();
       if (!ca || !cb) continue;
       // from the top of one ring to the top of the other, bowing up a little over whatever lies between
-      const x0 = ca.x + ca.r * 0.35;
-      const y0 = ca.y - ca.r * 0.95;
-      const x1 = cb.x - cb.r * 0.35;
-      const y1 = cb.y - cb.r * 0.95;
+      const x0 = ca.x + ca.r * 0.15;
+      const y0 = ca.y - ca.r * 1.02;
+      const x1 = cb.x - cb.r * 0.15;
+      const y1 = cb.y - cb.r * 1.02;
       const lift = Math.min(14, 6 + (x1 - x0) * 0.025);
       const pts: [number, number][] = [];
       for (let i = 0; i <= 16; i++) {

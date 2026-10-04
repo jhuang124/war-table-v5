@@ -18,7 +18,7 @@ import type { AiDifficulty, AiPersonality, PlayerColorId, PlayerKind } from '../
 import type { HouseRulesDraft, LengthPreset, MapOptionVM, NewGameVM, PersonalityOptionVM, SeatDraft, SetupPreset, UiIntent } from '../../game/viewModel';
 import { PLAYER_COLOR_IDS, PLAYER_COLORS } from '../../shared/palette';
 import { moreWord, Segmented, setMoreWord, Switch, uiButton } from '../controls';
-import { animateIn, emblem, ensoEl, h, hashSeed, ringEl, setAttr, setEmblem, setStyle, setText, toggle, underlineEl } from '../dom';
+import { animateIn, emblem, ensoEl, h, hashSeed, motion, ringEl, setAttr, setEmblem, setStyle, setText, toggle, underlineEl } from '../dom';
 import { isPhone, layout } from '../layout';
 import { dragToDismiss, grabHandle, sheetIn } from '../sheet';
 
@@ -471,6 +471,13 @@ export class NewGameScreen {
     toggle(this.sheet, 'more-open', on);
     if (on) {
       animateIn(this.more, { ms: 220, dy: -6 });
+      // What just opened comes into view (the sheet scrolls; the seats stay one scroll above).
+      requestAnimationFrame(() => {
+        const grid = this.more.parentElement as HTMLElement | null;
+        if (!grid || grid.scrollHeight <= grid.clientHeight) return;
+        const top = this.moreBtn.offsetTop - grid.offsetTop - 8;
+        grid.scrollTo({ top, behavior: motion.reduced ? 'auto' : 'smooth' });
+      });
       this.rows.forEach((r) => r.relayout());
     }
   }
