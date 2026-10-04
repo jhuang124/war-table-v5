@@ -198,8 +198,6 @@ function react(i: UiIntent) {
     case 'skipReplay':
       if (g?.replay) push({ ...vm, game: { ...g, replay: null } });
       return;
-    case 'dismissReceipt':
-      if (g?.receipt) push({ ...vm, game: { ...g, receipt: null } });
       return;
     case 'dismissTurnBanner':
       if (g?.banner?.kind === 'turn') push({ ...vm, game: { ...g, banner: null } });

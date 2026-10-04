@@ -456,13 +456,6 @@
 .form-phone .sc-cards svg { display: none; }
 .form-phone .st-round { display: none; }
 
-/* ---- v4: the receipt on phones is a bottom sheet in the same hand (paper, top hairline, square) ---- */
-.form-phone .receipt { place-items: end center; align-content: end; padding: calc(var(--sa-t) + 12px) 0 0; }
-.form-phone .receipt-sheet {
-  width: 100%; max-width: 100%; max-height: 100%; overflow: hidden;
-  padding: 0.3rem max(1.25rem, var(--sa-r)) calc(var(--sa-b) + 1.1rem) max(1.25rem, var(--sa-l));
-}
-.form-phone.landscape .receipt-sheet { max-width: 38rem; }
 .form-phone .rc-title { font-size: 1.5rem; margin-bottom: 0.7rem; }
 .form-phone .rc-line { font-size: 1.125rem; }
 .form-phone .rc-summary { font-size: 1.125rem; }

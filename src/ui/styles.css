@@ -934,24 +934,6 @@
 }
 .ui-root .log-sheet { background-color: #0b1224; }
 
-/* The receipt: "While you were away", a sheet laid on the board over the dock */
-.receipt {
-  position: absolute; inset: 0; z-index: 65; pointer-events: auto; display: grid; place-items: center; padding: 2rem;
-  background: rgba(8, 13, 27, 0.28); cursor: pointer;
-}
-.receipt.leaving, .receipt.leaving * { pointer-events: none !important; }
-.receipt-sheet { width: min(44rem, 92vw); padding: 1.6rem 2.4rem 1.9rem; display: flex; flex-direction: column; text-align: left; }
-.rc-title { margin-bottom: 1.1rem; }
-.rc-lines { display: flex; flex-direction: column; gap: 0.55rem; }
-.rc-line { font-size: 1.125rem; font-weight: 500; line-height: 1.35; color: var(--ivory-90); }
-.rc-name { color: var(--seat-light); font-weight: 600; }
-/* A line where you lost something is set in that seat's pigment, throughout (the pigment, lifted just
-   enough off the indigo to read; the quiet lines keep only the name in the seat's tint). */
-.rc-line.stings { color: color-mix(in oklab, var(--seat) 82%, var(--ivory)); font-weight: 600; }
-.rc-line.stings .rc-name { color: inherit; }
-.rc-summary { margin-top: 1.2rem; padding-top: 0.9rem; border-top: 1px solid var(--ivory-12); font-size: 1.5rem; font-weight: 600; line-height: 1.25; color: var(--ivory); }
-
-
 /* ---- v5 (_claude/v5/PROPOSAL.md §4 C, E, F) ---------------------------------------------------------- */
 /* C · The replay: the board re-soaks round by round; a thin paper strip at the bottom carries the round,
    its one sentence and a hairline in the one gold that runs as the rounds pass. The whole screen is the

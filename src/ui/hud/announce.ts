@@ -108,7 +108,8 @@ export class Announcements {
     el.append(t);
     // v4 Q4: one line above the rule. The grudge (`recap`) is the receipt's to tell now ('While you were
     // away'), so it is never a second line under the turn line; screen readers still hear it.
-    if (b.recap) el.append(h('span', 'sr-only', ` ${minus(b.recap)}`));
+    // v5: with the receipt removed, the grudge sentence is visible again under the turn line ('Ochre took 5 of yours')
+    if (b.recap) el.append(h('span', 'rb-recap', minus(b.recap)));
     return el;
   }
 }

@@ -1622,7 +1622,8 @@ class Controller {
         // The turn banner is for the humans at the table; an AI turn is named by the step indicator. While
         // the receipt shows, the banner waits and writes once it is dismissed.
         if (!aiTurn) {
-          const show = () => this.showTurnBanner(ev.player, ev.reinforcements.total, null, d, ev.round);
+          // v5: the receipt is gone; the grudge sentence rides under the turn line again ('Ochre took 5 of yours')
+          const show = () => this.showTurnBanner(ev.player, ev.reinforcements.total, recap, d, ev.round);
           if (this.receipt) this.bannerAfterReceipt = show;
           else show();
         }
@@ -2425,6 +2426,10 @@ class Controller {
    * per turn: the hand-off cover opens it first, the turn start finds it open (or already dismissed).
    */
   private openReceipt(seat: PlayerId, turn: number, sinceIn?: number, at?: GameState): void {
+    // Removed from v5 (John, 2026-10-03): the "While you were away" sheet never opens. The loser's rings, the
+    // grudge ticks, the turn line's grudge sentence and the Ledger carry what happened. The ledger below is
+    // still kept (the Ledger and the story read it); the sheet itself is gone.
+    if (seat >= 0) return;
     const meta = this.meta;
     const s = at ?? this.state;
     if (!meta || !s || this.autoplayOn || s.players[seat]?.kind !== 'human') return;

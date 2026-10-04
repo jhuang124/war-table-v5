@@ -353,20 +353,6 @@ export function fixtures(_W: number, _H: number): Fixture[] {
   add('humans-out', 'Watching', 'All humans out', game({ strip: STRIPS['humans-out'], seats: chips(2, { 0: { eliminated: true, territories: 0, out: { by: AMBER, round: 11 } } }), cards: null }));
   add('handoff', 'Watching', 'Hand-off cover', game({ strip: STRIPS.handoff, handoff: { seat: SAM, subline: '+9 armies waiting · 3 cards · set ready' }, cards: null }));
 
-  // The receipt (v4 A3): 'While you were away', after three AI turns
-  const RECEIPT: NonNullable<GameVM['receipt']> = {
-    key: 1,
-    title: 'While you were away',
-    lines: [
-      { seat: COBALT, text: 'Slate took Ural and Siberia from you · now 12 territories, 31 armies', territories: ['ural', 'siberia'], stings: true },
-      { seat: AMBER, text: 'Ochre took Brazil from Sage · now 9 territories, 24 armies', territories: ['brazil'], stings: false },
-      { seat: EMERALD, text: 'Sage placed 4 on Argentina and held its ground', territories: ['argentina'], stings: false },
-    ],
-    summary: 'You lost 2 territories · you hold 13',
-  };
-  add('receipt', 'Watching', 'Receipt · while you were away', game({ receipt: RECEIPT, seats: chips(0), cards: null }));
-  add('receipt-calm', 'Watching', 'Receipt · nothing lost', game({ receipt: { ...RECEIPT, key: 2, title: 'Since your last turn', lines: RECEIPT.lines.slice(1), summary: 'You hold 15 territories' }, seats: chips(0), cards: null }));
-  add('receipt-reduced', 'Watching', 'Receipt · reduced motion', game({ receipt: { ...RECEIPT, key: 3 }, seats: chips(0), cards: null }, { reducedMotion: true, settings: { ...SETTINGS, reduceMotion: true } }));
 
   // Banners
   add('turn-banner', 'Banners', 'Turn banner', game({ banner: banner({}) }));

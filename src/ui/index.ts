@@ -33,7 +33,6 @@ import { VictoryScreen } from './screens/victory';
 import { effectiveUiScale, isFitted } from './uiScale';
 import { installLayout, layout, onLayout } from './layout';
 import { NameCard, RotatePill } from './hud/mobile';
-import { Receipt } from './hud/receipt';
 import { Replay } from './hud/replay';
 import { resetSheet, sheetDrop, sheetLift } from './sheet';
 
@@ -152,14 +151,13 @@ export const mountUi: MountUi = (host, api) => {
   const overlays = new Overlays(send);
   const confirm = new Confirm(send);
   // "While you were away" (v4 A3): a paper sheet on the board over the HUD (and over a hand-off cover).
-  const receipt = new Receipt(send);
   // The war in ink (v5 C): the end-of-game time-lapse's paper strip; the recap is held back while it plays.
   const replay = new Replay(send);
   // A lost WebGL context (mobile GPUs drop it under memory pressure): a quiet pill while the board rebuilds.
   const lost = h('div', 'board-lost hidden', 'Reloading the board…');
   lost.setAttribute('role', 'status');
   lost.dataset.testid = 'board-lost';
-  root.append(hud, title.el, newGame.el, victory.el, handoff.el, receipt.el, replay.el, overlays.el, confirm.el, lost);
+  root.append(hud, title.el, newGame.el, victory.el, handoff.el, replay.el, overlays.el, confirm.el, lost);
   current = { newGame, victory };
 
   const screens: Partial<Record<Screen, HTMLElement>> = { title: title.el, newGame: newGame.el, victory: victory.el };
@@ -422,11 +420,9 @@ export const mountUi: MountUi = (host, api) => {
       syncSay();
       cards.update(g.cards);
       handoff.update(g.handoff);
-      receipt.update(next.screen === 'game' ? g.receipt : null);
       confirm.update(g.confirm);
     } else if (!g && prev?.game) {
       strip.setHolding(null);
-      receipt.update(null);
       battle.update(null);
       announce.update(null);
       cards.update(null);
@@ -522,8 +518,6 @@ export const mountUi: MountUi = (host, api) => {
       return;
     }
     if (v.screen === 'game') {
-      // The receipt: any key puts it away (and does nothing else).
-      if (receipt.open && !['Shift', 'Control', 'Alt', 'Meta', 'Tab', 'CapsLock'].includes(e.key)) return void (stop(), receipt.dismiss());
       if (g?.handoff && (e.key === 'Enter' || e.key === ' ')) (stop(), send({ type: 'handoffAccept' }));
       else if (focusedCtl && (e.key === 'Enter' || e.key === ' ')) e.stopPropagation();
       return;
