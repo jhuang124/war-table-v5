@@ -7,16 +7,25 @@
 // three words, Turtle · Opportunist · Warlord, with the chosen one's line in small text under it (and every
 // word's line as its hover title); two house rules, Neutral armies (2 players) and Truces.
 // v5 G: a third, Missions (off by default): each seat gets a secret mission; completing it wins.
+// v5.1 D (QUIETER §3 D, "decide, don't ask"): three decisions. The sheet shows Seats (name, Human · AI, the
+// emblem; colours are assigned), Length, the summary line and Start. Everything else (map, setup, each AI's
+// difficulty and personality, the house rules) is decided for you and folds under one word, 'More', which
+// opens in place (NewGameVM.advancedOpen; the UI's own state until the controller sends it). Personalities
+// are random and hidden: an AI seat shows a personality row only with More open, and it reads 'Any' until a
+// player picks one. Truces are gone (standing replaces them; the controller decides).
 
 import type { AiDifficulty, AiPersonality, PlayerColorId, PlayerKind } from '../../engine/types';
 import type { HouseRulesDraft, LengthPreset, MapOptionVM, NewGameVM, PersonalityOptionVM, SeatDraft, SetupPreset, UiIntent } from '../../game/viewModel';
 import { PLAYER_COLOR_IDS, PLAYER_COLORS } from '../../shared/palette';
-import { Segmented, Switch, uiButton } from '../controls';
+import { moreWord, Segmented, setMoreWord, Switch, uiButton } from '../controls';
 import { animateIn, emblem, ensoEl, h, hashSeed, ringEl, setAttr, setEmblem, setStyle, setText, toggle, underlineEl } from '../dom';
 import { isPhone, layout } from '../layout';
 import { dragToDismiss, grabHandle, sheetIn } from '../sheet';
 
 type Send = (i: UiIntent) => void;
+
+/** v5.1 D: the personality picker's default: random, and hidden from the table. */
+type PersPick = AiPersonality | 'any';
 
 /** v5 G: the Missions switch's one line. */
 const MISSIONS_LINE = 'Each seat gets a secret mission; completing it wins';
@@ -33,7 +42,7 @@ class SeatRow {
   private kind: Segmented<PlayerKind>;
   private diff: Segmented<AiDifficulty>;
   private diffWrap: HTMLDivElement;
-  private pers: Segmented<AiPersonality>;
+  private pers: Segmented<PersPick>;
   private persWrap: HTMLDivElement;
   private persLine: HTMLSpanElement;
   private persKey = '';
@@ -114,7 +123,7 @@ class SeatRow {
     this.diffWrap.append(this.diff.el);
     // v3: how the AI plays. Three words; the chosen one's line in small text under it.
     this.persWrap = h('div', 'pers-wrap');
-    this.pers = new Segmented<AiPersonality>('seg-row seg-pers', (v) => send({ type: 'seat', index: this.index, patch: { personality: v } }), 'AI personality', `seat-pers-${index}`);
+    this.pers = new Segmented<PersPick>('seg-row seg-pers', (v) => send({ type: 'seat', index: this.index, patch: { personality: v === 'any' ? undefined : v } }), 'AI personality', `seat-pers-${index}`);
     this.persLine = h('span', 'pers-line');
     this.persLine.dataset.testid = `seat-pers-line-${index}`;
     this.persWrap.append(this.pers.el, this.persLine);
@@ -159,6 +168,11 @@ class SeatRow {
     return this.seat?.kind ?? null;
   }
 
+  /** The fold opened: the personality line finds its place again (the row was laid out without it). */
+  relayout(): void {
+    requestAnimationFrame(() => this.placePersLine());
+  }
+
   /** The chosen personality's line sits under its word (kept inside the row). */
   private placePersLine(): void {
     const b = this.pers.el.querySelector<HTMLElement>('.seg-opt.on');
@@ -176,7 +190,9 @@ class SeatRow {
     this.seat = seat;
     if (personalities !== this.persOpts) {
       this.persOpts = personalities;
-      this.pers.setOptions(personalities.map((p) => ({ value: p.id, label: p.name })));
+      this.pers.setOptions([{ value: 'any' as PersPick, label: 'Any' }, ...personalities.map((p) => ({ value: p.id as PersPick, label: p.name }))]);
+      const any = this.pers.el.querySelector<HTMLElement>(`[data-testid="seat-pers-${this.index}-any"]`);
+      if (any) any.title = 'Picked at random, and kept from the table';
       for (const p of personalities) {
         const b = this.pers.el.querySelector<HTMLElement>(`[data-testid="seat-pers-${this.index}-${p.id}"]`);
         if (b) b.title = p.line;
@@ -187,7 +203,7 @@ class SeatRow {
     toggle(this.el, 'has-pers', ai);
     setAttr(this.persWrap, 'aria-hidden', ai ? null : 'true');
     const chosen = personalities.find((p) => p.id === seat.personality) ?? null;
-    if (chosen) this.pers.set(chosen.id);
+    this.pers.set(chosen ? chosen.id : 'any');
     setText(this.persLine, chosen?.line ?? '');
     const key = `${ai}:${chosen?.id ?? ''}`;
     if (key !== this.persKey) {
@@ -288,13 +304,16 @@ export class NewGameScreen {
   private summary: HTMLParagraphElement;
   private problems: HTMLUListElement;
   private start: HTMLButtonElement;
-  private houseBtn: HTMLButtonElement;
-  private house: HTMLDivElement;
-  private houseOpen = false;
+  /** v5.1 D: the one 'More' word and the fold it opens (map, setup, house rules; the seats' AI rows show too). */
+  private moreBtn: HTMLButtonElement;
+  private more: HTMLDivElement;
+  private sheet: HTMLDivElement;
+  /** The fold's own state, used while the controller sends no NewGameVM.advancedOpen. */
+  private moreLocal = false;
+  private moreShown = false;
   private maps: MapPicker;
   private h: {
     neutral: Switch;
-    truces: Switch;
     missions: Switch;
     draft: Switch;
     cards: Segmented<HouseRulesDraft['cardBonus']>;
@@ -306,14 +325,11 @@ export class NewGameScreen {
 
   constructor(private send: Send) {
     this.el = h('section', 'screen newgame-screen');
-    const sheet = h('div', 'sheet ng-sheet');
+    const sheet = (this.sheet = h('div', 'sheet ng-sheet'));
     const head = h('div', 'sheet-head');
     head.append(h('h1', 'sheet-title', 'New game'), uiButton('Back', 'role-exit', () => send({ type: 'nav', screen: 'title' }), undefined, 'ng-back'));
 
     const grid = h('div', 'ng-grid');
-    // Map (v3)
-    this.maps = new MapPicker(send);
-    grid.append(h('div', 'ng-label', 'Map'), this.maps.el);
     // Seats
     this.seatsWrap = h('div', 'seats');
     this.addBtn = uiButton('Add a seat', 'role-exit add-seat', () => send({ type: 'addSeat' }), undefined, 'add-seat');
@@ -323,23 +339,31 @@ export class NewGameScreen {
     // Length
     this.length = new Segmented<LengthPreset>('seg-cards', (v) => send({ type: 'length', value: v }), 'Game length', 'length');
     grid.append(h('div', 'ng-label', 'Length'), this.length.el);
+    // More: one word; the rest of the decisions fold open under it, in place.
+    this.moreBtn = moreWord('ng-more', () => {
+      const open = !this.isMoreOpen();
+      this.moreLocal = open;
+      send({ type: 'more', open });
+      this.syncMore();
+    });
+    grid.append(h('div', 'ng-label'), this.moreBtn);
+    this.more = h('div', 'ng-more-body fold hidden');
+    this.more.dataset.testid = 'ng-more-body';
+    const mg = h('div', 'ng-grid ng-more-grid');
+    // Map (v3)
+    this.maps = new MapPicker(send);
+    mg.append(h('div', 'ng-label', 'Map'), this.maps.el);
     // Setup
     this.setup = new Segmented<SetupPreset>('seg-cards', (v) => send({ type: 'setup', value: v }), 'Setup', 'setup');
-    grid.append(h('div', 'ng-label', 'Setup'), this.setup.el);
-
-    // House rules drawer
-    this.houseBtn = h('button', 'house-toggle');
-    this.houseBtn.type = 'button';
-    this.houseBtn.dataset.houseToggle = '';
-    this.houseBtn.dataset.testid = 'house-toggle';
-    this.houseBtn.innerHTML =
-      '<span>House rules</span><span class="house-sum"></span>';
-    this.houseBtn.addEventListener('click', () => this.setHouseOpen(!this.houseOpen));
-    this.house = h('div', 'house hidden');
+    mg.append(h('div', 'ng-label', 'Setup'), this.setup.el);
+    // House rules: in the fold, always laid out (no second toggle). The label keeps the old drawer's test id
+    // as a harmless no-op so flows that 'open' it still find it.
+    const houseLabel = h('div', 'ng-label house-label', 'Rules');
+    houseLabel.dataset.testid = 'house-toggle';
+    const house = h('div', 'house');
     const patch = (p: Partial<HouseRulesDraft>) => send({ type: 'house', patch: p });
     const draft = new Switch('Draft territories', (v) => patch({ draft: v }), 'Take turns claiming them · adds ~10 min', 'house-draft');
     const neutral = new Switch('Neutral armies', (v) => patch({ neutral: v }), 'Two players · a third army holds 14 territories', 'house-neutral');
-    const truces = new Switch('Truces', (v) => patch({ truces: v }), 'AIs with a personality offer and take them', 'house-truces');
     const missions = new Switch('Missions', (v) => patch({ missions: v }), MISSIONS_LINE, 'house-missions');
     const cards = new Segmented<HouseRulesDraft['cardBonus']>('seg-row', (v) => patch({ cardBonus: v }), 'Card values', 'house-cards');
     cards.setOptions([
@@ -373,7 +397,7 @@ export class NewGameScreen {
     seed.addEventListener('keydown', (e) => {
       if (e.key === 'Enter' || e.key === 'Escape') seed.blur();
     });
-    this.h = { neutral, truces, missions, draft, cards, fortify, batch, seed };
+    this.h = { neutral, missions, draft, cards, fortify, batch, seed };
     const hf = (label: string, ctl: HTMLElement, detail?: string) => {
       const f = h('div', 'field');
       const l = h('div', 'field-label');
@@ -385,7 +409,6 @@ export class NewGameScreen {
     const hg = h('div', 'house-grid');
     hg.append(
       neutral.el,
-      truces.el,
       missions.el,
       draft.el,
       hf('Card sets', cards.el),
@@ -393,8 +416,10 @@ export class NewGameScreen {
       hf('Armies per setup turn', batch.el, 'Place your own only'),
       hf('Seed', seed, 'Same seed, same dice'),
     );
-    this.house.append(hg);
-    grid.append(h('div', 'ng-label'), this.houseBtn, h('div', ''), this.house);
+    house.append(hg);
+    mg.append(houseLabel, house);
+    this.more.append(mg);
+    grid.append(this.more);
 
     const foot = h('div', 'ng-foot');
     const sumWrap = h('div', 'ng-sum');
@@ -419,12 +444,35 @@ export class NewGameScreen {
     return open.length > 0;
   }
 
-  setHouseOpen(on: boolean): void {
-    this.houseOpen = on;
-    toggle(this.houseBtn, 'open', on);
-    this.houseBtn.setAttribute('aria-expanded', String(on));
-    toggle(this.house, 'hidden', !on);
-    if (on) animateIn(this.house);
+  /** The fold is open: the controller's word when it sends one, else the UI's own. */
+  private isMoreOpen(): boolean {
+    return this.vm?.advancedOpen ?? this.moreLocal;
+  }
+
+  /** Entering the screen: the fold starts shut (unless the controller says otherwise). */
+  onEnter(): void {
+    this.moreLocal = false;
+    this.syncMore();
+  }
+
+  /** Gallery / test hook: fold More open (or shut) without a click. */
+  setMoreOpen(on: boolean): void {
+    this.moreLocal = on;
+    this.send({ type: 'more', open: on });
+    this.syncMore();
+  }
+
+  private syncMore(): void {
+    const on = this.isMoreOpen();
+    if (on === this.moreShown) return;
+    this.moreShown = on;
+    setMoreWord(this.moreBtn, on);
+    toggle(this.more, 'hidden', !on);
+    toggle(this.sheet, 'more-open', on);
+    if (on) {
+      animateIn(this.more, { ms: 220, dy: -6 });
+      this.rows.forEach((r) => r.relayout());
+    }
   }
 
   /** On entering the screen: the first human seat's name, focused. */
@@ -438,6 +486,7 @@ export class NewGameScreen {
   update(vm: NewGameVM): void {
     if (this.vm === vm) return;
     this.vm = vm;
+    this.syncMore();
     while (this.rows.length < vm.seats.length) {
       const r = new SeatRow(this.rows.length, this.send);
       r.onOpen = (me) => this.rows.forEach((x) => x !== me && x.setOpen(false));
@@ -465,13 +514,11 @@ export class NewGameScreen {
     const hr = vm.house;
     // v3 house rules: on by default; a rule that doesn't apply to this table says why, dimmed.
     this.h.neutral.set(hr.neutral !== false);
-    this.h.truces.set(hr.truces !== false);
     const na = (sw: Switch, applies: boolean, yes: string, no: string) => {
       toggle(sw.el, 'na', !applies);
       setText(sw.el.querySelector('.switch-detail')!, applies ? yes : no);
     };
     na(this.h.neutral, vm.neutralApplies !== false, 'Two players · a third army holds 14 territories', 'Two-player games only');
-    na(this.h.truces, vm.trucesApply !== false, 'AIs with a personality offer and take them', 'Needs a human and an AI at the table');
     this.h.missions.set(hr.missions === true);
     na(this.h.missions, vm.missionsApply !== false, MISSIONS_LINE, 'Three or more players, or two with neutral armies');
     this.h.draft.set(hr.draft);
@@ -479,17 +526,6 @@ export class NewGameScreen {
     this.h.fortify.set(hr.fortifyRule);
     this.h.batch.set(String(hr.setupBatch));
     if (document.activeElement !== this.h.seed) this.h.seed.value = hr.seed == null ? '' : String(hr.seed);
-    const changed: string[] = [];
-    if (hr.draft) changed.push('draft');
-    if (hr.cardBonus === 'fixed') changed.push('fixed cards');
-    if (hr.fortifyRule === 'adjacent') changed.push('adjacent fortify');
-    if (hr.setupBatch !== 'auto') changed.push(`${hr.setupBatch} per setup turn`);
-    if (hr.seed != null) changed.push(`seed ${hr.seed}`);
-    if (hr.neutral === false && vm.neutralApplies) changed.push('no neutral armies');
-    if (hr.truces === false && vm.trucesApply) changed.push('no truces');
-    if (hr.missions === true && vm.missionsApply !== false) changed.push('missions');
-    setText(this.houseBtn.querySelector('.house-sum')!, changed.length ? changed.join(' · ') : 'classic');
-
     setText(this.summary, vm.summary);
     this.problems.textContent = '';
     for (const p of vm.problems) this.problems.append(h('li', '', p));

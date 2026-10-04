@@ -18,13 +18,20 @@
 // reinforcements as a small stack of ink stones (GameVM.holding) that empties one by one as they are placed;
 // as the turn starts, the breakdown ('3 territories · Asia +4') writes under the line and dries (~1.5 s).
 // Phones: the dab sits in the action row. v5 F4: the ensō on the rule answers a tap ('tapEnso').
+// v5.1 (QUIETER §3 C, E2): no truce offer row (the controller stops sending one). A tap on a seat ring that can
+// be asked for peace swaps 'Ask Sage for peace' into the one line with the bare word 'Ask' in the action zone
+// (setAsk). A collapsed count (CountVM.collapsed: the default is already chosen) shows only its number, a bare
+// word beside the primary; a tap on it opens the stepper / slider.
 
-import type { ButtonVM, CountVM, GameVM, GoldVM, LogLineVM, StripVM, TrackSegId, TrackVM, UiIntent } from '../../game/viewModel';
+import type { ButtonVM, CountVM, GameVM, GoldVM, LogLineVM, SeatRef, StripVM, TrackSegId, TrackVM, UiIntent } from '../../game/viewModel';
 import { layout, onLayout } from '../layout';
 import { PLAYER_COLORS } from '../../shared/palette';
-import { ActionButton } from '../controls';
+import { ActionButton, uiButton } from '../controls';
 import { brushMark } from '../../shared/enso';
 import { countUp, drawIn, EASE_BRUSH, EASE_IN_QUAD, ensoEl, h, hashSeed, minus, motion, pop, ringEl, setAttr, setEnso, setStyle, setText, svg, toggle, underlineEl } from '../dom';
+
+/** A count's identity while it is on screen (its control and range): a new occupy closes it again. */
+const countKey = (c: CountVM): string => `${c.control}:${c.min}:${c.max}`;
 
 /** Short labels on phones: the track's segments are equal-width words there. */
 const SEG_SHORT: Partial<Record<TrackSegId, string>> = { endTurn: 'End' };
@@ -751,10 +758,15 @@ export class BottomStrip {
   private stepper: Stepper;
   private slider: CountSlider;
   private buttons: Buttons;
-  /** v4 (A5): a truce offer waits on its own secondary line, never in the primary slot. */
-  private offer: HTMLDivElement;
-  private offerText: HTMLSpanElement;
-  private offerButtons: Buttons;
+  /** v5.1 C: 'Ask Sage for peace' on offer (UI-local; index.ts owns when it starts and ends). */
+  private ask: SeatRef | null = null;
+  private askBtn: HTMLButtonElement;
+  /** 'Ask' was pressed. */
+  onAsk: ((seat: SeatRef) => void) | null = null;
+  /** v5.1 E2: a collapsed count's number, a bare word; a tap opens the control. */
+  private countWord: HTMLButtonElement;
+  /** The collapsed count was opened, for this count (its control and range). */
+  private countOpenKey = '';
   private zone: HTMLDivElement;
   private seat = new SeatMark();
   private hold = new Holding();
@@ -778,17 +790,23 @@ export class BottomStrip {
     this.count = h('div', 'st-count');
     this.stepper = new Stepper(send);
     this.slider = new CountSlider(send);
-    this.count.append(this.stepper.el, this.slider.el);
+    this.countWord = h('button', 'count-word nofocus num');
+    this.countWord.type = 'button';
+    this.countWord.dataset.testid = 'count-expand';
+    this.countWord.addEventListener('click', () => {
+      const c = this.vm?.count;
+      if (!c) return;
+      this.countOpenKey = countKey(c);
+      this.paintCount(c, true);
+    });
+    this.count.append(this.countWord, this.stepper.el, this.slider.el);
     this.buttons = new Buttons((b) => send({ type: 'button', id: b.id }));
     const zone = (this.zone = h('div', 'st-zone'));
     zone.dataset.testid = 'action-zone';
     zone.append(this.count, this.buttons.el);
-    this.offer = h('div', 'st-offer hidden');
-    this.offer.dataset.testid = 'offer';
-    this.offerText = h('span', 'st-offer-text');
-    this.offerButtons = new Buttons((b) => send({ type: 'button', id: b.id }));
-    this.offer.append(this.offerText, this.offerButtons.el);
-    zone.append(this.offer);
+    // v5.1 C: the one word that confirms 'Ask Sage for peace' (bare: never the gold).
+    this.askBtn = uiButton('Ask', 'role-secondary st-ask hidden', () => this.ask && this.onAsk?.(this.ask), undefined, 'btn-askPeace');
+    zone.prepend(this.askBtn);
     this.say = h('div', 'st-say');
     // The round word, at the left of the line's row: a click (a mouse) opens the Ledger. On touch it is a
     // word only (a 44 px target there would take taps from the board above the dock); the menu has it.
@@ -832,6 +850,11 @@ export class BottomStrip {
         const c = this.vm?.count;
         if (!c) return;
         e.preventDefault();
+        // Touching the count opens it (a collapsed count included).
+        if (c.collapsed && this.countOpenKey !== countKey(c)) {
+          this.countOpenKey = countKey(c);
+          this.paintCount(c, true);
+        }
         const v = Math.max(c.min, Math.min(c.max, c.value + (e.deltaY < 0 ? 1 : -1)));
         if (v !== c.value) send({ type: 'setCount', value: v });
       },
@@ -895,7 +918,58 @@ export class BottomStrip {
     if (vm && (!prev || prev.seat.id !== vm.seat.id)) this.breakdown.show(vm.breakdown);
     else if (!vm) this.breakdown.show('');
     const v = this.vm;
-    if (v) toggle(this.zone, 'is-empty', !v.count && v.buttons.length === 0 && !v.offer && !this.holdsInZone());
+    if (v) toggle(this.zone, 'is-empty', !v.count && v.buttons.length === 0 && !this.ask && !this.holdsInZone());
+  }
+
+  /**
+   * v5.1 C: offer 'Ask Sage for peace' in the one line, with 'Ask' in the action zone (null puts it away and
+   * the controller's line comes back).
+   */
+  setAsk(seat: SeatRef | null): void {
+    if (seat?.id === this.ask?.id) return;
+    this.ask = seat;
+    toggle(this.askBtn, 'hidden', !seat);
+    this.askBtn.setAttribute('aria-label', seat ? `Ask ${seat.name} for peace` : 'Ask');
+    if (seat) drawIn(this.askBtn, 200);
+    const v = this.vm;
+    if (v) this.paintLine(v);
+    if (v) toggle(this.zone, 'is-empty', !v.count && v.buttons.length === 0 && !seat && !this.holdsInZone());
+  }
+
+  private askKey = 0;
+  private paintLine(vm: StripVM): void {
+    if (this.ask) {
+      toggle(this.line.el, 'is-voice', false);
+      this.line.update(`Ask ${this.ask.name} for peace`, 'normal', -1000 - this.askKey, null);
+      return;
+    }
+    this.askKey++;
+    // v5 D: an AI's voice line is set in that seat's light pigment (the narration italic), never ivory.
+    const voice = vm.voice ?? null;
+    toggle(this.line.el, 'is-voice', !!voice);
+    this.line.update(vm.line, voice ? 'narration' : vm.lineKind, vm.lineKey, voice ? PLAYER_COLORS[voice.color].light : vm.lineKind === 'narration' ? PLAYER_COLORS[vm.track.seat.color].light : null);
+  }
+
+  /** The count: collapsed = its number as a bare word (a tap opens it); otherwise the stepper or slider. */
+  private paintCount(c: CountVM | null, opened = false): void {
+    const folded = !!c?.collapsed && this.countOpenKey !== countKey(c);
+    if (!c) this.countOpenKey = '';
+    toggle(this.count, 'hidden', !c);
+    toggle(this.count, 'is-collapsed', folded);
+    toggle(this.countWord, 'hidden', !folded);
+    if (c && folded) {
+      setText(this.countWord, String(c.value));
+      this.countWord.setAttribute('aria-label', `${c.value} of ${c.max}: change the count`);
+    }
+    toggle(this.stepper.el, 'hidden', folded || c?.control !== 'stepper');
+    toggle(this.slider.el, 'hidden', folded || c?.control !== 'slider');
+    if (c?.control === 'stepper' && !folded) this.stepper.update(c);
+    else this.stepper.reset();
+    if (c?.control === 'slider' && !folded) this.slider.update(c);
+    if (opened) {
+      const el = c?.control === 'slider' ? this.slider.el : this.stepper.el;
+      drawIn(el, 200);
+    }
   }
 
   /** Another line owns the slot (a breath line, the rotate hint): the strip's line steps aside. */
@@ -924,27 +998,12 @@ export class BottomStrip {
     }
     this.seat.update(vm.track.seat);
     this.track.update(vm.track, g?.kind === 'segment' ? g.seg : null);
-    // v5 D: an AI's voice line is set in that seat's light pigment (the narration italic), never ivory.
-    const voice = vm.voice ?? null;
-    toggle(this.line.el, 'is-voice', !!voice);
-    this.line.update(vm.line, voice ? 'narration' : vm.lineKind, vm.lineKey, voice ? PLAYER_COLORS[voice.color].light : vm.lineKind === 'narration' ? PLAYER_COLORS[vm.track.seat.color].light : null);
+    this.paintLine(vm);
     const c = vm.count;
-    toggle(this.count, 'hidden', !c);
-    toggle(this.stepper.el, 'hidden', c?.control !== 'stepper');
-    toggle(this.slider.el, 'hidden', c?.control !== 'slider');
-    if (c?.control === 'stepper') this.stepper.update(c);
-    else this.stepper.reset();
-    if (c?.control === 'slider') this.slider.update(c);
+    this.paintCount(c);
     this.buttons.update(vm.buttons, g ?? null);
-    // v4: the offer line (plain words; Accept is never the gold while the player is acting)
-    const offer = (vm as StripVM & { offer?: { text: string; buttons: ButtonVM[] } | null }).offer ?? null;
-    toggle(this.offer, 'hidden', !offer);
-    if (offer) {
-      setText(this.offerText, offer.text);
-      this.offerButtons.update(offer.buttons, null);
-    } else this.offerButtons.update([], null);
     // The action row folds away when there is nothing to press (portrait docks).
-    toggle(this.zone, 'is-empty', !c && vm.buttons.length === 0 && !offer && !this.holdsInZone());
-    this.el.dataset.buttons = String(vm.buttons.length + (c ? 1 : 0) + (offer ? offer.buttons.length : 0));
+    toggle(this.zone, 'is-empty', !c && vm.buttons.length === 0 && !this.ask && !this.holdsInZone());
+    this.el.dataset.buttons = String(vm.buttons.length + (c ? 1 : 0) + (this.ask ? 1 : 0));
   }
 }

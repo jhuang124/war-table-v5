@@ -1,105 +1,23 @@
-// Modal-ish layers: the hand-off cover, the confirm dialog, and the menu (the ensō / Esc) with the sheets
-// it opens: rules, settings (AI speed and the seat hand-off live here) and the read-only log. Every one
+// Modal-ish layers: the confirm dialog, and the menu (the ensō / Esc) with the sheets it opens: rules,
+// settings (AI speed and the seat hand-off live here) and the read-only log. Every one
 // is a paper sheet (docs/INK2.md §3.3): straight-edged deeper paper with one ivory hairline across its
 // top and the title sitting on it, items as words with room between them; focus is a gold hairline
 // underline. No radius, no box round a control. v4 (E1, E8): the paper carries the board's fibre and the
 // one lamp's shadow, and is laid on the board from the top edge and lifted off it again (sheet.ts
 // sheetDrop / sheetLift); never fading in from nowhere. Phones: bottom sheets (the same paper, rising).
+// v5.1 (QUIETER §3 A, E3): the hand-off cover is gone (the turn line and the filled seat ring say whose turn
+// it is). Settings show four things (Sound, Score, AI speed, Text size); the rest folds under one word, 'More'.
 
-import { cupSvg } from './hud/cup';
 import type { GameVM, LogLineVM, SeatRef, Settings, UiIntent, ViewModel } from '../game/viewModel';
 
 import { PLAYER_COLORS } from '../shared/palette';
-import { Segmented, Slider, Switch, uiButton } from './controls';
+import { moreWord, Segmented, setMoreWord, Slider, Switch, uiButton } from './controls';
 import { animateIn, drawEnso, drawIn, EASE_IN_QUAD, emblem, ensoEl, h, hashSeed, minus, motion, setAttr, setEnso, setStyle, setText, titleText, toggle, underlineEl } from './dom';
 import { unitSrc } from './hud/pictograms';
 import { isPhone } from './layout';
 import { dragToDismiss, grabHandle, resetSheet, sheetDrop, sheetIn, sheetLift, sheetOut } from './sheet';
 
 type Send = (i: UiIntent) => void;
-
-// ---------------------------------------------------------------------------
-// Hand-off cover: mounted at full opacity in the same frame (no fade in), fades out 240 ms.
-// ---------------------------------------------------------------------------
-
-export class Handoff {
-  readonly el: HTMLDivElement;
-  private title: HTMLHeadingElement;
-  private sub: HTMLParagraphElement;
-  private mission: HTMLParagraphElement;
-  private btnLabel: HTMLSpanElement;
-  private emb: HTMLDivElement;
-  private ring: SVGSVGElement;
-  private seat: SeatRef | null = null;
-  private vmRef: GameVM['handoff'] = null;
-  private box: HTMLDivElement;
-  private cupEl!: HTMLDivElement;
-
-  constructor(send: Send) {
-    this.el = h('div', 'handoff hidden');
-    this.el.setAttribute('role', 'dialog');
-    this.el.setAttribute('aria-modal', 'true');
-    // Phones: the cover's content is a bottom sheet; pulling it down is the same as the button.
-    const box = h('div', 'ho-box');
-    box.append(grabHandle('handoff-grab'));
-    dragToDismiss(box, [box], { onDismiss: () => send({ type: 'handoffAccept' }) });
-    this.box = box;
-    this.emb = h('div', 'ho-emb');
-    this.ring = ensoEl(1, 'enso', { drawable: true });
-    // the cup, lacquered in the next seat's colour, inside their ring (PLAN §2: "Pass the cup to Sam")
-    this.cupEl = h('div', 'ho-cup');
-    this.emb.append(this.ring, this.cupEl);
-    this.title = h('h1', 'ho-title');
-    this.sub = h('p', 'ho-sub num');
-    // v5 G: the seat's secret mission, one line in its light tint (only behind the cover).
-    this.mission = h('p', 'ho-mission num hidden');
-    this.mission.dataset.testid = 'handoff-mission';
-    // The words `I'm Sam · start turn` inside a gold brush ring: the cover's own gold (GoldVM 'handoff').
-    const btn = uiButton('', 'brass role-primary big', () => send({ type: 'handoffAccept' }), undefined, 'handoff-accept');
-    this.btnLabel = btn.querySelector('.btn-label')!;
-    box.append(this.emb, this.title, this.sub, this.mission, btn);
-    this.el.append(box);
-  }
-
-  update(vm: GameVM['handoff']): void {
-    if (vm === this.vmRef) return;
-    this.vmRef = vm;
-    setAttr(this.el, 'data-testid', vm ? 'handoff' : null);
-    if (!vm) {
-      if (this.seat) {
-        this.seat = null;
-        const a = this.el.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 240, easing: EASE_IN_QUAD, fill: 'forwards' });
-        a.onfinish = () => {
-          if (!this.seat) this.el.classList.add('hidden');
-          a.cancel();
-        };
-      }
-      return;
-    }
-    const was = !!this.seat;
-    const prevId = this.seat?.id;
-    this.seat = vm.seat;
-    this.el.getAnimations().forEach((a) => a.cancel());
-    this.el.classList.remove('hidden');
-    // The cover itself mounts opaque at once; on phones its sheet rises into place.
-    resetSheet(this.box);
-    if (!was && isPhone()) sheetIn(this.box);
-    const pal = PLAYER_COLORS[vm.seat.color];
-    setStyle(this.el, '--seat', pal.base);
-    setStyle(this.el, '--seat-light', pal.light);
-    setEnso(this.ring, hashSeed(`${vm.seat.id}:${vm.seat.color}`), { drawable: true });
-    if (!was || prevId !== vm.seat.id) drawEnso(this.ring, 700);
-    this.title.textContent = '';
-    this.title.append(titleText(`Pass the cup to ${vm.seat.name}`));
-    this.cupEl.innerHTML = cupSvg(vm.seat.color);
-    setText(this.sub, vm.subline);
-    const mission = vm.mission ? minus(vm.mission) : '';
-    setText(this.mission, mission);
-    toggle(this.mission, 'hidden', !mission);
-    toggle(this.box, 'has-mission', !!mission);
-    setText(this.btnLabel, `I'm ${vm.seat.name} · start turn`);
-  }
-}
 
 // ---------------------------------------------------------------------------
 // Confirm dialog (End game now / Restart): the only confirms in the game.
@@ -394,6 +312,9 @@ export class Overlays {
     sw: Record<string, Switch>;
   };
   private fitNote: HTMLSpanElement;
+  private moreBtn: HTMLButtonElement;
+  private more: HTMLDivElement;
+  private moreOpen = false;
   private seats: HTMLDivElement;
   private seatsKey = '';
   private screen = '';
@@ -476,7 +397,6 @@ export class Overlays {
     const sw: Record<string, Switch> = {
       showLabels: new Switch('Territory names', (v) => set({ showLabels: v }), 'On every tile, not just the one you point at', 'set-labels'),
       showWinChance: new Switch('Show win chance', (v) => set({ showWinChance: v }), 'Otherwise a word: likely, coin flip…'),
-      hideCardsBetweenTurns: new Switch('Hide cards between turns', (v) => set({ hideCardsBetweenTurns: v }), 'Pass the cup: a cover between turns when 2+ humans play'),
       music: new Switch('Ambient score', (v) => set({ music: v }), 'A soft score under the game', 'set-music'),
       muted: new Switch('Mute all sound', (v) => set({ muted: v })),
       ambient: new Switch('Drifting board', (v) => set({ ambient: v }), 'Mist and ink move slowly while nobody plays', 'set-ambient'),
@@ -494,22 +414,24 @@ export class Overlays {
       return f;
     };
     this.fitNote = h('span', 'field-detail hidden', 'fitted to this screen');
+    // v5.1 E3: the four things people change, then 'More' (the same fold as New game) for the rest.
+    const primary = h('div', 'settings-primary');
+    primary.dataset.testid = 'settings-primary';
+    primary.append(field('Sound volume', vol.el), field('Score volume', mvol.el), field('AI speed', ai.el, 'How AI turns play'), field('Text size', text.el, this.fitNote));
+    this.moreBtn = moreWord('settings-more', () => this.setMore(!this.moreOpen));
+    this.more = h('div', 'settings-more-body fold hidden');
+    this.more.dataset.testid = 'settings-more-body';
     const cols = h('div', 'settings-cols');
     const c1 = h('div', 'settings-col');
-    c1.append(
-      field('AI speed', ai.el, 'How AI turns play'),
-      field('Animation speed', anim.el, 'Your own turns'),
-      field('Text size', text.el, this.fitNote),
-      field('Sound volume', vol.el),
-      field('Score volume', mvol.el),
-    );
+    c1.append(field('Animation speed', anim.el, 'Your own turns'));
     // Seats: hand a seat to the AI when a friend leaves (and back). Filled in update().
     this.seats = h('div', 'menu-seats hidden');
     c1.append(this.seats);
     const c2 = h('div', 'settings-col');
-    c2.append(sw.music.el, sw.muted.el, sw.showLabels.el, sw.showWinChance.el, sw.hideCardsBetweenTurns.el, sw.autoCamera.el, sw.ambient.el, sw.reduceMotion.el);
+    c2.append(sw.music.el, sw.muted.el, sw.showLabels.el, sw.showWinChance.el, sw.autoCamera.el, sw.ambient.el, sw.reduceMotion.el);
     cols.append(c1, c2);
-    this.settings.append(sh, cols);
+    this.more.append(cols);
+    this.settings.append(sh, primary, this.moreBtn, this.more);
 
     // Log
     this.log = new LogSheet(() => send({ type: 'overlay', overlay: this.backTarget() }));
@@ -527,6 +449,15 @@ export class Overlays {
       [this.log.el, this.log.head],
     ] as const)
       dragToDismiss(sheet, [sheet.querySelector<HTMLElement>('.grab')!, head], { scrim: () => this.el, onDismiss: close });
+  }
+
+  /** v5.1 E3: fold the rest of Settings open / shut (local: it closes again each time Settings opens). */
+  setMore(on: boolean): void {
+    if (on === this.moreOpen) return;
+    this.moreOpen = on;
+    setMoreWord(this.moreBtn, on);
+    toggle(this.more, 'hidden', !on);
+    if (on) animateIn(this.more, { ms: 200, dy: -6 });
   }
 
   /** The last close was a drag: the sheet has already slid off, so hide at once. */
@@ -596,6 +527,7 @@ export class Overlays {
       const prev = this.current;
       this.current = o;
       const sheet = o ? sheets[o] : null;
+      if (o === 'settings') this.setMore(false);
       if (sheet) {
         if (phone) {
           // The first sheet rises from the bottom edge; moving between sheets swaps in place.
