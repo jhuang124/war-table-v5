@@ -202,8 +202,8 @@ export interface StripInput {
   interactive: boolean;
   /** Watching line (AI turns). */
   narration: string | null;
-  /** The hand-off cover is up for this seat. */
-  handoff: number | null;
+  /** v5.1: the hand-off cover went (a line, not a window); always null, kept for older callers. */
+  handoff?: number | null;
   /** Every human is out: offer to watch to the end or call it. */
   humansOut: boolean;
   /** Idle line (game over, etc.). */
@@ -225,15 +225,6 @@ export interface StripInput {
    * line says how many ('You took Brazil · 3 armies move in'). null = a count was (or will be) chosen.
    */
   tookMoved?: number | null;
-}
-
-/**
- * v4 (PLAN §3 A5, the review's truce bug): a truce offer to the driver. It never takes the primary slot,
- * the line, the count or the buttons; it rides under them as a secondary line with 'Accept' / 'Decline'
- * as small words. `Place N` stays the one gold.
- */
-export function withOffer(strip: StripVM, text: string): StripVM {
-  return { ...strip, offer: { text, buttons: [btn('declineTruce', 'Decline'), btn('acceptTruce', 'Accept')] } };
 }
 
 const btn = (id: ButtonId, label: string, primary = false): ButtonVM => ({ id, label, primary });
@@ -320,26 +311,13 @@ export function buildStrip(inp: StripInput): StripVM {
         buttons: [btn('callGame', 'End game'), btn('watchAis', 'Watch to the end', true)],
       };
     }
-    const who = inp.handoff ?? me;
-    // Behind the hand-off cover the track already belongs to the seat being handed the laptop.
-    const shownTrack: TrackVM =
-      inp.handoff !== null && s.players[inp.handoff]
-        ? {
-            ...track,
-            kind: 'turn',
-            seat: seatRef(s, inp.handoff),
-            segments: TURN.map((id, i) => ({ id, label: LABEL[id], state: i === 0 ? 'current' : 'locked' })),
-            recommended: null,
-            turnKey: `handoff:${inp.handoff}`,
-          }
-        : track;
-    const line = inp.handoff !== null ? `Pass the cup to ${pName(s, inp.handoff)}` : (inp.narration ?? inp.idleLine ?? `${poss(pName(s, me))} turn`);
+    const line = inp.narration ?? inp.idleLine ?? `${poss(pName(s, me))} turn`;
     return {
       mode: inp.idleLine && !inp.narration ? 'idle' : 'watching',
-      track: shownTrack,
-      accent: s.players[who]?.color ?? accent,
+      track,
+      accent,
       line,
-      lineKind: inp.narration && inp.handoff === null ? 'narration' : 'normal',
+      lineKind: inp.narration ? 'narration' : 'normal',
       lineKey: inp.lineKey,
       count: null,
       buttons: [],
@@ -408,8 +386,9 @@ export function buildStrip(inp: StripInput): StripVM {
     case 'occupy': {
       const value = Math.min(ph.max, Math.max(ph.min, sel.occupyCount ?? ph.max));
       const line = sel.countTouched && !inp.boardPreview ? totalsLine(s, ph.from, ph.to, value) : `Move into ${tName(ph.to)}`;
+      // v5.1 E2: all but one is decided for you; the control unfolds only once the player touches the count.
       return make('occupy', line, {
-        count: ph.max > ph.min ? countVM(value, ph.min, ph.max) : null,
+        count: ph.max > ph.min ? { ...countVM(value, ph.min, ph.max), ...(sel.countTouched ? {} : { collapsed: true }) } : null,
         buttons: [btn('move', `Move ${value}`, true)],
       });
     }

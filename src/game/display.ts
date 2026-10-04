@@ -19,6 +19,10 @@ export const NON_BLOCKING: ReadonlySet<GameEventType> = new Set<GameEventType>([
   'truceDeclined',
   'truceBroken',
   'truceExpired',
+  // v5.1 standing: words and a seat mark only
+  'peaceAnswered',
+  'peaceBroken',
+  'standingChanged',
 ]);
 
 export function isBlocking(e: GameEvent): boolean {
