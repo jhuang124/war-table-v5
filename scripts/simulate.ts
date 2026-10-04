@@ -3,7 +3,8 @@
 // Every game must end in gameOver, with every AI action legal on the first try (no fallback),
 // under 500 rounds, with the invariants below holding after every action.
 //
-// After the classic sections: personalities (4p pair tables and a free-for-all), diplomacy counts,
+// After the classic sections: personalities (4p pair tables and a free-for-all), diplomacy counts, standing
+// (v5.1: rounds per table, AI-AI understandings formed / broken / turned, the spread of bands),
 // the 2-player first-mover rate with and without the neutral seat (plus its rounds table for
 // presets.ts), and AI decision time per turn.
 
@@ -15,6 +16,7 @@ import {
   missionComplete,
   missionGoal,
   missionHeadline,
+  standingOf,
   TERRITORY_IDS,
   UNCLAIMED,
   validateAction,
@@ -24,6 +26,7 @@ import {
   type GameEventType,
   type GameState,
   type PlayerConfig,
+  type Standing,
 } from '../src/engine';
 import { decide } from '../src/engine/ai/brain';
 import { hashInts, random, type RngHolder } from '../src/engine/rng';
@@ -82,6 +85,17 @@ const THRESHOLDS = [60, 70, 75, 80, 100];
 const shape = { reinforceActions: 0, reinforceArmies: 0, attack: 0, blitz: 0 };
 
 const decisionTimes: number[] = [];
+
+/** v5.1 standing: understandings ended because a side turned (truceExpired 'standing'), and band samples. */
+let standingTurned = 0;
+let sampleBands = false;
+const bandCount: Record<Standing, number> = { ally: 0, even: 0, wary: 0, hostile: 0 };
+function sampleStandings(s: GameState): void {
+  for (const a of s.players) {
+    if (a.kind !== 'ai' || a.eliminated || a.neutral) continue;
+    for (const b of s.players) if (b.id !== a.id && !b.eliminated && !b.neutral) bandCount[standingOf(s, a.id, b.id)]++;
+  }
+}
 const failures: string[] = [];
 
 function check(s: GameState, label: string): void {
@@ -153,7 +167,9 @@ function playGame(config: GameConfig, label: string): GameResult {
     state = res.state;
     const opening = state.round >= 1 && state.round <= OPENING_ROUNDS;
     for (const e of res.events) {
-      if (e.type.startsWith('truce')) dip[e.type] = (dip[e.type] ?? 0) + 1;
+      if (e.type.startsWith('truce') || e.type.startsWith('peace') || e.type === 'standingChanged') dip[e.type] = (dip[e.type] ?? 0) + 1;
+      if (e.type === 'truceExpired' && e.reason === 'standing') standingTurned++;
+      if (e.type === 'turnStarted' && sampleBands) sampleStandings(state);
       if (e.type === 'playerEliminated') seatStats[e.by].elim++;
       else if (e.type === 'truceBroken') seatStats[e.by].breaks++;
       if (!opening) continue;
@@ -219,6 +235,10 @@ function seats(diffs: AiDifficulty[]): PlayerConfig[] {
 
 function pct(n: number, d: number): string {
   return d ? `${((100 * n) / d).toFixed(1)}%` : '—';
+}
+
+function p90(xs: number[]): number {
+  return [...xs].sort((a, b) => a - b)[Math.floor(xs.length * 0.9)] ?? 0;
 }
 
 function median(xs: number[]): number {
@@ -400,11 +420,43 @@ for (const k of KINDS) {
 }
 
 const perGame = (k: GameEventType) => ((allDip[k] ?? 0) / Math.max(1, dipGames)).toFixed(2);
-console.log(`\n=== Diplomacy, per game with personalities (${dipGames} games) ===`);
+console.log(`\n=== Diplomacy, per game with personalities (${dipGames} games; v5.1: AI-AI understandings only) ===`);
 console.log(
-  `  proposed ${perGame('truceProposed')}  accepted ${perGame('truceAccepted')}  declined ${perGame('truceDeclined')}  broken ${perGame('truceBroken')}  expired ${perGame('truceExpired')}`,
+  `  proposed ${perGame('truceProposed')}  accepted ${perGame('truceAccepted')}  declined ${perGame('truceDeclined')}  broken ${perGame('truceBroken')}  expired ${perGame('truceExpired')}  standing changes ${perGame('standingChanged')}`,
 );
 if ((allDip.truceProposed ?? 0) === 0) failures.push('no truce was ever proposed in personality games');
+
+// --- Standing (v5.1): rounds per table, understandings, bands ------------------------------------------
+// Full-conquest games, normal AIs, every seat a personality (the v5.1 New game randomises them): how long the
+// tables run now that standing steers targets, how often AI-AI understandings form, break and turn, and how the
+// bands spread (sampled at every turn start, every AI toward every seat).
+console.log(`\n=== Standing (v5.1): ${P} games per table, full conquest; rounds median / p90, per game: understandings formed / broken by attack / turned / expired, standing changes ===`);
+turnBucket = 'standing';
+sampleBands = true;
+const PERS3: Kind[] = ['turtle', 'opportunist', 'warlord'];
+const sTables: { label: string; seats: (i: number) => PlayerConfig[]; over: Partial<GameConfig> }[] = [
+  { label: '4p', seats: (i) => pSeats([0, 1, 2, 3].map((k) => PERS3[hashInts(i, k, 77) % 3])), over: full },
+  { label: '3p', seats: (i) => pSeats(PERS3.map((_, k, a) => a[(k + i) % 3])), over: full },
+  { label: '2p+neutral', seats: (i) => pSeats(PERS3.slice(0, 2).map((_, k) => PERS3[hashInts(i, k, 78) % 3])), over: { ...full, neutral: true } },
+];
+let formedAll = 0;
+for (const t of sTables) {
+  const turned0 = standingTurned;
+  const res = run(`standing-${t.label}`, P, (i) => makeConfig(i, t.seats(i), t.over));
+  const r = res.map((g) => g.rounds);
+  const sum = (k: GameEventType) => res.reduce((a, g) => a + (g.dip[k] ?? 0), 0);
+  const per = (n: number) => (n / Math.max(1, res.length)).toFixed(2);
+  const formed = sum('truceAccepted');
+  formedAll += formed;
+  const withOne = res.filter((g) => (g.dip.truceAccepted ?? 0) > 0).length;
+  console.log(
+    `  ${t.label.padEnd(10)} rounds ${median(r)} / ${p90(r)}   understandings ${per(formed)} (in ${pct(withOne, res.length)} of games)  broken ${per(sum('truceBroken'))}  turned ${per(standingTurned - turned0)}  expired ${per(sum('truceExpired') - (standingTurned - turned0))}   standing changes ${per(sum('standingChanged'))}`,
+  );
+}
+sampleBands = false;
+const bandTotal = Object.values(bandCount).reduce((a, b) => a + b, 0);
+console.log(`  bands at turn start (every AI toward every seat): ${(['ally', 'even', 'wary', 'hostile'] as Standing[]).map((b) => `${b} ${pct(bandCount[b], bandTotal)}`).join('  ')}`);
+if (formedAll === 0) failures.push('no AI-AI understanding ever formed in the standing tables');
 
 // --- 2 players: first-mover win rate, with and without the neutral seat ---------------------------
 turnBucket = '2p classic';
@@ -443,7 +495,6 @@ const tables: { label: string; seats: (i: number) => PlayerConfig[]; over: Parti
   { label: '3p', seats: (i) => pSeats((['turtle', 'opportunist', 'warlord'] as Kind[]).map((_, k, a) => a[(k + i) % 3])), over: evening() },
   { label: '2p+neutral', seats: (i) => pSeats((['turtle', 'warlord'] as Kind[]).map((_, k, a) => a[(k + i) % 2])), over: evening(true) },
 ];
-const p90 = (xs: number[]) => [...xs].sort((a, b) => a - b)[Math.floor(xs.length * 0.9)] ?? 0;
 let mAll = 0;
 let mByMission = 0;
 for (const t of tables) {

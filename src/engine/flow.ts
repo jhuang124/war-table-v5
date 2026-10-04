@@ -5,6 +5,7 @@ import { decayGrudges, REBUFF_ROUNDS } from './diplomacy';
 import { ADJACENCY, TERRITORY_IDS } from './mapData';
 import { missionComplete, missionHeadline, missionText } from './missions';
 import { random, shuffleInPlace } from './rng';
+import { refreshStandings } from './standing';
 import { reinforcementsFor, territoryCount, totalArmies, turnLimitWinner } from './rules';
 import type { GameEvent, GameState, Phase, PlayerId, TerritoryId, TruceOffer } from './types';
 
@@ -168,6 +169,7 @@ export function startMainGame(d: Draft): void {
   s.round = 1;
   s.turn = 0;
   recordTimeline(d);
+  refreshStandings(s, true); // v5.1: the baseline bands, without events
   startTurn(d, s.firstPlayer);
 }
 
@@ -212,6 +214,8 @@ export function finishTurn(d: Draft): void {
     newRoundDiplomacy(d);
     recordTimeline(d);
   }
+  // v5.1: understandings that turned break, and bands that moved are announced (truceExpired 'standing' → standingChanged).
+  for (const e of refreshStandings(s)) emit(d, e);
   startTurn(d, next.player);
 }
 

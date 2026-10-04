@@ -35,11 +35,14 @@
 //   setController: controllerChanged
 //
 // Diplomacy (additive; only personality AIs, or humans with config.diplomacy, ever trigger these):
-//   proposeTruce: truceProposed → (AI target) truceAccepted | truceDeclined   (human target: waits)
-//   answerTruce:  truceAccepted | truceDeclined
+//   proposeTruce: truceProposed → (AI target) truceAccepted | truceDeclined   (v5.1: a human target is rejected)
+//   answerTruce:  truceAccepted | truceDeclined   (v5.1: unused, no offer reaches a human; kept for old saves)
+//   askPeace (v5.1): peaceAnswered → standingChanged?
+//   attack / blitz through peace (v5.1): peaceBroken → standingChanged? → diceRolled ...
 //   attack / blitz on a truce partner: truceBroken → diceRolled ...
 //   conquest that eliminates a seat with truces: ... cardsCaptured? → truceExpired(eliminated) ×N → ...
-//   [end of turn]: cardDrawn? → truceDeclined(lapsed)? → (new round) truceExpired(time) ×N → turnStarted
+//   [end of turn]: cardDrawn? → truceDeclined(lapsed)? → (new round) truceExpired(time) ×N
+//                  → (v5.1) truceExpired(standing) ×N → standingChanged ×N → turnStarted
 //
 // Grudges (PlayerState.grudges) change silently: on every conquest, broken continent, broken truce,
 // and elimination of a truce partner; they decay each new round.
@@ -58,6 +61,7 @@ import {
   GRUDGE_PARTNER_ELIMINATED,
   GRUDGE_STANDING,
   GRUDGE_TAKEN,
+  isPeace,
   offerBetween,
   truceBetween,
   trucePartners,
@@ -79,7 +83,8 @@ import {
 } from './flow';
 import { ADJACENCY, CONTINENTS, TERRITORIES, TERRITORY_IDS } from './mapData';
 import { missionComplete } from './missions';
-import { rollDie } from './rng';
+import { random, rollDie } from './rng';
+import { clearHardened, noteStanding, peaceAnswer, peaceAskBlock, PEACE_ROUNDS } from './standing';
 import {
   checkWinner,
   defendDiceFor,
@@ -118,6 +123,7 @@ export function cloneState(s: GameState): GameState {
     players: s.players.map((p) => {
       const c = { ...p, cards: [...p.cards], stats: { ...p.stats } };
       if (p.grudges) c.grudges = { ...p.grudges };
+      if (p.lastTakenBy) c.lastTakenBy = { ...p.lastTakenBy };
       return c;
     }),
     territories,
@@ -150,6 +156,7 @@ const ACTION_TYPES = new Set([
   'setController',
   'proposeTruce',
   'answerTruce',
+  'askPeace',
 ]);
 
 const isPosInt = (x: unknown): x is number => typeof x === 'number' && Number.isInteger(x) && x >= 1;
@@ -345,8 +352,9 @@ function validateInner(state: GameState, action: Action): string | null {
       if (a.kind !== 'noAttack') return 'The only truce is a no-attack truce.';
       if (!Number.isInteger(a.rounds) || a.rounds < TRUCE_MIN_ROUNDS || a.rounds > TRUCE_MAX_ROUNDS)
         return `A truce lasts ${TRUCE_MIN_ROUNDS} to ${TRUCE_MAX_ROUNDS} rounds.`;
-      if ((me.kind === 'human' || them.kind === 'human') && !state.config.diplomacy)
-        return 'Truces with human players are off in this game.';
+      // v5.1: nobody offers a person a truce any more; a person asks an AI for peace (askPeace).
+      if (them.kind === 'human') return `${them.name} is not offered truces · a person asks for peace instead.`;
+      if (me.kind === 'human' && !state.config.diplomacy) return 'Truces with human players are off in this game.';
       if (truceBetween(state, a.player, a.to)) return `${me.name} and ${them.name} already have a truce.`;
       if (offerBetween(state, a.player, a.to)) return `A truce offer between ${me.name} and ${them.name} is already waiting.`;
       if (state.diplomacy?.proposedOn[a.player] === state.turn) return 'One truce offer per turn.';
@@ -393,6 +401,8 @@ function execute(d: Draft, a: Action): void {
     }
     case 'proposeTruce':
       return doPropose(d, { from: a.player, to: a.to, rounds: a.rounds, kind: a.kind });
+    case 'askPeace':
+      return doAskPeace(d, a.player, a.to);
     case 'answerTruce': {
       const dip = ensureDiplomacy(s);
       const i = dip.offers.findIndex((x) => x.from === a.from && x.to === a.player);
@@ -515,6 +525,21 @@ function doPropose(d: Draft, prop: TruceProposal): void {
   dip.offers.push({ ...prop, turn: s.turn });
 }
 
+/** v5.1: the AI answers at once from its standing; agreed peace is a truce pinned to ally for PEACE_ROUNDS. */
+function doAskPeace(d: Draft, human: PlayerId, ai: PlayerId): void {
+  const s = d.s;
+  const ans = peaceAnswer(s, human, ai, () => random(s));
+  const dip = ensureDiplomacy(s);
+  dip.asked = { ...(dip.asked ?? {}), [`${human}>${ai}`]: s.round };
+  if (ans.accepted) {
+    dip.truces.push({ from: human, to: ai, rounds: PEACE_ROUNDS, kind: 'noAttack', since: s.round, until: s.round + PEACE_ROUNDS + 1, peace: true });
+    clearHardened(s, ai, human);
+  }
+  emit(d, { type: 'peaceAnswered', from: ai, to: human, accepted: ans.accepted, rounds: PEACE_ROUNDS, reason: ans.reason });
+  const ch = noteStanding(s, ai, human);
+  if (ch) emit(d, ch);
+}
+
 function resolveOffer(d: Draft, prop: TruceProposal, accept: boolean): void {
   const s = d.s;
   const dip = ensureDiplomacy(s);
@@ -550,6 +575,14 @@ function breakTruceIfAny(d: Draft, by: PlayerId, from: TerritoryId, to: Territor
   p.truceBreaks = (p.truceBreaks ?? 0) + 1;
   addGrudge(s, against, by, GRUDGE_BETRAYED);
   for (const o of s.players) if (o.id !== by && o.id !== against && !o.eliminated) addGrudge(s, o.id, by, GRUDGE_STANDING);
+  if (isPeace(s, t)) {
+    // v5.1: broken peace. `against` is hostile to `by` for the rest of the game.
+    dip.broken = [...(dip.broken ?? []), { by, against, round: s.round }];
+    emit(d, { type: 'peaceBroken', by, against });
+    const ch = noteStanding(s, against, by);
+    if (ch) emit(d, ch);
+    return;
+  }
   emit(d, { type: 'truceBroken', by, against, from, to });
 }
 
@@ -646,7 +679,12 @@ function conquer(d: Draft, from: TerritoryId, to: TerritoryId, lastDice: number)
   s.players[attacker].stats.territoriesConquered++;
   emit(d, { type: 'territoryConquered', player: attacker, from, to, previousOwner: prev });
   updatePeak(d, attacker);
-  if (prev >= 0) addGrudge(s, prev, attacker, GRUDGE_TAKEN);
+  if (prev >= 0) {
+    addGrudge(s, prev, attacker, GRUDGE_TAKEN);
+    // v5.1: what the victim's standing reason names ('you took Ural last round').
+    const v = s.players[prev];
+    if (!v.neutral) v.lastTakenBy = { ...(v.lastTakenBy ?? {}), [attacker]: { territory: to, round: s.round } };
+  }
 
   if (prev >= 0 && territoryCount(s, prev) === 0) {
     const loser = s.players[prev];

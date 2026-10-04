@@ -2,10 +2,11 @@
 // Randomness comes from a local generator seeded by hashing the state, so the AI never touches
 // state.rng and the same state always yields the same decision.
 //
-// Personalities (turtle / opportunist / warlord) bend the Persona and add a Temperament: grudges steer
-// targets, truce partners are left alone (unless the attack clears the personality's break bar), and a
-// partner's border stacks count as a smaller threat. Every such branch is gated on `c.pk`, which is
-// undefined for a seat without a personality, so the classic AI plays exactly as it always has.
+// Personalities (turtle / opportunist / warlord) bend the Persona and add a Temperament: grudges and (v5.1)
+// standing steer targets, allies and understanding partners are left alone (a partner unless the attack clears
+// the personality's break bar), and a partner's border stacks count as a smaller threat. Every such branch is
+// gated on `c.pk`, which is undefined for a seat without a personality, so the classic AI plays exactly as it
+// always has, except that it too never attacks through peace a human asked for (v5.1).
 
 import { bonusTerritoryFor, setValueFor, validSets } from '../cards';
 import { ADJACENCY, CONTINENTS, CONTINENT_IDS, TERRITORIES, TERRITORY_IDS } from '../mapData';
@@ -14,6 +15,8 @@ import { hashInts, random, type RngHolder } from '../rng';
 import { missionGoal, type MissionGoal } from '../missions';
 import { fortifyPath, fortifyTargets, reinforcementsFor } from '../rules';
 import { UNCLAIMED, type Action, type AiPersonality, type ContinentId, type GameState, type Phase, type PlayerId, type TerritoryId, type TerritoryState } from '../types';
+import { isPeace } from '../diplomacy';
+import { standingOf, type Standing } from '../standing';
 import { chooseTruceProposal } from './diplomacy';
 import type { Persona } from './persona';
 import { personaFor, TEMPERAMENTS, type Temperament } from './personality';
@@ -57,8 +60,16 @@ interface Ctx {
   prey: PlayerId;
   /** Personality knobs; undefined = the classic AI (every personality branch is skipped). */
   pk?: Temperament;
-  /** Personality only: seats we have a truce with, or a pending offer with (not to be attacked lightly). */
-  guard: Set<PlayerId>;
+  /**
+   * Seats not to be attacked lightly, with the attack score it takes to go through anyway (Infinity = never):
+   * peace a human asked for (every AI, the classic one too), and, with a personality, understanding partners
+   * (the personality's break bar), seats it stands at ally with (v5.1, never) and pending offers (never).
+   */
+  guard: Map<PlayerId, number>;
+  /** v5.1, personality only: our standing toward each seat ('even' for ourselves, the out and the neutral). */
+  stand: Standing[];
+  /** v5.1, personality only: seats that took territory from one of our allies in the last two rounds. */
+  allyFoes: Set<PlayerId>;
   /** Personality only: seats with a pending offer (never attacked: that would withdraw it). */
   pending: Set<PlayerId>;
   /** Personality only: our grudge against each seat, capped at 4. */
@@ -92,6 +103,7 @@ function mkRng(s: GameState, me: PlayerId): RngHolder {
 }
 
 const NO_SEATS: Set<PlayerId> = new Set();
+const NO_GUARD: Map<PlayerId, number> = new Map();
 
 function buildCtx(s: GameState, me: PlayerId): Ctx {
   const diff = s.players[me].difficulty ?? 'normal';
@@ -164,7 +176,9 @@ function buildCtx(s: GameState, me: PlayerId): Ctx {
     desire,
     goal,
     prey: -1,
-    guard: NO_SEATS,
+    guard: NO_GUARD,
+    stand: [],
+    allyFoes: NO_SEATS,
     pending: NO_SEATS,
     grudge: [],
     maxOppArmies: 1,
@@ -172,19 +186,39 @@ function buildCtx(s: GameState, me: PlayerId): Ctx {
     mw: 0,
     mCont: new Set(),
   };
+  // v5.1: peace a human asked for binds every AI (the classic one too): it never attacks through it.
+  for (const t of s.diplomacy?.truces ?? []) {
+    const other = t.from === me ? t.to : t.to === me ? t.from : -1;
+    if (other < 0 || !isPeace(s, t)) continue;
+    if (c.guard === NO_GUARD) c.guard = new Map();
+    c.guard.set(other, Infinity);
+  }
   if (personality) {
     c.pk = TEMPERAMENTS[personality];
-    c.guard = new Set();
+    const guard = c.guard === NO_GUARD ? new Map<PlayerId, number>() : c.guard;
+    c.guard = guard;
     c.pending = new Set();
     for (const t of s.diplomacy?.truces ?? []) {
-      if (t.from === me) c.guard.add(t.to);
-      else if (t.to === me) c.guard.add(t.from);
+      const other = t.from === me ? t.to : t.to === me ? t.from : -1;
+      if (other >= 0 && !guard.has(other)) guard.set(other, c.pk.breakBar);
     }
     for (const o of s.diplomacy?.offers ?? []) {
       const other = o.from === me ? o.to : o.to === me ? o.from : -1;
       if (other >= 0) {
-        c.guard.add(other);
+        guard.set(other, Infinity);
         c.pending.add(other);
+      }
+    }
+    // v5.1 standing: ally → never attacked; its recent attackers are worth more (targetValue).
+    c.stand = s.players.map((pl) => (pl.id === me || pl.eliminated || pl.neutral ? 'even' : standingOf(s, me, pl.id)));
+    c.allyFoes = new Set();
+    for (const pl of s.players) {
+      if (c.stand[pl.id] !== 'ally' && guard.get(pl.id) !== Infinity) continue;
+      if (pl.id === me || pl.eliminated || pl.neutral) continue;
+      if (c.stand[pl.id] === 'ally') guard.set(pl.id, Infinity);
+      for (const [k, v] of Object.entries(pl.lastTakenBy ?? {})) {
+        const by = Number(k);
+        if (by !== me && v && s.round - v.round <= 1) c.allyFoes.add(by);
       }
     }
     c.grudge = s.players.map((pl) => Math.min(4, s.players[me].grudges?.[pl.id] ?? 0));
@@ -258,15 +292,15 @@ function missionValue(c: Ctx, n: TerritoryId): number {
   }
 }
 
-/** A neighbouring stack's weight as a threat: a truce partner's counts for less (personality only). */
+/** A neighbouring stack's weight as a threat: a truce partner's or an ally's counts for less (personality only). */
 function threatArmies(c: Ctx, x: TerritoryState): number {
   return c.pk && c.guard.has(x.owner) ? x.armies * c.pk.trust : x.armies;
 }
 
-/** Enemy neighbours worth planning an attack on: truce partners are skipped (personality only). */
+/** Enemy neighbours worth planning an attack on: guarded seats (peace, truce partners, allies) are skipped. */
 function targetNeighbors(c: Ctx, t: TerritoryId): TerritoryId[] {
   const xs = enemyNeighbors(c, t);
-  return c.pk && c.guard.size ? xs.filter((n) => !c.guard.has(c.s.territories[n].owner)) : xs;
+  return c.guard.size ? xs.filter((n) => !c.guard.has(c.s.territories[n].owner)) : xs;
 }
 
 /** Armies we could still add this turn (reinforcements left + a tradeable set). */
@@ -290,7 +324,7 @@ function findPrey(c: Ctx, extra: number, only?: PlayerId): PlayerId {
   for (const v of s.players) {
     if (v.id === c.me || v.eliminated || v.neutral) continue;
     if (only !== undefined && v.id !== only) continue;
-    if (c.pk && c.pk.breakBar === Infinity && c.guard.has(v.id)) continue; // never hunts a partner
+    if (c.guard.get(v.id) === Infinity) continue; // never hunts a seat it will not attack
     const theirs = TERRITORY_IDS.filter((t) => s.territories[t].owner === v.id);
     if (theirs.length === 0 || theirs.length > 9) continue;
     let cost = 0;
@@ -380,6 +414,7 @@ function targetValue(c: Ctx, n: TerritoryId): number {
     if (c.pk) {
       v += c.pk.grudgeWeight * (c.grudge[x.owner] ?? 0);
       if (c.pk.weakBias > 0 && !victim.neutral) v += c.pk.weakBias * 0.6 * (1 - c.armies[x.owner] / c.maxOppArmies);
+      if (!victim.neutral) v += standingPull(c, x.owner);
     }
   }
   // Turtle: wandering off costs, and costs more once the turn's card is in hand.
@@ -388,6 +423,34 @@ function targetValue(c: Ctx, n: TerritoryId): number {
   if (c.mg) v += missionValue(c, n);
   return v;
 }
+
+/**
+ * v5.1: how standing bends the choice of whom to hit (personality only). Hostile pursues; wary prefers the seat
+ * when it is the weaker; even leans toward the weakest; an ally's recent attacker is worth more. (An ally itself
+ * is never a target: it is in `guard`.)
+ */
+function standingPull(c: Ctx, o: PlayerId): number {
+  let v = 0;
+  switch (c.stand[o]) {
+    case 'hostile':
+      v += STAND_HOSTILE;
+      break;
+    case 'wary':
+      v += STAND_WARY + (c.armies[o] < c.armies[c.me] ? STAND_WARY_WEAK : 0);
+      break;
+    case 'even':
+      v += STAND_EVEN_WEAK * (1 - c.armies[o] / c.maxOppArmies);
+      break;
+  }
+  if (c.allyFoes.has(o)) v += STAND_ALLY_FOE;
+  return v;
+}
+
+const STAND_HOSTILE = 2.2;
+const STAND_WARY = 0.6;
+const STAND_WARY_WEAK = 0.8;
+const STAND_EVEN_WEAK = 0.6;
+const STAND_ALLY_FOE = 1.2;
 
 // ---------------------------------------------------------------------------
 // Setup
@@ -460,7 +523,7 @@ function chainValue(c: Ctx, start: TerritoryId, armies: number, depth: number): 
       if (taken.has(n)) continue;
       const o = s.territories[n].owner;
       if (o === c.me || o < 0) continue;
-      if (c.pk && c.guard.has(o)) continue;
+      if (c.guard.has(o)) continue;
       const p = winProbability(a, s.territories[n].armies);
       if (p < thr) continue;
       const cont = TERRITORIES[n].continent;
@@ -708,10 +771,9 @@ function bestAttack(c: Ctx): AttackPlan | null {
       }
       score = noisy(c, score);
       if (score <= 0.05) continue;
-      if (c.pk && c.guard.has(s.territories[to].owner)) {
-        // A truce holds unless this attack is worth the broken word (and never while an offer waits).
-        if (c.pending.has(s.territories[to].owner) || score < c.pk.breakBar) continue;
-      }
+      const bar = c.guard.get(s.territories[to].owner);
+      // A truce holds unless this attack is worth the broken word; peace, an ally and a waiting offer always hold.
+      if (bar !== undefined && score < bar) continue;
       if (!best || score > best.score) best = { from, to, stopAt, p, score };
     }
   }

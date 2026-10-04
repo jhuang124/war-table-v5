@@ -5,6 +5,7 @@
 import { grudgeOf, offerBetween, recentlyRebuffed, truceBetween } from '../diplomacy';
 import { ADJACENCY, CONTINENTS, TERRITORIES, TERRITORY_IDS } from '../mapData';
 import type { GameState, PlayerId, TruceProposal } from '../types';
+import { standingOf } from '../standing';
 import { TEMPERAMENTS } from './personality';
 
 interface Border {
@@ -71,9 +72,15 @@ export function truceScore(s: GameState, offer: TruceProposal): number {
   return v;
 }
 
-/** Would the AI seat `offer.to` accept? The classic AI never does. */
+/**
+ * Would the AI seat `offer.to` accept? v5.1: from its standing. Between two AIs it agrees only at ally (an
+ * "understanding"); a human's legacy offer (config.diplomacy) at ally or even. The classic AI never does.
+ */
 export function acceptsTruce(s: GameState, offer: TruceProposal): boolean {
-  return truceScore(s, offer) > 0;
+  const pl = s.players[offer.to];
+  if (!pl?.personality || pl.neutral) return false;
+  const st = standingOf(s, offer.to, offer.from);
+  return st === 'ally' || (st === 'even' && s.players[offer.from]?.kind === 'human');
 }
 
 /**
@@ -96,18 +103,6 @@ export function lastOfferRound(s: GameState, a: PlayerId, b: PlayerId): number |
   for (const t of d.truces) if (pair(t.from, t.to)) see(t.since);
   for (const x of d.rebuffs) if (pair(x.from, x.to)) see(x.round);
   return r;
-}
-
-/**
- * A human hears at most one AI offer at a time and none the round after one (the review saw three offers in
- * two rounds: spam that cheapens the one diplomatic act the game has).
- */
-function humanRecentlyAsked(s: GameState, human: PlayerId): boolean {
-  const d = s.diplomacy;
-  if (!d) return false;
-  if (d.offers.some((o) => o.to === human)) return true;
-  const recent = (round: number) => s.round - round < 2;
-  return d.truces.some((t) => t.to === human && recent(t.since)) || d.rebuffs.some((x) => x.to === human && recent(x.round));
 }
 
 /**
@@ -135,51 +130,28 @@ export function truceReason(s: GameState, from: PlayerId, to: PlayerId): string 
 }
 
 /**
- * The truce this AI would offer at the start of its turn, or null. It only asks when it faces two or
- * more rivals (a truce frees one front), never a seat it holds a grudge against, never the runaway
- * leader, never a classic AI (they always refuse), and a human only when config.diplomacy is on.
- * v4 (PLAN §3 A5): at most once per TRUCE_PAIR_ROUNDS rounds per pair, a human one offer at a time with a
- * round's rest after it, and only with a reason it can state (truceReason).
+ * The understanding this AI would offer at the start of its turn, or null. v5.1: AI to AI only (no person is ever
+ * offered a truce), and only when both seats stand at ally toward each other, so it is always accepted. At most
+ * one offer per TRUCE_PAIR_ROUNDS rounds from a seat, never to a seat that refused it lately, never to the
+ * classic AI. The understanding ends with time, or at a turn boundary when either side turns wary or hostile.
  */
 export function chooseTruceProposal(s: GameState, me: PlayerId): TruceProposal | null {
   const pl = s.players[me];
-  if (!pl?.personality || pl.neutral) return null;
-  // A human seat on autoplay speaks for a human: only with diplomacy on.
-  if (pl.kind === 'human' && !s.config.diplomacy) return null;
+  if (!pl?.personality || pl.neutral || pl.kind !== 'ai') return null;
   const T = TEMPERAMENTS[pl.personality];
   if (T.proposeBias <= 0) return null;
   if (s.diplomacy?.proposedOn[me] === s.turn) return null;
-  // v4: one offer per TRUCE_PAIR_ROUNDS rounds from this seat at all (so per pair too). The engine keeps the
-  // turn of each seat's last offer; a round is one turn per seat still in the game.
   const lastTurn = s.diplomacy?.proposedOn[me];
   const seatsIn = s.players.filter((p) => !p.eliminated).length;
   if (lastTurn !== undefined && s.turn - lastTurn < TRUCE_PAIR_ROUNDS * Math.max(1, seatsIn)) return null;
-  const seats = neighbourSeats(s, me);
-  if (seats.size < 2) return null;
-  let best: PlayerId = -1;
-  let bestV = 0;
-  for (const z of seats) {
-    const zp = s.players[z];
-    if (truceBetween(s, me, z) || offerBetween(s, me, z)) continue;
-    if (zp.kind === 'human' && !s.config.diplomacy) continue;
-    if (zp.kind === 'ai' && !zp.personality) continue;
-    if (recentlyRebuffed(s, me, z)) continue;
+  for (const zp of s.players) {
+    const z = zp.id;
+    if (z === me || zp.kind !== 'ai' || !zp.personality || zp.neutral || zp.eliminated) continue;
+    if (truceBetween(s, me, z) || offerBetween(s, me, z) || recentlyRebuffed(s, me, z)) continue;
     const lastRound = lastOfferRound(s, me, z);
     if (lastRound !== null && s.round - lastRound < TRUCE_PAIR_ROUNDS) continue;
-    if (zp.kind === 'human' && humanRecentlyAsked(s, z)) continue;
-    if (!truceReason(s, me, z)) continue;
-    if (grudgeOf(s, me, z) >= 1.5) continue;
-    if (share(s, z) >= 0.45) continue;
-    const b = border(s, me, z);
-    const ratio = b.theirs / Math.max(1, b.mine);
-    if (ratio < 0.7) continue; // not a real threat: no need for peace
-    if (pl.personality === 'opportunist' && ratio < 1) continue; // it befriends only the strong
-    const v = ratio * T.proposeBias;
-    if (v > bestV) {
-      bestV = v;
-      best = z;
-    }
+    if (standingOf(s, me, z) !== 'ally' || standingOf(s, z, me) !== 'ally') continue;
+    return { from: me, to: z, rounds: T.truceRounds, kind: 'noAttack' };
   }
-  if (best < 0 || bestV < 0.8) return null;
-  return { from: me, to: best, rounds: T.truceRounds, kind: 'noAttack' };
+  return null;
 }

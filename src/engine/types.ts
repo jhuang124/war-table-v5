@@ -199,6 +199,12 @@ export interface PlayerState {
   grudges?: Partial<Record<PlayerId, number>>;
   /** Additive: truces this seat has broken this game. Costs standing with every AI. */
   truceBreaks?: number;
+  /**
+   * Additive (v5.1 standing): the last territory each seat took from this one, and the round it fell. Feeds
+   * `standingReason` ('you took Ural last round') and the AI's 'prefers its ally's attacker'. Absent until the
+   * first loss.
+   */
+  lastTakenBy?: Partial<Record<PlayerId, { territory: TerritoryId; round: number }>>;
 }
 
 export type Phase =
@@ -264,6 +270,12 @@ export interface TruceProposal {
 export interface Truce extends TruceProposal {
   since: number;
   until: number;
+  /**
+   * Additive (v5.1): peace a human asked for (`askPeace`). Pins the AI's standing to ally while it holds;
+   * attacking through it is `peaceBroken`. A truce without it between two AIs is an "understanding".
+   * (A pre-v5.1 truce with a human in it is read as peace too.)
+   */
+  peace?: boolean;
 }
 
 /** A proposal waiting for a human's answer (only with config.diplomacy). Lapses when `to`'s next turn ends. */
@@ -279,6 +291,17 @@ export interface DiplomacyState {
   proposedOn: Partial<Record<PlayerId, number>>;
   /** Recent refusals, so an AI doesn't ask the same seat every turn. Pruned after a few rounds. */
   rebuffs: { from: PlayerId; to: PlayerId; round: number }[];
+  /** Additive (v5.1): broken peace. `against` is hostile to `by` for the rest of the game. */
+  broken?: { by: PlayerId; against: PlayerId; round: number }[];
+  /** Additive (v5.1): the round `human` last asked `ai` for peace, keyed `${human}>${ai}` (once per three rounds). */
+  asked?: Partial<Record<string, number>>;
+  /**
+   * Additive (v5.1): each AI's standing band toward each seat as of the last turn boundary, keyed `${ai}>${toward}`,
+   * so `standingChanged` fires only on a change. Engine bookkeeping; read standing with `standingOf`.
+   */
+  standings?: Partial<Record<string, 'ally' | 'even' | 'wary' | 'hostile'>>;
+  /** Additive (v5.1): Warlord pairs `${ai}>${toward}` that have been hostile; that Warlord never returns to ally (peace clears it). */
+  hardened?: string[];
 }
 
 /** One sample per round start, for the end-of-game chart. */
@@ -434,7 +457,11 @@ export type GameEvent =
   | { type: 'truceDeclined'; from: PlayerId; to: PlayerId; rounds: number; kind: TruceKind; reason: 'declined' | 'lapsed' }
   /** `by` attacked `against` while a truce held. Emitted before the attack's first diceRolled. */
   | { type: 'truceBroken'; by: PlayerId; against: PlayerId; from: TerritoryId; to: TerritoryId }
-  | { type: 'truceExpired'; from: PlayerId; to: PlayerId; reason: 'time' | 'eliminated' }
+  /**
+   * `reason: 'standing'` (additive, v5.1): an AI-AI understanding ended because `from`'s standing toward `to` fell
+   * to wary or hostile at a turn boundary ('Sage turned on Ochre').
+   */
+  | { type: 'truceExpired'; from: PlayerId; to: PlayerId; reason: 'time' | 'eliminated' | 'standing' }
   /** Additive (v5 G): `by: 'mission'` and `mission` (the headline sentence) when a secret mission won it. */
   | { type: 'gameOver'; winner: PlayerId; reason: 'domination' | 'percent' | 'turnLimit'; by?: 'mission'; mission?: string };
 

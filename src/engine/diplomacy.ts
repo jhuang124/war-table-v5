@@ -100,12 +100,30 @@ export function ensureDiplomacy(s: GameState): DiplomacyState {
 }
 
 export function cloneDiplomacy(d: DiplomacyState): DiplomacyState {
-  return {
+  const out: DiplomacyState = {
     truces: d.truces.map((t) => ({ ...t })),
     offers: d.offers.map((o) => ({ ...o })),
     proposedOn: { ...d.proposedOn },
     rebuffs: d.rebuffs.map((r) => ({ ...r })),
   };
+  if (d.broken) out.broken = d.broken.map((b) => ({ ...b }));
+  if (d.asked) out.asked = { ...d.asked };
+  if (d.standings) out.standings = { ...d.standings };
+  if (d.hardened) out.hardened = [...d.hardened];
+  return out;
+}
+
+/**
+ * v5.1: peace a human asked for, as opposed to an understanding between two AIs. A truce from before v5.1 with a
+ * human in it (the retired offer protocol) reads as peace too.
+ */
+export function isPeace(s: GameState, t: Truce): boolean {
+  return !!t.peace || s.players[t.from]?.kind === 'human' || s.players[t.to]?.kind === 'human';
+}
+
+/** v5.1: `by` broke the peace with `against` (any time this game), or undefined. */
+export function brokenPeace(s: GameState, by: PlayerId, against: PlayerId) {
+  return s.diplomacy?.broken?.find((b) => b.by === by && b.against === against);
 }
 
 // --- Sentences -------------------------------------------------------------------------------------
@@ -121,6 +139,14 @@ const rounds = (n: number) => (n === 1 ? '1 round' : `${n} rounds`);
  *   truceDeclined  "John turns down Theo's truce"  |  lapsed: "Theo's truce offer to John lapses"
  *   truceBroken    "Theo breaks the truce with John · attacks Ukraine"
  *   truceExpired   "The truce between Theo and John ends"
+ * v5.1, between two AIs (an "understanding"):
+ *   truceAccepted  "Sage and Ochre have an understanding"
+ *   truceBroken    "Sage turned on Ochre · attacks Ukraine"
+ *   truceExpired   "The understanding between Sage and Ochre ends"  |  standing: "Sage turned on Ochre"
+ * v5.1 peace:
+ *   peaceAnswered  the event's own reason ("Sage agrees · three rounds" / "Sage refuses · you took Ural")
+ *   peaceBroken    "John broke the peace with Sage"
+ * standingChanged has no sentence here: write `standingReason(stateAfter, ai, toward)`.
  */
 export function truceSentence(state: GameState, e: GameEvent): string | null {
   const name = (p: PlayerId) => state.players[p]?.name ?? `Seat ${p + 1}`;
@@ -128,18 +154,27 @@ export function truceSentence(state: GameState, e: GameEvent): string | null {
     const n = name(p);
     return n.endsWith('s') ? `${n}'` : `${n}'s`;
   };
+  const ais = (a: PlayerId, b: PlayerId) => state.players[a]?.kind === 'ai' && state.players[b]?.kind === 'ai';
   switch (e.type) {
+    case 'peaceAnswered':
+      return e.reason;
+    case 'peaceBroken':
+      return `${name(e.by)} broke the peace with ${name(e.against)}`;
     case 'truceProposed':
       return `${name(e.from)} proposes a truce with ${name(e.to)}${SEP}${rounds(e.rounds)}`;
     case 'truceAccepted':
+      if (ais(e.from, e.to)) return `${name(e.from)} and ${name(e.to)} have an understanding`;
       return `${name(e.to)} accepts ${poss(e.from)} truce${SEP}until round ${e.until}`;
     case 'truceDeclined':
       return e.reason === 'lapsed'
         ? `${poss(e.from)} truce offer to ${name(e.to)} lapses`
         : `${name(e.to)} turns down ${poss(e.from)} truce`;
     case 'truceBroken':
+      if (ais(e.by, e.against)) return `${name(e.by)} turned on ${name(e.against)}${SEP}attacks ${territoryName(e.to)}`;
       return `${name(e.by)} breaks the truce with ${name(e.against)}${SEP}attacks ${territoryName(e.to)}`;
     case 'truceExpired':
+      if (e.reason === 'standing') return `${name(e.from)} turned on ${name(e.to)}`;
+      if (ais(e.from, e.to)) return `The understanding between ${name(e.from)} and ${name(e.to)} ends`;
       return `The truce between ${name(e.from)} and ${name(e.to)} ends`;
     default:
       return null;
