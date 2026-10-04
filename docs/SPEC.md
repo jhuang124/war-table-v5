@@ -850,3 +850,70 @@ fewer log lines and simpler replays.
   rounds median 7 / p90 12 (without: 9 / 14); 3p 67 %, 5 / 8 (7 / 14); 2p+neutral 62.5 %, 6 / 11 (8 / 13);
   68.7 % overall. A missions game runs about two rounds shorter than the same table without it. The soak
   fails if fewer than a third end by mission, or if a mission win is ever unmet or mis-headlined.
+
+### 11.8 Standing (v5.1; replaces human-facing truce offers; all fields optional, old saves load unchanged)
+Source: `_claude/v5/QUIETER.md` §3 C ("Decide, don't ask"). Code: `src/engine/standing.ts`.
+- **The model.** `standingOf(state, ai, toward)` → `'ally' | 'even' | 'wary' | 'hostile'`, pure and deterministic
+  from state. A heat score sums the factors below and is banded (≤ −0.5 ally, < 1.0 even, < 2.8 wary, else hostile):
+  | Factor | Heat | Notes |
+  |---|---|---|
+  | Losses to `toward` (the grudge store: +1 per territory taken, +1 a broken continent, ×0.75 each round) | grudge × 0.6 Turtle / 0.8 Opportunist, classic / 1.2 Warlord | counts up to 3 points; under 0.4 it is forgotten |
+  | Shared border | +0.5 | alone it reads even |
+  | `toward` masses on that border (≥ 6 armies and > 1.5× ours) | +0.6 | |
+  | `toward` leads the table (`tableLeader`: most territories, 3 clear of the next, ≥ 1.2× an even share) | +1.0 Turtle / +1.6 Opportunist / +1.2 Warlord, classic | and the band is **wary at least**, from everyone |
+  | A third seat leads (a shared rival) | −1.0 (Warlord −0.6) | how two seats come to ally |
+  | No shared border | −0.6 Turtle | the Turtle leans ally with seats it does not touch |
+  | Disposition | −0.3 Turtle / +0.1 Warlord | |
+  Rules on top: hostile from losses alone is kept for the main aggressor (a seat under 0.8× the AI's largest
+  grudge stays wary); a band hardens at once but cools only 0.4 past its edge (no flicker); a Warlord that has
+  been hostile toward a seat never returns to ally with it (`DiplomacyState.hardened`) unless peace is agreed.
+  **Pins:** agreed peace → ally while it holds; broken peace → hostile toward the breaker for the rest of the game.
+  A neighbour is even or harder unless a third seat leads and it holds nothing against you (then a Turtle,
+  Opportunist or classic AI may stand at ally with it).
+- **The reason.** `standingReason(state, ai, toward)` → one sentence with the strongest factor, ≤ 70 characters with
+  the default names: 'Sage is wary of you · you took Ural last round' · 'Slate is even with you · you share no
+  border' · 'Ochre is hostile · you broke the peace in round 4' · 'Theo is your ally · peace until round 9' · 'Sage
+  is wary of you · you lead the table' · 'Sage is wary of you · you have 14 armies on its border' · "Sage is
+  Ochre's ally · Theo leads the table". 'you' when `toward` is human, the name otherwise.
+- **Asking for peace.** `canAskPeace(state, human, ai)`: the human's main turn (reinforce / attack / fortify),
+  toward a living AI seat, once per three rounds per seat (`DiplomacyState.asked`), not while peace holds, never
+  toward a seat the human broke the peace with. `peaceAskBlock` gives the reason it is not allowed, as a line.
+  Action `askPeace { player, to }`: the AI answers at once with `peaceAnswered { from: ai, to: human, accepted,
+  rounds: 3, reason }`. Ally and even agree; hostile refuses; wary agrees with probability Turtle 0.7 / Opportunist
+  0.4 / Warlord 0.15 / classic 0.3, one draw from `state.rng`. Reasons: 'Sage agrees · three rounds' · 'Sage refuses
+  · you took Ural' · 'Sage refuses · you lead the table'. Agreed peace is a `Truce` with `peace: true` (from the
+  human, `until` = round + 4, so it holds the rest of this round and three more), then `standingChanged` (ally).
+  Every AI, the classic one too, never attacks through peace.
+- **Breaking it.** Attacking a seat you hold peace with emits `peaceBroken { by, against }` (before the first
+  `diceRolled`, in place of `truceBroken`), then `standingChanged` (hostile); the truce ends, `DiplomacyState.broken`
+  records it, the grudges and `truceBreaks` are as for a broken truce.
+- **`standingChanged { ai, toward, standing }`** fires when a tracked pair (every AI seat in play toward every other
+  seat in play) moves band: at turn boundaries (end of turn, after any new-round truce expiry, before
+  `turnStarted`), and at once after peace is agreed or broken. A pair seen for the first time (game start, an old
+  save, a seat handed to the AI) is recorded silently (`DiplomacyState.standings`).
+- **AI-AI understandings.** The v3 truce engine is the mechanism: on its reinforce step a personality AI proposes
+  to another personality AI only when both stand at ally toward each other (so it is accepted); the
+  understanding holds through even, and ends at a turn boundary when either side turns wary or hostile
+  (`truceExpired { reason: 'standing' }`, from = the seat that turned), by time, or when a partner attacks through
+  it (`truceBroken`, at the personality's break bar). Sentences (`truceSentence`): 'Sage and Ochre have an
+  understanding' · 'Sage turned on Ochre' · 'Sage turned on Ochre · attacks Ukraine' · 'The understanding between
+  Sage and Ochre ends' · 'Dan broke the peace with Sage'.
+- **The AI acts on standing** (personality AIs, `brain.ts` `standingPull`): ally → never attacked (and its
+  attackers of the last two rounds +1.2); even → +0.6 × how weak the seat is; wary → +0.6, +0.8 more when the seat
+  is weaker than us; hostile → +2.2. Mission pursuit and personality weights are unchanged; the classic AI plays
+  as before except for peace.
+- **Retired.** Human-facing truce offers: `proposeTruce` to a human seat is rejected (with or without
+  `config.diplomacy`) and no AI makes one; `answerTruce` stays valid for an offer already in an old save. A human
+  proposing to an AI under `config.diplomacy` still validates (legacy; the UI uses `askPeace`).
+- **Contract (additive):** `PlayerState.lastTakenBy?`; `Truce.peace?`; `DiplomacyState.broken? / asked? /
+  standings? / hardened?`; `truceExpired.reason` gains `'standing'`; the lead's `askPeace`, `peaceAnswered`,
+  `peaceBroken`, `standingChanged`. Exports: `standingOf`, `standingReason`, `canAskPeace`, `peaceAskBlock`,
+  `lastPeaceAsk`, `tableLeader`, `STANDINGS`, `PEACE_ROUNDS`, `PEACE_ASK_ROUNDS`, `WARY_ACCEPT`, `isPeace`,
+  `brokenPeace`.
+- **Sim** (`npm run sim 200`, "Standing" section; normal AIs, every seat a personality, full conquest,
+  2026-10-04): rounds median / p90 4p 15 / 25, 3p 12 / 21, 2p+neutral 11 / 17. Understandings per game: 4p 0.35
+  (in 25 % of games; 0.21 end by a side turning, 0.13 by time, 0.01 by attack), 3p 0.03, 2p+neutral 0. Bands at
+  turn start: ally 1.3 %, even 19 %, wary 41 %, hostile 38 % (late, bloody turns weigh most). standingChanged
+  across all pairs ≈ 75 per 4p game (≈ 5 a round), so the controller lines only the ones toward the reader. Against
+  v5: the personality free-for-all runs 16.6 rounds (was 15.6); missions-off Evening 4p 10 / 18 (was 9 / 14), 3p
+  8 / 15 (7 / 14); the classic tables are unchanged. The soak fails if no understanding ever forms.

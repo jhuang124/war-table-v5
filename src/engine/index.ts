@@ -81,6 +81,8 @@ export { acceptsTruce, chooseTruceProposal, truceScore } from './ai/diplomacy';
 export {
   truceSentence,
   truceBetween,
+  isPeace,
+  brokenPeace,
   trucePartners,
   offerBetween,
   grudgeOf,
@@ -90,4 +92,16 @@ export {
   TRUCE_MAX_ROUNDS,
 } from './diplomacy';
 export { NEUTRAL_SETUP } from './setup';
-export { standingOf, standingReason, canAskPeace, type Standing } from './standing';
+export {
+  standingOf,
+  standingReason,
+  canAskPeace,
+  peaceAskBlock,
+  lastPeaceAsk,
+  tableLeader,
+  STANDINGS,
+  PEACE_ROUNDS,
+  PEACE_ASK_ROUNDS,
+  WARY_ACCEPT,
+  type Standing,
+} from './standing';
