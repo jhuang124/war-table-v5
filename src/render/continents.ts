@@ -6,7 +6,7 @@
 import * as THREE from 'three';
 import type { BoardGeometry } from '../map/types';
 import type { ContinentId, GameState, PlayerId, TerritoryId } from '../engine/types';
-import { CONTINENTS, CONTINENT_IDS } from './activeMap';
+import { MAP } from './activeMap';
 import { PLAYER_COLORS, continentInk } from '../shared/palette';
 import { Animator, ease, type Run } from './anim';
 import { INK_COAST, hexToRgb, mixRgb, setColor, toWorld, type RGB } from './util';
@@ -19,7 +19,7 @@ void INK_COAST;
  * The label in its continent's tint, lifted toward the ivory so the words read on the indigo. v4 E3: the label and
  * its bonus are Layer 1 with the outline they name (≥ 60 % against the paper; v3's were ≈ 25 %).
  */
-const tintOf = (ci: number): RGB => hexToRgb(continentInk(ci, 0.72, CONTINENT_IDS.length));
+const tintOf = (ci: number): RGB => hexToRgb(continentInk(ci, 0.72, MAP.continentIds.length));
 /** Label opacity: unheld labels are Layer 1 at rest (lead round 2: a touch quieter); a held one a little stronger. */
 const LABEL_A = 0.8;
 const HELD_LABEL_A = 0.9;
@@ -97,8 +97,8 @@ export class Continents {
     private shared: SharedUniforms,
     ink: InkLayer,
   ) {
-    CONTINENT_IDS.forEach((id, ci) => {
-      const info = CONTINENTS[id];
+    MAP.continentIds.forEach((id, ci) => {
+      const info = MAP.continents[id];
       const la = g.continents[id].labelAnchor;
       const room = g.continents[id].labelRoom ?? 10;
       const { texture, aspect } = labelTexture(info.name, info.bonus);
@@ -160,7 +160,7 @@ export class Continents {
    */
   refresh(owners: Record<TerritoryId, PlayerId>, state: GameState | null, snap: boolean): void {
     for (const c of this.conts.values()) {
-      const ts = CONTINENTS[c.id].territories;
+      const ts = MAP.continents[c.id].territories;
       let holder: PlayerId = ts.length ? owners[ts[0]] : -1;
       for (const t of ts) if (owners[t] !== holder) holder = -1;
       if (holder < 0) holder = -1;

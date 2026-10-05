@@ -8,7 +8,7 @@
 // tone-mapped), so the palette's hexes land on screen exactly.
 import * as THREE from 'three';
 import { continentTint } from '../shared/palette';
-import { CONTINENT_IDS, TERRITORY_IDS } from './activeMap';
+import { MAP } from './activeMap';
 import type { InkLayer } from './ink';
 import { GOLD, INK_BORDER, INK_COAST, INK_TERR, IVORY, LAMP_UMBER, PAPER, PAPER_DEEP, PAPER_FIBRE, hexToRgb, unclaimedRgb, type RGB } from './util';
 
@@ -61,13 +61,13 @@ export const COAST_BLOOM = 0.2;
 export const TERR_A = 0.75;
 /**
  * v6 maps: continent slots in the shaders' uniform arrays: the active map's continent count, never fewer than
- * classic's six (so classic compiles the same shader). A continent's index is its CONTINENT_IDS index.
+ * classic's six (so classic compiles the same shader). A continent's index is its MAP.continentIds index.
  */
-export const CONT_SLOTS = Math.max(6, CONTINENT_IDS.length);
+export const CONT_SLOTS = Math.max(6, MAP.continentIds.length);
 /** The continents' paper tints (src/shared/palette.ts continentTint, by index of the active map's count), CONT_SLOTS long. */
-export const CONT_TINTS = Array.from({ length: CONT_SLOTS }, (_, i) => continentTint(i, CONTINENT_IDS.length));
+export const CONT_TINTS = Array.from({ length: CONT_SLOTS }, (_, i) => continentTint(i, MAP.continentIds.length));
 /** Width of the per-territory data texture: one texel per territory + texel 0, a power of two, at least 64. */
-export const TERR_TEX_W = Math.max(64, 2 ** Math.ceil(Math.log2(TERRITORY_IDS.length + 1)));
+export const TERR_TEX_W = Math.max(64, 2 ** Math.ceil(Math.log2(MAP.territoryIds.length + 1)));
 const v3 = (hex: string | RGB) => {
   const c = typeof hex === 'string' ? hexToRgb(hex) : hex;
   return new THREE.Vector3(c[0], c[1], c[2]);
@@ -105,13 +105,13 @@ export interface SharedUniforms {
   uLiftB: { value: THREE.Vector2 };
   /** The turn "breath": washes dim 8 % at 1. */
   uBreath: { value: number };
-  /** A held continent's outline ink: colour per continent (CONTINENT_IDS order). */
+  /** A held continent's outline ink: colour per continent (MAP.continentIds order). */
   uContColor: { value: THREE.Vector3[] };
   /** The printed continents (ink.ts buildContinents): R outline distance, G own continent, B the outline's. */
   uCont: { value: THREE.Texture };
   /** The continent outline's silver (unheld). */
   uContLine: { value: THREE.Vector3 };
-  /** Each continent's paper tint (its halo of sea), CONTINENT_IDS order. */
+  /** Each continent's paper tint (its halo of sea), MAP.continentIds order. */
   uContTint: { value: THREE.Vector3[] };
   /** The outline's half-width, board units (set on layout: a fixed weight in screen px at the home view). */
   uContW: { value: number };
@@ -158,7 +158,7 @@ function neutralTexture(): THREE.DataTexture {
  */
 export function makeTerrTexture(ink: InkLayer): THREE.DataTexture {
   const d = new Uint8Array(TERR_TEX_W * 4);
-  for (let i = 1; i <= TERRITORY_IDS.length; i++) d[i * 4 + 2] = ink.continentIndex(i);
+  for (let i = 1; i <= MAP.territoryIds.length; i++) d[i * 4 + 2] = ink.continentIndex(i);
   d[2] = 255;
   const t = new THREE.DataTexture(d, TERR_TEX_W, 1, THREE.RGBAFormat, THREE.UnsignedByteType);
   t.magFilter = t.minFilter = THREE.NearestFilter;

@@ -33,7 +33,7 @@
 // In a fight the two figures turn to face each other, the attacker leans in, a hit knocks one back.
 import * as THREE from 'three';
 import type { TerritoryId } from '../engine/types';
-import { TERRITORY_IDS } from './activeMap';
+import { MAP } from './activeMap';
 import { Animator, ease, type Run } from './anim';
 import { IVORY, TILE_TOP, hexToRgb, type RGB } from './util';
 import { deepOf, type TileSet } from './tiles';
@@ -183,9 +183,9 @@ const RING_GAP_PX = 3.5;
 /** The receipt pulse (v4 A3): one tier-0 swell, this long at 1×, the stone this much larger at its height. */
 export const PULSE_MS = 260;
 const PULSE_SWELL = 0.22;
-const STONE_CAP = TERRITORY_IDS.length * 2;
-const FIG_CAP = TERRITORY_IDS.length * 2;
-const BLOT_CAP = TERRITORY_IDS.length;
+const STONE_CAP = MAP.territoryIds.length * 2;
+const FIG_CAP = MAP.territoryIds.length * 2;
+const BLOT_CAP = MAP.territoryIds.length;
 const IVORY_RGB = hexToRgb(IVORY);
 
 export interface TokenTraveler {
@@ -794,7 +794,7 @@ export class TokenSystem {
       );
     });
 
-    for (const id of TERRITORY_IDS) {
+    for (const id of MAP.territoryIds) {
       const a = tiles.get(id).anchorW;
       const t: Tok = {
         id,

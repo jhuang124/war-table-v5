@@ -20,7 +20,7 @@
 //           dry in (`uTexOn` 0 → 1, 400 ms). `setQuality()` steps the fallback ladder down.
 import * as THREE from 'three';
 import type { BoardGeometry, Vec2 } from '../map/types';
-import { TERRITORY_IDS, TERRITORIES, CONTINENT_IDS } from './activeMap';
+import { MAP } from './activeMap';
 import type { ContinentId, TerritoryId } from '../engine/types';
 import { loadStreaks, loadTexMaps, type StreakData, type TexMaps } from './texmaps';
 
@@ -37,9 +37,9 @@ export interface InkLayer {
   inkH: number;
   fieldW: number;
   fieldH: number;
-  /** 1-based territory index as stored in field.B (TERRITORY_IDS order). */
+  /** 1-based territory index as stored in field.B (MAP.territoryIds order). */
   index: (t: TerritoryId) => number;
-  /** Continent index (CONTINENT_IDS order) of a 1-based territory index. */
+  /** Continent index (MAP.continentIds order) of a 1-based territory index. */
   continentIndex: (i: number) => number;
   /** Distance from land over the sea, board units (≥ 4 = open sea), at a board point. */
   seaDistance: (bx: number, by: number) => number;
@@ -775,15 +775,15 @@ export async function buildInk(g: BoardGeometry, opt: InkOptions): Promise<InkLa
   const fieldW = inkW / 2;
   const fieldH = Math.round((fieldW * BH) / BW);
   const sF = fieldW / BW;
-  const index = (t: TerritoryId) => TERRITORY_IDS.indexOf(t) + 1;
-  const contOf = new Uint8Array(Math.max(64, TERRITORY_IDS.length + 1)).fill(255);
-  TERRITORY_IDS.forEach((t, i) => (contOf[i + 1] = CONTINENT_IDS.indexOf(TERRITORIES[t].continent)));
+  const index = (t: TerritoryId) => MAP.territoryIds.indexOf(t) + 1;
+  const contOf = new Uint8Array(Math.max(64, MAP.territoryIds.length + 1)).fill(255);
+  MAP.territoryIds.forEach((t, i) => (contOf[i + 1] = MAP.continentIds.indexOf(MAP.territories[t].continent)));
 
   // --- id map (field resolution) ------------------------------------------------------------
   const DECOR = 250;
   const ids = new Uint8Array(fieldW * fieldH);
   for (const p of g.decorativeLand) fillRings(ids, fieldW, fieldH, [p.outer, ...p.holes], sF, BH, DECOR);
-  TERRITORY_IDS.forEach((t, i) => {
+  MAP.territoryIds.forEach((t, i) => {
     const rings: Vec2[][] = [];
     for (const p of g.territories[t].polygons) rings.push(p.outer, ...p.holes);
     fillRings(ids, fieldW, fieldH, rings, sF, BH, i + 1);
@@ -950,7 +950,7 @@ export async function buildInk(g: BoardGeometry, opt: InkOptions): Promise<InkLa
   // Classify each ring edge: interior (shared with another territory) or coast.
   const key = (p: Vec2) => `${p[0].toFixed(4)},${p[1].toFixed(4)}`;
   const owners = new Map<string, number[]>();
-  TERRITORY_IDS.forEach((t, i) => {
+  MAP.territoryIds.forEach((t, i) => {
     for (const p of g.territories[t].polygons)
       for (const ring of [p.outer, ...p.holes])
         for (const v of ring) {
@@ -963,7 +963,7 @@ export async function buildInk(g: BoardGeometry, opt: InkOptions): Promise<InkLa
   type Run = { pts: Vec2[]; closed: boolean };
   const coastRuns: Run[] = [];
   const borderRuns: Run[] = [];
-  TERRITORY_IDS.forEach((t, ti) => {
+  MAP.territoryIds.forEach((t, ti) => {
     for (const p of g.territories[t].polygons)
       for (const ring of [p.outer, ...p.holes]) {
         const m = ring.length;
@@ -1164,13 +1164,13 @@ export async function buildInk(g: BoardGeometry, opt: InkOptions): Promise<InkLa
     return (seaDist[y * fieldW + x] / 255) * 4;
   };
   const continentCentre = {} as Record<ContinentId, Vec2>;
-  for (const c of CONTINENT_IDS) {
+  for (const c of MAP.continentIds) {
     let x0 = Infinity;
     let y0 = Infinity;
     let x1 = -Infinity;
     let y1 = -Infinity;
-    for (const t of TERRITORY_IDS) {
-      if (TERRITORIES[t].continent !== c) continue;
+    for (const t of MAP.territoryIds) {
+      if (MAP.territories[t].continent !== c) continue;
       const b = g.territories[t].bbox;
       x0 = Math.min(x0, b[0]);
       y0 = Math.min(y0, b[1]);

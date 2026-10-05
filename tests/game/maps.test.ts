@@ -1,56 +1,21 @@
 // v6 maps: the game layer and the shared palette read the game's own map (config.mapId), never the classic
-// 42 / six continents. Runs on a twelve-territory fixture pack injected into src/map/packs.
-//
-// TODO(v6 merge): the engine builder registers a hidden `maps/test-twelve` pack. Once it is in, drop the
-// vi.mock below and the FIXTURE: the same ids are used here ('test-twelve'), so the assertions stay; point
-// the territory/continent ids at the real pack's if they differ.
+// 42 / six continents. Runs on the engine's hidden test pack, maps/test-twelve (12 territories; West, Centre,
+// East; seats 2–3).
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { MapManifest, MapRules, MapTopology } from '../../src/map/types';
-
-const { ID, FIXTURE } = vi.hoisted(() => {
-  const ID = 'test-twelve';
-  const FIXTURE = (() => {
-  const conts = [
-    { id: 'north', name: 'Northmark', bonus: 3 },
-    { id: 'middle', name: 'Midlands', bonus: 2 },
-    { id: 'south', name: 'Southreach', bonus: 4 },
-  ];
-  const territories = conts.flatMap((c) => [1, 2, 3, 4].map((k) => ({ id: `${c.id}_${k}`, name: `${c.name} ${k}`, continent: c.id })));
-  const borders: [string, string][] = [];
-  for (const c of conts) for (const [a, b] of [[1, 2], [2, 3], [3, 4], [4, 1]]) borders.push([`${c.id}_${a}`, `${c.id}_${b}`]);
-  borders.push(['north_3', 'middle_1'], ['middle_3', 'south_1'], ['south_3', 'north_1']);
-  const manifest: MapManifest = { format: 1, id: ID, name: 'Test Twelve', description: 'Twelve territories, three continents.', presentation: { anchorClearance: 1 } };
-  const rules: MapRules = { format: 1, seats: { min: 2, max: 4 }, startingArmies: { '2': 14, '3': 12, '4': 10 }, cardSymbols: ['infantry', 'cavalry', 'artillery'], continents: conts, territories };
-  const topology: MapTopology = { format: 1, borders, seaLanes: [{ a: 'south_3', b: 'north_1' }] };
-  return { manifest, rules, topology, rulesFrom: ID };
-})();
-  return { ID, FIXTURE };
-});
-
-vi.mock('../../src/map/packs', async (importOriginal) => {
-  const real = await importOriginal<typeof import('../../src/map/packs')>();
-  // Known to the rules side only (packIds stays as registered, so the geometry registry has nothing to load).
-  const isKnownMap = (id: string | null | undefined): id is string => id === ID || real.isKnownMap(id);
-  const mapIdOf = (x?: { mapId?: string } | string | null) => {
-    const id = typeof x === 'string' ? x : x?.mapId;
-    return id === ID ? ID : real.mapIdOf(x);
-  };
-  const packData = (id?: string | null) => (id === ID ? FIXTURE : real.packData(id));
-  return { ...real, isKnownMap, mapIdOf, packData };
-});
-
 import { createGame, mapDefOf, type GameState, type PlayerConfig, type TerritoryId } from '../../src/engine';
 import { cName, setCopyMap, tName } from '../../src/game/copy';
 import { attackStake } from '../../src/game/strip';
 import { autoSource } from '../../src/game/helpers';
 import { buildReplay, emptyStory, noteConquest, noteRoundStart, restoreStory } from '../../src/game/story';
-import { autoSetupBatch, buildNewGameVM, defaultDraft, draftSummary, draftToConfig, territoriesToWin } from '../../src/game/presets';
+import { autoSetupBatch, buildNewGameVM, defaultDraft, draftProblems, draftSummary, draftToConfig, territoriesToWin } from '../../src/game/presets';
+import { listMaps } from '../../src/map/registry';
 import { CONTINENT_TINTS, continentTint, continentTintIndex } from '../../src/shared/palette';
 import { createController } from '../../src/game/controller';
 import { memoryKV, SETTINGS_KEY } from '../../src/game/storage';
 import type { AudioEngine } from '../../src/audio/types';
 import type { BoardView } from '../../src/render/BoardView';
 
+const ID = 'test-twelve';
 const def = () => mapDefOf({ mapId: ID });
 
 const SEATS: PlayerConfig[] = [
@@ -71,20 +36,11 @@ function twelve(own: Partial<Record<string, [number, number]>> = {}): GameState 
   return s;
 }
 
-/** The engine plays rules per game (the engine builder's v6 change): createGame deals the map's territories. */
-const engineReadsMaps = (() => {
-  try {
-    const { state } = createGame({ players: SEATS, setupMode: 'random', initialPlacement: 'auto', setupBatch: 5, cardBonus: 'progressive', fortifyRule: 'connected', dominationPercent: 70, turnLimit: null, seed: 3, mapId: ID });
-    return Object.keys(state.territories).length === 12;
-  } catch {
-    return false;
-  }
-})();
-
-describe('the fixture map', () => {
-  it('is twelve territories in three continents', () => {
+describe('the test map', () => {
+  it('is twelve territories in three continents, and never offered', () => {
     expect(def().size).toBe(12);
-    expect(def().continentIds).toEqual(['north', 'middle', 'south']);
+    expect(def().continentIds).toEqual(['west', 'centre', 'east']);
+    expect(listMaps().map((m) => m.id)).not.toContain(ID);
   });
 });
 
@@ -100,6 +56,7 @@ describe('presets read the chosen map (v6)', () => {
 
   it("the New game summary names the chosen map's number", () => {
     const d = { ...defaultDraft(), mapId: ID };
+    d.seats = d.seats.slice(0, 3);
     expect(draftSummary(d)).toContain('first to 9 territories wins');
     expect(draftSummary(defaultDraft())).toContain('first to 30 territories wins');
     expect(buildNewGameVM(d).lengthOptions[1].detail).toBe('70% of the map');
@@ -108,10 +65,18 @@ describe('presets read the chosen map (v6)', () => {
 
   it("the auto setup batch uses the map's starting armies and size", () => {
     expect([2, 3, 4].map((n) => autoSetupBatch(n))).toEqual([10, 11, 10]);
-    // 3 seats on twelve: ceil((12 − floor(12 / 3)) / 2) = 4
+    // 3 seats on twelve, 10 armies each: ceil((10 − floor(12 / 3)) / 2) = 3
     const d = { ...defaultDraft(), mapId: ID, setup: 'placeOwn' as const };
     d.seats = d.seats.slice(0, 3);
-    expect(draftToConfig(d, 1).setupBatch).toBe(4);
+    expect(draftToConfig(d, 1).setupBatch).toBe(3);
+  });
+
+  it("a map outside the table's seat count can't start", () => {
+    const four = { ...defaultDraft(), mapId: ID };
+    expect(four.seats).toHaveLength(4);
+    expect(draftProblems(four)).toContain('Test Twelve is for 2–3 players');
+    expect(buildNewGameVM(four).canStart).toBe(false);
+    expect(draftProblems({ ...four, seats: four.seats.slice(0, 3) })).toEqual([]);
   });
 });
 
@@ -120,27 +85,26 @@ describe('copy, strip, helpers and story on another map', () => {
 
   it("names come from the game's map", () => {
     setCopyMap({ mapId: ID });
-    expect(tName('north_2')).toBe('Northmark 2');
-    expect(cName('south')).toBe('Southreach');
+    expect(tName('mill')).toBe('Mill');
+    expect(cName('east')).toBe('East');
     setCopyMap(null);
     expect(tName('ural')).toBe('Ural');
     // a state names its own map whatever the copy map is
-    expect(tName('middle_4', twelve())).toBe('Midlands 4');
+    expect(tName('orchard', twelve())).toBe('Orchard');
   });
 
-  // attackStake asks the engine's territoryCount first: needs the engine merge.
-  it.skipIf(!engineReadsMaps)("attack stakes read the map's continents", () => {
-    const s = twelve({ north_1: [0, 5], north_2: [0, 1], north_3: [0, 1], south_3: [0, 4] });
-    // taking north_4 completes Northmark for John (north_1 borders it)
-    expect(attackStake(s, 'north_1', 'north_4')).toBe('takes Northmark');
-    // south held whole by Priya except one: John breaks it
-    expect(attackStake(s, 'south_3', 'south_4')).toBe("breaks Priya's Southreach");
+  it("attack stakes read the map's continents", () => {
+    const s = twelve({ harbour: [0, 5] });
+    // taking Cliffs completes West for John
+    expect(attackStake(s, 'harbour', 'cliffs')).toBe('takes West');
+    // Centre is Priya's whole: John breaks it
+    expect(attackStake(s, 'harbour', 'market')).toBe("breaks Priya's Centre");
   });
 
   it('the target-first source walks the map adjacency', () => {
-    const s = twelve({ middle_1: [0, 3], north_3: [0, 6] });
-    expect(autoSource(s, 'middle_2', 0)).toBe('middle_1');
-    expect(autoSource(s, 'north_4', 0)).toBe('north_3');
+    const s = twelve({ market: [0, 3], tower: [0, 6] });
+    expect(autoSource(s, 'hills', 0)).toBe('tower');
+    expect(autoSource(s, 'ford', 0)).toBe('market');
   });
 
   it('the replay keeps a twelve-territory ledger and tells the round in its names', () => {
@@ -148,11 +112,11 @@ describe('copy, strip, helpers and story on another map', () => {
     const l = emptyStory();
     noteRoundStart(l, s0, 1);
     expect(l.snaps[0].o).toHaveLength(12);
-    const s1 = twelve({ north_1: [0, 2], north_2: [0, 1], north_3: [0, 1], north_4: [0, 1], south_1: [1, 1] });
+    const s1 = twelve({ harbour: [0, 2], cliffs: [0, 1], ford: [1, 1], hills: [1, 1] });
     s1.round = 1;
-    noteConquest(l, 1, 'north_4', 0, 2);
+    noteConquest(l, 1, 'cliffs', 0, 2);
     const r = buildReplay(l, s1, 0, 1);
-    expect(r.rounds[0].line).toBe('John took Northmark');
+    expect(r.rounds[0].line).toBe('John took West');
     expect(Object.keys(r.rounds[0].owners)).toHaveLength(12);
     // a saved ledger restores against its own map
     expect(restoreStory(JSON.parse(JSON.stringify(l)), { mapId: ID }).snaps).toHaveLength(1);
@@ -173,11 +137,9 @@ describe('continent tints (src/shared/palette.ts)', () => {
 });
 
 // ---------------------------------------------------------------------------------------------------------
-// The controller's view model on the fixture map. Needs the engine to play rules per game (createGame deals
-// the map's territories); skipped until the engine builder's change is merged.
+// The controller's view model on the test map.
 // ---------------------------------------------------------------------------------------------------------
 
-/* engineReadsMaps: defined above the suites */
 
 function quietBoard(): BoardView {
   const nop = () => undefined;
@@ -208,7 +170,7 @@ const clock = {
   raf: (fn: () => void) => void setTimeout(fn, 16),
 };
 
-describe.skipIf(!engineReadsMaps)('the controller on the fixture map (after the engine merge)', () => {
+describe('the controller on the test map', () => {
   beforeEach(() => vi.useFakeTimers());
   afterEach(() => {
     vi.useRealTimers();
@@ -228,6 +190,32 @@ describe.skipIf(!engineReadsMaps)('the controller on the fixture map (after the 
     const seats = vm.game!.seats;
     expect(seats.reduce((n, x) => n + x.territories, 0)).toBe(12);
     for (const x of seats) for (const k of x.continents ?? []) expect(def().continentIds).toContain(k);
+    expect(Object.keys(s.territories).sort()).toEqual([...def().territoryIds].sort());
     c.dispose();
+  });
+});
+
+// ---------------------------------------------------------------------------------------------------------
+// Lint: src/game, src/render and the HUD top strip never name the classic constants (tests/engine has the
+// engine's twin of this).
+// ---------------------------------------------------------------------------------------------------------
+import { readdirSync, readFileSync, statSync } from 'node:fs';
+import { join, relative } from 'node:path';
+
+describe('game + render read the map, never the classic constants', () => {
+  it('no classic constant named in src/game, src/render, src/ui/hud/topstrip.ts', () => {
+    const ROOT = join(__dirname, '..', '..');
+    const walk = (d: string): string[] => readdirSync(d).flatMap((f) => (statSync(join(d, f)).isDirectory() ? walk(join(d, f)) : f.endsWith('.ts') ? [join(d, f)] : []));
+    const files = [...walk(join(ROOT, 'src', 'game')), ...walk(join(ROOT, 'src', 'render')), join(ROOT, 'src', 'ui', 'hud', 'topstrip.ts')];
+    const banned = ['TERRITORIES', 'CONTINENTS', 'TERRITORY_IDS', 'CONTINENT_IDS', 'ADJACENCY', 'BORDERS', 'CARD_SYMBOLS', 'STARTING_ARMIES', 'WILD_CARD_IDS'];
+    const re = new RegExp(`(?<![\\w.$])(${banned.join('|')})(?![\\w$])`, 'g');
+    const hits: string[] = [];
+    for (const f of files) {
+      const src = readFileSync(f, 'utf8').replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '').replace(/'(?:[^'\\\n]|\\.)*'/g, "''");
+      src.split('\n').forEach((line, i) => {
+        for (const m of line.matchAll(re)) hits.push(`${relative(ROOT, f)}:${i + 1} ${m[1]}`);
+      });
+    }
+    expect(hits).toEqual([]);
   });
 });

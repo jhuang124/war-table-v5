@@ -13,7 +13,7 @@ import type {
   ViewportInsets,
 } from './BoardView';
 import type { GameEvent, GameState, PlayerId, TerritoryId } from '../engine/types';
-import { ADJACENCY, TERRITORIES, TERRITORY_IDS } from './activeMap';
+import { MAP } from './activeMap';
 import type { AudioEngine, PlayOptions, SfxName, StrokeHandle } from '../audio/types';
 import { PLAYER_COLORS, type PlayerPalette } from '../shared/palette';
 import { Animator, ease, clamp, READABLE, tierMs, type Run } from './anim';
@@ -177,7 +177,7 @@ export const createBoardView: CreateBoardView = async (opts: BoardViewOptions): 
   const tray = new DiceTray(anim, parts.envTexture);
   const rig = new CameraRig(G.width, G.height);
   // The home view fits the land (not the frame) inside the HUD-free region.
-  rig.landHull = convexHull(TERRITORY_IDS.flatMap((id) => G.territories[id].polygons.flatMap((p) => p.outer)));
+  rig.landHull = convexHull(MAP.territoryIds.flatMap((id) => G.territories[id].polygons.flatMap((p) => p.outer)));
   // Piece extents (figure tops, base sides, plaque depth): the home view keeps every piece inside the free
   // region and clear of the dice tray's footprint.
   const setPieceExtents = () => {
@@ -189,7 +189,7 @@ export const createBoardView: CreateBoardView = async (opts: BoardViewOptions): 
   // --- displayed board state --------------------------------------------------
   const owners = {} as Record<TerritoryId, PlayerId>;
   const armies = {} as Record<TerritoryId, number>;
-  for (const t of TERRITORY_IDS) {
+  for (const t of MAP.territoryIds) {
     owners[t] = -1;
     armies[t] = 0;
   }
@@ -399,7 +399,7 @@ export const createBoardView: CreateBoardView = async (opts: BoardViewOptions): 
       }
       // Fortify's phase dim is deeper than a selection's: the board becomes "your side" (docs/ROUND2.md §A).
       // A pick shows its reach (PLAN §2 'visible water = adjacency'): land it can't touch recedes a little.
-      const reach = sel && !fightPair && t.id !== sel && !ADJACENCY[sel].includes(t.id) ? 0.8 : 0;
+      const reach = sel && !fightPair && t.id !== sel && !MAP.adjacency[sel].includes(t.id) ? 0.8 : 0;
       const dim = Math.max(h.dimOthers && !keep.has(t.id) ? 1 : 0, phaseDimmed.has(t.id) ? 1.8 : 0, fightDimOf(t.id), reach);
       if (Math.abs(dim - t.dim) > 1e-4) tw(t, 'dim', t.dim, dim, fightDimMs ?? (dim > t.dim ? 180 : 140), ease.outQuad);
       overlay.setDim(t.id, dim >= 1);
@@ -409,7 +409,7 @@ export const createBoardView: CreateBoardView = async (opts: BoardViewOptions): 
     if (hovered) setHoverLook(hovered, clickable.has(hovered));
     updateCursor();
     // pending ghosts
-    for (const id of TERRITORY_IDS) overlay.setGhost(id, Math.max(0, h.pending?.[id] ?? 0));
+    for (const id of MAP.territoryIds) overlay.setGhost(id, Math.max(0, h.pending?.[id] ?? 0));
     pushPreview(h);
     // names: the picked source and the armed target show theirs (the hovered tile's is set on hover)
     const named: TerritoryId[] = [];
@@ -514,11 +514,11 @@ export const createBoardView: CreateBoardView = async (opts: BoardViewOptions): 
     const me = o?.player ?? lastState?.currentPlayer;
     if (me === undefined || me === null || me < 0) return;
     if (phase === 'fortify') {
-      for (const id of TERRITORY_IDS) if (owners[id] !== me) phaseDimmed.add(id);
+      for (const id of MAP.territoryIds) if (owners[id] !== me) phaseDimmed.add(id);
       applyHighlights(lastHl, lastHl);
       return;
     }
-    const ids = o?.territories ?? TERRITORY_IDS.filter((id) => owners[id] === me && armies[id] >= 2 && ADJACENCY[id].some((n) => owners[n] !== me));
+    const ids = o?.territories ?? MAP.territoryIds.filter((id) => owners[id] === me && armies[id] >= 2 && MAP.adjacency[id].some((n) => owners[n] !== me));
     if (!ids.length) return;
     const xs = ids.map((id) => tiles.get(id).anchor[0]);
     const x0 = Math.min(...xs);
@@ -1071,7 +1071,7 @@ export const createBoardView: CreateBoardView = async (opts: BoardViewOptions): 
         tTimer = null;
         if (disposed || tMode !== 'maybe' || touches.size !== 1) return;
         const p = [...touches.values()][0];
-        const lid = touchPick(p.x, p.y, TERRITORY_IDS);
+        const lid = touchPick(p.x, p.y, MAP.territoryIds);
         if (!lid) return;
         tMode = 'long';
         stroke = null;
@@ -1126,7 +1126,7 @@ export const createBoardView: CreateBoardView = async (opts: BoardViewOptions): 
     }
     if (tMode === 'long') {
       // Scrub: the card follows the finger to the tile under it.
-      const id = touchPick(p.x, p.y, TERRITORY_IDS);
+      const id = touchPick(p.x, p.y, MAP.territoryIds);
       if (id) showLong(id, p.x, p.y);
       return;
     }
@@ -1245,7 +1245,7 @@ export const createBoardView: CreateBoardView = async (opts: BoardViewOptions): 
    * top to plaque) clear of the HUD when it does.
    */
   const phoneLand = () => compact && W > H;
-  const pieceIndex = new Map(TERRITORY_IDS.map((id, i) => [id, i]));
+  const pieceIndex = new Map(MAP.territoryIds.map((id, i) => [id, i]));
   const extentsOf = (ids: TerritoryId[]): number[][] | undefined => {
     const all = rig.pieceExtents;
     if (!all) return undefined;
@@ -1471,7 +1471,7 @@ export const createBoardView: CreateBoardView = async (opts: BoardViewOptions): 
    * territories' centre); the winner's ink stays. ≈ 1.2 s.
    */
   const victoryDry = (winner: PlayerId, run: Run | null): Promise<void> => {
-    const mine = TERRITORY_IDS.filter((id) => owners[id] === winner);
+    const mine = MAP.territoryIds.filter((id) => owners[id] === winner);
     let cx = G.width / 2;
     let cy = G.height / 2;
     if (mine.length) {
@@ -1549,7 +1549,7 @@ export const createBoardView: CreateBoardView = async (opts: BoardViewOptions): 
     });
     const ui = uiScale;
     if (w > 20) return [w + 2 * 14.4 * ui + 16, Math.max(h, 24 * ui) + 8];
-    const chars = (TERRITORIES[from]?.name.length ?? 10) + (TERRITORIES[to]?.name.length ?? 10);
+    const chars = (MAP.territories[from]?.name.length ?? 10) + (MAP.territories[to]?.name.length ?? 10);
     return [chars * 11.5 * ui + 110 * ui, 32 * ui];
   };
   /** Every territory name and continent label on screen now, container px. */
@@ -1622,7 +1622,7 @@ export const createBoardView: CreateBoardView = async (opts: BoardViewOptions): 
     const [hw0, hH] = headerSize(from, to);
     const hw = Math.min(hw0, W - 16) / 2;
     const pieces: { id: TerritoryId; box: Box4 }[] = [];
-    for (const id of TERRITORY_IDS) {
+    for (const id of MAP.territoryIds) {
       if (id === from || id === to) continue;
       const r = overlay.pieceRects(id);
       if (r)
@@ -1842,7 +1842,7 @@ export const createBoardView: CreateBoardView = async (opts: BoardViewOptions): 
     if (e.defenderLosses > 0 && toHit) {
       // Emptied: the top disc slides off; if this was the seat's last territory, its last stack topples and
       // dissolves disc by disc (PLAN §1 "elimination"), inside the elimination's own sweep.
-      const last = toN <= 0 && !TERRITORY_IDS.some((t) => t !== e.to && owners[t] === e.defender) && !!lastState?.players[e.defender]?.eliminated;
+      const last = toN <= 0 && !MAP.territoryIds.some((t) => t !== e.to && owners[t] === e.defender) && !!lastState?.players[e.defender]?.eliminated;
       tokens.setArmies(e.to, toN, 'hit', null, e.from, { topple: last });
       refreshBadge(e.to, true);
       if (chips) overlay.lossChip(e.to, e.defenderLosses, 1);
@@ -1879,7 +1879,7 @@ export const createBoardView: CreateBoardView = async (opts: BoardViewOptions): 
     const key = s.players.map((p) => p.color).join(',');
     if (key !== colorKey) {
       colorKey = key;
-      for (const id of TERRITORY_IDS) {
+      for (const id of MAP.territoryIds) {
         setOwnerLook(id, owners[id]);
         refreshBadge(id, false);
       }
@@ -1909,7 +1909,7 @@ export const createBoardView: CreateBoardView = async (opts: BoardViewOptions): 
         return;
 
       case 'territoriesDealt': {
-        const ids = TERRITORY_IDS.filter((t) => e.owners[t] !== undefined);
+        const ids = MAP.territoryIds.filter((t) => e.owners[t] !== undefined);
         ids.sort((a, b) => tiles.get(a).anchor[0] - tiles.get(b).anchor[0]);
         const stagger = ids.length > 1 ? Math.min(35, 1200 / (ids.length - 1)) : 0;
         await Promise.all(ids.map((id, i) => bloom(id, e.owners[id], i * stagger, run, i % 3 === 0 ? 1 : 0)));
@@ -2387,8 +2387,8 @@ export const createBoardView: CreateBoardView = async (opts: BoardViewOptions): 
   let pendingRecenter = false;
   const FOCUS_FALLBACK = (() => {
     // classic / true-world: Europe and Africa; any other map: the whole land.
-    const ea = TERRITORY_IDS.filter((id) => ['europe', 'africa'].includes(TERRITORIES[id].continent));
-    const ids = ea.length ? ea : TERRITORY_IDS;
+    const ea = MAP.territoryIds.filter((id) => ['europe', 'africa'].includes(MAP.territories[id].continent));
+    const ids = ea.length ? ea : MAP.territoryIds;
     return ids.reduce((a, id) => a + tiles.get(id).anchorW.x, 0) / Math.max(1, ids.length);
   })();
   /**
@@ -2397,10 +2397,10 @@ export const createBoardView: CreateBoardView = async (opts: BoardViewOptions): 
    */
   function setFocusFor(p: PlayerId): void {
     focusPlayer = p;
-    const mine = TERRITORY_IDS.filter((id) => owners[id] === p);
+    const mine = MAP.territoryIds.filter((id) => owners[id] === p);
     const front = new Set<TerritoryId>();
     for (const id of mine) {
-      const foes = ADJACENCY[id].filter((n) => owners[n] !== p && owners[n] >= 0);
+      const foes = MAP.adjacency[id].filter((n) => owners[n] !== p && owners[n] >= 0);
       if (!foes.length) continue;
       front.add(id);
       for (const f of foes) front.add(f);
@@ -2435,7 +2435,7 @@ export const createBoardView: CreateBoardView = async (opts: BoardViewOptions): 
           t.dirty = true;
         }
     }
-    for (const id of TERRITORY_IDS) {
+    for (const id of MAP.territoryIds) {
       const ts = s.territories[id];
       if (owners[id] !== ts.owner) {
         owners[id] = ts.owner;
@@ -2697,7 +2697,7 @@ export const createBoardView: CreateBoardView = async (opts: BoardViewOptions): 
   /** The board's three largest stacks (exempt from the floor), and the key the caps were fitted for. */
   const bigThree = (): TerritoryId[] => {
     const top: TerritoryId[] = [];
-    for (const id of TERRITORY_IDS) {
+    for (const id of MAP.territoryIds) {
       if (!(armies[id] > 0)) continue;
       let k = top.length;
       while (k > 0 && armies[top[k - 1]] < armies[id]) k--;
@@ -2711,14 +2711,14 @@ export const createBoardView: CreateBoardView = async (opts: BoardViewOptions): 
   let bigKey = '';
   // [board-pieces v4] the caps follow the counts' buckets (tokens.capBucket): refit when a stone crosses one
   let bucketKey = '';
-  const bucketsNow = () => TERRITORY_IDS.map((id) => capBucket(Math.max(1, armies[id] ?? 1))).join(',');
+  const bucketsNow = () => MAP.territoryIds.map((id) => capBucket(Math.max(1, armies[id] ?? 1))).join(',');
   let capsTangled: string[] = [];
   let capsFigSmaller = 0;
   let capsNumLeft = 0;
   const fitCaps = () => {
     const cam = rig.homeCamera();
     const v = new THREE.Vector3();
-    const pts = TERRITORY_IDS.map((id) => {
+    const pts = MAP.territoryIds.map((id) => {
       v.copy(tiles.get(id).anchorW).project(cam);
       return [(v.x * 0.5 + 0.5) * W, (-v.y * 0.5 + 0.5) * H];
     });
@@ -2730,16 +2730,16 @@ export const createBoardView: CreateBoardView = async (opts: BoardViewOptions): 
     // only keep every numeral clear (tokens.piecesClash).
     void ppu;
     // (each cap starts at the stone its count's bucket draws, so "which is larger" means the army on the board)
-    const caps = TERRITORY_IDS.map((id) => Math.min(dmax, stoneK(capBucket(Math.max(1, armies[id] ?? 1)), dmin, dmax)));
+    const caps = MAP.territoryIds.map((id) => Math.min(dmax, stoneK(capBucket(Math.max(1, armies[id] ?? 1)), dmin, dmax)));
     // the pieces' parts at their caps, placed at their anchors
     type Parts = { stone: PxBox; fig: PxBox; num: PxBox };
     // (a crowded layout's second lever, once a stone is at its floor: its figure is drawn smaller, to FIG_K_MIN)
-    const figK = TERRITORY_IDS.map(() => FIG_K);
+    const figK = MAP.territoryIds.map(() => FIG_K);
     // (and last, a numeral at the lower-left edge instead)
-    const side = TERRITORY_IDS.map(() => 1);
+    const side = MAP.territoryIds.map(() => 1);
     const at = (i: number): Parts => {
       // [board-pieces v4] fitted for the counts on the board now (up to the top of each count's bucket)
-      const e = pieceEnvelope(caps[i], dmin, dmax, ss, figK[i], side[i], tokens.numMin, capBucket(Math.max(1, armies[TERRITORY_IDS[i]] ?? 1)));
+      const e = pieceEnvelope(caps[i], dmin, dmax, ss, figK[i], side[i], tokens.numMin, capBucket(Math.max(1, armies[MAP.territoryIds[i]] ?? 1)));
       const [x, y] = pts[i];
       const mv = (b: PxBox): PxBox => [b[0] + x, b[1] + y, b[2] + x, b[3] + y];
       return { stone: mv(e.stone), fig: mv(e.fig), num: mv(e.num) };
@@ -2762,9 +2762,9 @@ export const createBoardView: CreateBoardView = async (opts: BoardViewOptions): 
     const bigIds = bigThree();
     bigKey = bigIds.join(',');
     bucketKey = bucketsNow();
-    const big = TERRITORY_IDS.map((id) => bigIds.includes(id));
+    const big = MAP.territoryIds.map((id) => bigIds.includes(id));
     const lost = new Set<number>();
-    let parts = TERRITORY_IDS.map((_, i) => at(i));
+    let parts = MAP.territoryIds.map((_, i) => at(i));
     /** One of the three largest against a neighbour: the neighbour gives way, the big one last. */
     const yieldTo = (b: number, o: number): boolean => {
       if (caps[o] > dmin + 1e-6) {
@@ -2826,8 +2826,8 @@ export const createBoardView: CreateBoardView = async (opts: BoardViewOptions): 
         } else if (!tangled(parts[i], parts[j])) continue;
         // [board-pieces v4] the smaller army gives way first (its stone, its figure, its numeral's side), the
         // larger last, so size keeps meaning strength; a pair at the floor stays as it is
-        const ai = armies[TERRITORY_IDS[i]] ?? 0;
-        const aj = armies[TERRITORY_IDS[j]] ?? 0;
+        const ai = armies[MAP.territoryIds[i]] ?? 0;
+        const aj = armies[MAP.territoryIds[j]] ?? 0;
         const order = ai < aj ? [i, j] : aj < ai ? [j, i] : [i, j];
         let moved = false;
         for (const x of order) {
@@ -2854,18 +2854,18 @@ export const createBoardView: CreateBoardView = async (opts: BoardViewOptions): 
       }
       if (!changed) break;
     }
-    parts = TERRITORY_IDS.map((_, i) => at(i));
+    parts = MAP.territoryIds.map((_, i) => at(i));
     // (reported at the 1 px standard of a real overlap; the fit itself keeps tokens.PIECE_AIR of air where it can)
-    capsTangled = near.filter(([i, j]) => (big[i] !== big[j] ? numTangled : (A: Parts, B: Parts) => piecesClash(A, B, 1))(parts[i], parts[j])).map(([i, j]) => `${TERRITORY_IDS[i]}/${TERRITORY_IDS[j]}`);
+    capsTangled = near.filter(([i, j]) => (big[i] !== big[j] ? numTangled : (A: Parts, B: Parts) => piecesClash(A, B, 1))(parts[i], parts[j])).map(([i, j]) => `${MAP.territoryIds[i]}/${MAP.territoryIds[j]}`);
     capsFloored = caps.filter((c) => c <= dmin + 1e-6).length;
     capsLowered = caps.filter((c) => c < dmax - 1e-6).length;
     capsFigSmaller = figK.filter((k) => k < FIG_K - 1e-6).length;
     capsNumLeft = side.filter((v) => v < 0).length;
-    capsLost = [...lost].map((i) => TERRITORY_IDS[i]);
+    capsLost = [...lost].map((i) => MAP.territoryIds[i]);
     tokens.setCaps(
-      new Map(TERRITORY_IDS.map((id, i) => [id, caps[i]])),
-      new Map(TERRITORY_IDS.map((id, i) => [id, figK[i]])),
-      new Map(TERRITORY_IDS.map((id, i) => [id, side[i]])),
+      new Map(MAP.territoryIds.map((id, i) => [id, caps[i]])),
+      new Map(MAP.territoryIds.map((id, i) => [id, figK[i]])),
+      new Map(MAP.territoryIds.map((id, i) => [id, side[i]])),
     );
   };
 
@@ -3268,13 +3268,13 @@ export const createBoardView: CreateBoardView = async (opts: BoardViewOptions): 
   // --- warm-up: compile every material, render one hidden dice + flood frame ------------------
   // A three-territory chain on the board (classic: Ural → Siberia → Yakutsk, as before; any map: the first chain).
   const WARM: TerritoryId[] = (() => {
-    if (ADJACENCY.ural?.includes('siberia') && ADJACENCY.siberia?.includes('yakutsk')) return ['ural', 'siberia', 'yakutsk'];
-    for (const a of TERRITORY_IDS)
-      for (const b of ADJACENCY[a] ?? []) {
-        const c = (ADJACENCY[b] ?? []).find((x) => x !== a);
+    if (MAP.adjacency.ural?.includes('siberia') && MAP.adjacency.siberia?.includes('yakutsk')) return ['ural', 'siberia', 'yakutsk'];
+    for (const a of MAP.territoryIds)
+      for (const b of MAP.adjacency[a] ?? []) {
+        const c = (MAP.adjacency[b] ?? []).find((x) => x !== a);
         if (c) return [a, b, c];
       }
-    return TERRITORY_IDS.slice(0, 2);
+    return MAP.territoryIds.slice(0, 2);
   })();
   {
     const t0 = tiles.list[0];
@@ -3544,7 +3544,7 @@ export const createBoardView: CreateBoardView = async (opts: BoardViewOptions): 
     for (let by = 4; by < G.height - 4; by += 5.5)
       for (let bx = 3; bx < G.width - 3; bx += 7.5) if (ink.seaDistance(bx, by) >= 3) seaPts.push([bx, by]);
     const coastPts: [number, number][] = [];
-    TERRITORY_IDS.forEach((id, i) => {
+    MAP.territoryIds.forEach((id, i) => {
       if (i % 2) return;
       const ring = G.territories[id].polygons[0]?.outer ?? [];
       for (let j = 0; j < ring.length; j += Math.max(1, Math.floor(ring.length / 4))) coastPts.push([ring[j][0], ring[j][1]]);

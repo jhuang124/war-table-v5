@@ -3615,7 +3615,7 @@ class Controller {
         this.rememberDraft();
         break;
       case 'map':
-        if (isKnownMap(i.id)) this.draft = { ...this.draft, mapId: i.id };
+        if (listMaps().some((m) => m.id === i.id)) this.draft = { ...this.draft, mapId: i.id }; // visible packs only (hidden never list)
         this.rememberDraft();
         break;
       case 'length':

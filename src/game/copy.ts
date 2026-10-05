@@ -2,8 +2,7 @@
 // Tone: sentence case, verb first, ' · ' separator, real names and numbers, minus is U+2212,
 // arrows are →, the ellipsis is …. No poetry, no exclamation marks.
 
-import { mapDefOf, type ContinentId, type GameState, type MapDef, type PlayerId, type TerritoryId } from '../engine';
-import { packIds } from '../map/packs';
+import { continentName, mapDefOf, territoryName, type ContinentId, type GameState, type MapDef, type PlayerId, type TerritoryId } from '../engine';
 import type { SeatRef } from './viewModel';
 
 export const SEP = ' · ';
@@ -26,7 +25,7 @@ export const MINUS = '−';
 /**
  * The map the copy names territories and continents from: the game's `config.mapId`. The controller sets it
  * whenever a game starts or loads (like setTouchCopy); default classic. A name missing from it is looked up in
- * every registered pack, then falls back to the id itself.
+ * every pack (the engine's territoryName / continentName), then falls back to the id itself.
  */
 let copyMap: MapDef = mapDefOf(null);
 export function setCopyMap(config?: { mapId?: string } | null): void {
@@ -36,23 +35,15 @@ export function copyMapId(): string {
   return copyMap.id;
 }
 
-function anyPack<T>(pick: (d: MapDef) => T | undefined): T | undefined {
-  for (const id of packIds()) {
-    const v = pick(mapDefOf({ mapId: id }));
-    if (v !== undefined) return v;
-  }
-  return undefined;
-}
-
-/** A territory's name on the game's map (`s` given: that game's map; else the copy map). */
+/** A territory's name on the game's map (`s` given: that game's map; else the copy map; else any pack's). */
 export function tName(t: TerritoryId, s?: Pick<GameState, 'config'>): string {
   const def = s && typeof s === 'object' ? mapDefOf(s.config) : copyMap; // guard: .map(tName) passes an index
-  return def.territories[t]?.name ?? anyPack((d) => d.territories[t]?.name) ?? String(t);
+  return def.territories[t] ? territoryName(t, def) : territoryName(t);
 }
 
 export function cName(c: ContinentId, s?: Pick<GameState, 'config'>): string {
-  const def = s && typeof s === 'object' ? mapDefOf(s.config) : copyMap; // guard: .map(tName) passes an index
-  return def.continents[c]?.name ?? anyPack((d) => d.continents[c]?.name) ?? String(c);
+  const def = s && typeof s === 'object' ? mapDefOf(s.config) : copyMap; // guard: .map(cName) passes an index
+  return def.continents[c] ? continentName(c, def) : continentName(c);
 }
 
 export function pName(s: GameState, p: PlayerId): string {
