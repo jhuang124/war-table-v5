@@ -54,13 +54,13 @@ export interface GameConfig {
   missions?: boolean;
   /** Armies placed per setup-place turn (last batch may be smaller). Default 5. */
   setupBatch: number;
-  /** Override starting armies per player. Default: 2p 40, 3p 35, 4p 30. */
+  /** Override starting armies per player. Default: from the map's rules (classic: 2p 40, 3p 35, 4p 30). */
   startingArmies?: number;
   /** Card set values. 'progressive': 4,6,8,10,12,15,+5... 'fixed': inf 4, cav 6, art 8, mixed 10. */
   cardBonus: 'progressive' | 'fixed';
   /** Fortify along any chain of your own territories, or only to an adjacent one. */
   fortifyRule: 'connected' | 'adjacent';
-  /** Territories needed to win, as a percent of 42. 100 = world domination (default). */
+  /** Territories needed to win, as a percent of the map's territories (targetTerritories). 100 = world domination (default). */
   dominationPercent: number;
   /** End the game after this many full rounds (most territories, then most armies, wins). null = off. */
   turnLimit: number | null;

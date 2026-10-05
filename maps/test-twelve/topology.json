@@ -1,0 +1,26 @@
+{
+  "format": 1,
+  "borders": [
+    ["harbour","cliffs"],
+    ["harbour","market"],
+    ["harbour","tower"],
+    ["cliffs","ford"],
+    ["ford","mill"],
+    ["ford","market"],
+    ["mill","market"],
+    ["mill","pines"],
+    ["market","hills"],
+    ["hills","pines"],
+    ["hills","lake"],
+    ["hills","tower"],
+    ["pines","lake"],
+    ["lake","quarry"],
+    ["quarry","orchard"],
+    ["orchard","fen"],
+    ["fen","tower"]
+  ],
+  "seaLanes": [
+    {"a":"harbour","b":"market"},
+    {"a":"harbour","b":"tower"}
+  ]
+}

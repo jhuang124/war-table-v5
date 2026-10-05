@@ -1,8 +1,7 @@
 // legalActionsSummary: everything the UI needs to drive highlights and the action bar, in one cheap call.
 
 import { bonusTerritoryFor, setValueFor, validSets } from './cards';
-import { TERRITORY_IDS } from './mapData';
-import { attackSources, attackTargets, fortifySources, fortifyTargets } from './rules';
+import { attackSources, attackTargets, fortifySources, fortifyTargets, mapOf } from './rules';
 import { UNCLAIMED, type GameState, type PhaseKind, type PlayerId, type TerritoryId } from './types';
 
 export interface TradeOption {
@@ -15,7 +14,7 @@ export interface TradeOption {
 }
 
 /**
- * What the current player may do right now. All arrays are in canonical TERRITORY_IDS order.
+ * What the current player may do right now. All arrays are in canonical territory order (the map's territoryIds).
  * Fields that don't apply to the current phase are empty / 0 / false / null.
  */
 export interface LegalSummary {
@@ -79,10 +78,11 @@ export function legalActionsSummary(state: GameState): LegalSummary {
     canEndTurn: false,
     gameOver: null,
   };
-  const owned = () => TERRITORY_IDS.filter((t) => state.territories[t].owner === player);
+  const ids = mapOf(state).territoryIds;
+  const owned = () => ids.filter((t) => state.territories[t].owner === player);
   switch (ph.kind) {
     case 'setup-claim':
-      out.claimable = TERRITORY_IDS.filter((t) => state.territories[t].owner === UNCLAIMED);
+      out.claimable = ids.filter((t) => state.territories[t].owner === UNCLAIMED);
       break;
     case 'setup-place':
       out.placeable = owned();
@@ -93,7 +93,7 @@ export function legalActionsSummary(state: GameState): LegalSummary {
       out.mustTrade = ph.mustTrade;
       out.midTurn = ph.midTurn;
       out.placeable = ph.mustTrade || ph.remaining === 0 ? [] : owned();
-      out.unplaceable = TERRITORY_IDS.filter((t) => (ph.placed[t] ?? 0) > 0);
+      out.unplaceable = ids.filter((t) => (ph.placed[t] ?? 0) > 0);
       out.tradeSets = sets
         .map((ids) => {
           const cards = ids.map((id) => hand.find((c) => c.id === id)!);

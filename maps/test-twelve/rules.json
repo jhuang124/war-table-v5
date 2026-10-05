@@ -1,0 +1,25 @@
+{
+  "format": 1,
+  "seats": {"min":2,"max":3},
+  "startingArmies": {"2":12,"3":10},
+  "cardSymbols": ["infantry","cavalry","artillery"],
+  "continents": [
+    {"id":"west","name":"West","bonus":2},
+    {"id":"centre","name":"Centre","bonus":3},
+    {"id":"east","name":"East","bonus":4}
+  ],
+  "territories": [
+    {"id":"harbour","name":"Harbour","continent":"west"},
+    {"id":"cliffs","name":"Cliffs","continent":"west"},
+    {"id":"ford","name":"Ford","continent":"centre"},
+    {"id":"mill","name":"Mill","continent":"centre"},
+    {"id":"market","name":"Market","continent":"centre"},
+    {"id":"hills","name":"Hills","continent":"east"},
+    {"id":"pines","name":"Pines","continent":"east"},
+    {"id":"lake","name":"Lake","continent":"east"},
+    {"id":"quarry","name":"Quarry","continent":"east"},
+    {"id":"orchard","name":"Orchard","continent":"east"},
+    {"id":"fen","name":"Fen","continent":"east"},
+    {"id":"tower","name":"Tower","continent":"east"}
+  ]
+}

@@ -9,11 +9,11 @@
 // always has, except that it too never attacks through peace a human asked for (v5.1).
 
 import { bonusTerritoryFor, setValueFor, validSets } from '../cards';
-import { ADJACENCY, CONTINENTS, CONTINENT_IDS, TERRITORIES, TERRITORY_IDS } from '../mapData';
+import type { ContinentInfo, MapDef, TerritoryInfo } from '../mapData';
 import { blitzOdds, winProbability, winProbabilityStopAt } from '../probability';
 import { hashInts, random, type RngHolder } from '../rng';
 import { missionGoal, type MissionGoal } from '../missions';
-import { fortifyPath, fortifyTargets, reinforcementsFor } from '../rules';
+import { fortifyPath, fortifyTargets, mapOf, reinforcementsFor } from '../rules';
 import { UNCLAIMED, type Action, type AiPersonality, type ContinentId, type GameState, type Phase, type PlayerId, type TerritoryId, type TerritoryState } from '../types';
 import { isPeace } from '../diplomacy';
 import { standingOf, type Standing } from '../standing';
@@ -21,13 +21,22 @@ import { chooseTruceProposal } from './diplomacy';
 import type { Persona } from './persona';
 import { personaFor, TEMPERAMENTS, type Temperament } from './personality';
 
-/** Territories in each continent that border another continent (static). */
-const CONTINENT_BORDERS: Record<ContinentId, TerritoryId[]> = Object.fromEntries(
-  CONTINENT_IDS.map((c) => [
-    c,
-    CONTINENTS[c].territories.filter((t) => ADJACENCY[t].some((n) => TERRITORIES[n].continent !== c)),
-  ]),
-) as Record<ContinentId, TerritoryId[]>;
+/** Territories in each continent that border another continent (per map, computed once). */
+const CONTINENT_BORDERS = new Map<string, Record<ContinentId, TerritoryId[]>>();
+
+function continentBorders(m: MapDef): Record<ContinentId, TerritoryId[]> {
+  let cb = CONTINENT_BORDERS.get(m.id);
+  if (!cb) {
+    cb = Object.fromEntries(
+      m.continentIds.map((c) => [
+        c,
+        m.continents[c].territories.filter((t) => m.adjacency[t].some((n) => m.territories[n].continent !== c)),
+      ]),
+    ) as Record<ContinentId, TerritoryId[]>;
+    CONTINENT_BORDERS.set(m.id, cb);
+  }
+  return cb;
+}
 
 const PHASE_ORD: Record<Phase['kind'], number> = {
   'setup-claim': 1,
@@ -42,6 +51,14 @@ const PHASE_ORD: Record<Phase['kind'], number> = {
 interface Ctx {
   s: GameState;
   me: PlayerId;
+  /** v6 maps: the game's board. Iteration order = its territoryIds; adjacency and continents from its pack. */
+  ids: TerritoryId[];
+  contIds: ContinentId[];
+  adj: Record<TerritoryId, TerritoryId[]>;
+  tinfo: Record<TerritoryId, TerritoryInfo>;
+  conts: Record<ContinentId, ContinentInfo>;
+  /** Each continent's territories that border another continent. */
+  cb: Record<ContinentId, TerritoryId[]>;
   p: Persona;
   rng: RngHolder;
   round: number;
@@ -110,9 +127,11 @@ function buildCtx(s: GameState, me: PlayerId): Ctx {
   const personality = s.players[me].personality;
   const p = personaFor(diff, personality);
   const n = s.players.length;
+  const m = mapOf(s);
+  const cb = continentBorders(m);
   const terr = new Array<number>(n).fill(0);
   const armies = new Array<number>(n).fill(0);
-  for (const t of TERRITORY_IDS) {
+  for (const t of m.territoryIds) {
     const ts = s.territories[t];
     if (ts.owner >= 0) {
       terr[ts.owner]++;
@@ -133,10 +152,10 @@ function buildCtx(s: GameState, me: PlayerId): Ctx {
   const mineIn = {} as Record<ContinentId, number>;
   const owner = {} as Record<ContinentId, PlayerId | null>;
   const desire = {} as Record<ContinentId, number>;
-  let goal: ContinentId = 'australia';
+  let goal: ContinentId = m.continentIds[m.continentIds.length - 1];
   let goalScore = -Infinity;
-  for (const c of CONTINENT_IDS) {
-    const ts = CONTINENTS[c].territories;
+  for (const c of m.continentIds) {
+    const ts = m.continents[c].territories;
     let mine = 0;
     let myA = 0;
     let enemyA = 0;
@@ -153,7 +172,7 @@ function buildCtx(s: GameState, me: PlayerId): Ctx {
     const o0 = s.territories[ts[0]].owner;
     owner[c] = o0 >= 0 && ts.every((t) => s.territories[t].owner === o0) ? o0 : null;
     const frac = mine / ts.length;
-    const holdability = CONTINENTS[c].bonus / CONTINENT_BORDERS[c].length; // value per border to guard
+    const holdability = m.continents[c].bonus / Math.max(1, cb[c].length); // value per border to guard
     const strength = (myA + 1) / (myA + enemyA + unclaimed + 1);
     desire[c] = holdability * (0.25 + frac) * (0.35 + strength);
     if (desire[c] > goalScore) {
@@ -164,6 +183,12 @@ function buildCtx(s: GameState, me: PlayerId): Ctx {
   const c: Ctx = {
     s,
     me,
+    ids: m.territoryIds,
+    contIds: m.continentIds,
+    adj: m.adjacency,
+    tinfo: m.territories,
+    conts: m.continents,
+    cb,
     p,
     rng: mkRng(s, me),
     round: s.round,
@@ -242,10 +267,10 @@ function applyMission(c: Ctx): void {
   c.mw = MISSION_WEIGHT[s.players[c.me].personality ?? 'classic'][g.kind];
   if (g.kind === 'continents') {
     for (const k of g.continents) if (c.owner[k] !== c.me) c.mCont.add(k);
-    if (g.plusOne && !CONTINENT_IDS.some((k) => !g.continents.includes(k) && c.owner[k] === c.me)) {
+    if (g.plusOne && !c.contIds.some((k) => !g.continents.includes(k) && c.owner[k] === c.me)) {
       // The third continent: the one we'd most like anyway.
       let third: ContinentId | null = null;
-      for (const k of CONTINENT_IDS) if (!g.continents.includes(k) && (!third || c.desire[k] > c.desire[third])) third = k;
+      for (const k of c.contIds) if (!g.continents.includes(k) && (!third || c.desire[k] > c.desire[third])) third = k;
       if (third) c.mCont.add(third);
     }
     let goal: ContinentId | null = null;
@@ -267,9 +292,9 @@ function missionValue(c: Ctx, n: TerritoryId): number {
   const s = c.s;
   switch (g.kind) {
     case 'continents': {
-      const cont = TERRITORIES[n].continent;
+      const cont = c.tinfo[n].continent;
       if (!c.mCont.has(cont)) return 0;
-      const size = CONTINENTS[cont].territories.length;
+      const size = c.conts[cont].territories.length;
       let v = c.mw * (1.5 + (3 * c.mineIn[cont]) / size);
       // The last territory of the last continent the mission needs: that conquest wins the game.
       if (c.mineIn[cont] === size - 1 && c.mCont.size === 1) v += 20;
@@ -325,13 +350,13 @@ function findPrey(c: Ctx, extra: number, only?: PlayerId): PlayerId {
     if (v.id === c.me || v.eliminated || v.neutral) continue;
     if (only !== undefined && v.id !== only) continue;
     if (c.guard.get(v.id) === Infinity) continue; // never hunts a seat it will not attack
-    const theirs = TERRITORY_IDS.filter((t) => s.territories[t].owner === v.id);
+    const theirs = c.ids.filter((t) => s.territories[t].owner === v.id);
     if (theirs.length === 0 || theirs.length > 9) continue;
     let cost = 0;
     for (const t of theirs) cost += s.territories[t].armies * 1.15 + 1.6;
     // Force: our stacks touching their territories (they'd sweep), plus what we can still add.
     const touching = new Set<TerritoryId>();
-    for (const t of theirs) for (const n of ADJACENCY[t]) if (s.territories[n].owner === c.me) touching.add(n);
+    for (const t of theirs) for (const n of c.adj[t]) if (s.territories[n].owner === c.me) touching.add(n);
     if (touching.size === 0) continue;
     let force = extra;
     let biggest = 0;
@@ -362,7 +387,7 @@ function mine(c: Ctx, t: TerritoryId): boolean {
 }
 
 function enemyNeighbors(c: Ctx, t: TerritoryId): TerritoryId[] {
-  return ADJACENCY[t].filter((n) => {
+  return c.adj[t].filter((n) => {
     const o = c.s.territories[n].owner;
     return o !== c.me && o >= 0;
   });
@@ -371,7 +396,7 @@ function enemyNeighbors(c: Ctx, t: TerritoryId): TerritoryId[] {
 /** Largest single enemy stack adjacent to t (what could hit it next turn), ignoring `except`. */
 function maxThreat(c: Ctx, t: TerritoryId, except?: TerritoryId): number {
   let m = 0;
-  for (const n of ADJACENCY[t]) {
+  for (const n of c.adj[t]) {
     if (n === except) continue;
     const x = c.s.territories[n];
     if (x.owner !== c.me && x.owner >= 0) m = Math.max(m, c.pk ? threatArmies(c, x) : x.armies);
@@ -381,7 +406,7 @@ function maxThreat(c: Ctx, t: TerritoryId, except?: TerritoryId): number {
 
 function sumThreat(c: Ctx, t: TerritoryId, except?: TerritoryId): number {
   let m = 0;
-  for (const n of ADJACENCY[t]) {
+  for (const n of c.adj[t]) {
     if (n === except) continue;
     const x = c.s.territories[n];
     if (x.owner !== c.me && x.owner >= 0) m += c.pk ? threatArmies(c, x) : x.armies;
@@ -399,8 +424,8 @@ function threshold(c: Ctx, base: number): number {
 function targetValue(c: Ctx, n: TerritoryId): number {
   const s = c.s;
   const x = s.territories[n];
-  const cont = TERRITORIES[n].continent;
-  const info = CONTINENTS[cont];
+  const cont = c.tinfo[n].continent;
+  const info = c.conts[cont];
   let v = 1;
   v += c.p.goalWeight * c.desire[cont] * 2.2 * (cont === c.goal ? 1.5 : 1);
   if (c.mineIn[cont] === info.territories.length - 1) v += c.p.completeWeight * info.bonus;
@@ -458,19 +483,19 @@ const STAND_ALLY_FOE = 1.2;
 
 function chooseClaim(c: Ctx): Action {
   const s = c.s;
-  const free = TERRITORY_IDS.filter((t) => s.territories[t].owner === UNCLAIMED);
+  const free = c.ids.filter((t) => s.territories[t].owner === UNCLAIMED);
   let best = free[0];
   let bestV = -Infinity;
   for (const t of free) {
-    const cont = TERRITORIES[t].continent;
-    const size = CONTINENTS[cont].territories.length;
+    const cont = c.tinfo[t].continent;
+    const size = c.conts[cont].territories.length;
     let enemy = 0;
-    for (const x of CONTINENTS[cont].territories) {
+    for (const x of c.conts[cont].territories) {
       const o = s.territories[x].owner;
       if (o !== c.me && o !== UNCLAIMED) enemy++;
     }
-    const adjMine = ADJACENCY[t].filter((nb) => s.territories[nb].owner === c.me).length;
-    const holdability = CONTINENTS[cont].bonus / CONTINENT_BORDERS[cont].length;
+    const adjMine = c.adj[t].filter((nb) => s.territories[nb].owner === c.me).length;
+    const holdability = c.conts[cont].bonus / Math.max(1, c.cb[cont].length);
     let v = (2.2 * (c.mineIn[cont] + 1)) / size - (1.6 * enemy) / size + 0.35 * adjMine + 0.5 * holdability;
     if (c.p.noise > 0.3) v = random(c.rng) * 2 + adjMine * 0.3; // easy: mostly random, likes clumps
     v = noisy(c, v + 5) - 5;
@@ -496,7 +521,7 @@ function stagingScore(c: Ctx, b: TerritoryId, extra: number): number {
     if (v > best) best = v;
   }
   // Staging inside/next to the goal continent keeps the push coherent.
-  if (TERRITORIES[b].continent === c.goal) best *= 1.15;
+  if (c.tinfo[b].continent === c.goal) best *= 1.15;
   return best;
 }
 
@@ -519,18 +544,18 @@ function chainValue(c: Ctx, start: TerritoryId, armies: number, depth: number): 
     let bestN: TerritoryId | null = null;
     let bestV = 0;
     let bestP = 0;
-    for (const n of ADJACENCY[cur]) {
+    for (const n of c.adj[cur]) {
       if (taken.has(n)) continue;
       const o = s.territories[n].owner;
       if (o === c.me || o < 0) continue;
       if (c.guard.has(o)) continue;
       const p = winProbability(a, s.territories[n].armies);
       if (p < thr) continue;
-      const cont = TERRITORIES[n].continent;
+      const cont = c.tinfo[n].continent;
       let v = targetValue(c, n);
       // Completion discovered along the chain (targetValue only sees the current board).
-      if (mineIn[cont] === CONTINENTS[cont].territories.length - 1 && c.mineIn[cont] !== mineIn[cont])
-        v += c.p.completeWeight * CONTINENTS[cont].bonus;
+      if (mineIn[cont] === c.conts[cont].territories.length - 1 && c.mineIn[cont] !== mineIn[cont])
+        v += c.p.completeWeight * c.conts[cont].bonus;
       if (p * v > bestV) {
         bestV = p * v;
         bestN = n;
@@ -543,7 +568,7 @@ function chainValue(c: Ctx, start: TerritoryId, armies: number, depth: number): 
     const odds = blitzOdds(a, s.territories[bestN].armies);
     a = Math.floor((Number.isFinite(odds.expectedAttackersLeftIfWin) ? odds.expectedAttackersLeftIfWin : 1) - 1);
     taken.add(bestN);
-    mineIn[TERRITORIES[bestN].continent]++;
+    mineIn[c.tinfo[bestN].continent]++;
     cur = bestN;
   }
   return total;
@@ -563,7 +588,7 @@ function garrisonFor(c: Ctx, t: TerritoryId, cap: number): number {
 
 function choosePlacement(c: Ctx, remaining: number, placedSoFar: number, kind: 'setupPlace' | 'reinforce'): Action {
   const s = c.s;
-  const owned = TERRITORY_IDS.filter((t) => mine(c, t));
+  const owned = c.ids.filter((t) => mine(c, t));
   const borders = owned.filter((t) => enemyNeighbors(c, t).length > 0);
   const pool = borders.length ? borders : owned;
   const mk = (territory: TerritoryId, count: number): Action =>
@@ -601,10 +626,10 @@ function choosePlacement(c: Ctx, remaining: number, placedSoFar: number, kind: '
     let bestNeed = 0;
     let bestRaw = 0;
     for (const t of borders) {
-      const cont = TERRITORIES[t].continent;
+      const cont = c.tinfo[t].continent;
       if (c.owner[cont] !== c.me) continue;
       const want = garrisonFor(c, t, remaining);
-      const need = (want - s.territories[t].armies) * (1 + CONTINENTS[cont].bonus / 10);
+      const need = (want - s.territories[t].armies) * (1 + c.conts[cont].bonus / 10);
       if (need > bestNeed) {
         bestNeed = need;
         bestT = t;
@@ -622,7 +647,7 @@ function choosePlacement(c: Ctx, remaining: number, placedSoFar: number, kind: '
     let bestT: TerritoryId | null = null;
     let bestA = -1;
     for (const t of borders) {
-      if (!ADJACENCY[t].some((n) => s.territories[n].owner === c.prey)) continue;
+      if (!c.adj[t].some((n) => s.territories[n].owner === c.prey)) continue;
       if (s.territories[t].armies > bestA) {
         bestA = s.territories[t].armies;
         bestT = t;
@@ -688,9 +713,9 @@ function wantsOptionalTrade(c: Ctx, ph: Extract<Phase, { kind: 'reinforce' }>): 
       if (hand.length >= 4 || value >= 10) return true;
       // Cash in when a held continent is in danger or an elimination is on the table.
       let deficit = 0;
-      for (const t of TERRITORY_IDS) {
+      for (const t of c.ids) {
         if (!mine(c, t)) continue;
-        const cont = TERRITORIES[t].continent;
+        const cont = c.tinfo[t].continent;
         if (c.owner[cont] !== c.me) continue;
         deficit += Math.max(0, maxThreat(c, t) - s.territories[t].armies);
       }
@@ -717,7 +742,7 @@ interface AttackPlan {
 function reserveFor(c: Ctx, from: TerritoryId, to: TerritoryId): number {
   if (!c.p.keepReserve) return 1;
   const a = c.s.territories[from].armies;
-  const cont = TERRITORIES[from].continent;
+  const cont = c.tinfo[from].continent;
   if (c.owner[cont] !== c.me) return 1;
   const other = maxThreat(c, from, to);
   if (other === 0) return 1;
@@ -729,7 +754,7 @@ function bestAttack(c: Ctx): AttackPlan | null {
   const thr = threshold(c, c.p.attackThreshold);
   const cardThr = threshold(c, c.p.cardGrabThreshold);
   let best: AttackPlan | null = null;
-  for (const from of TERRITORY_IDS) {
+  for (const from of c.ids) {
     const fs = s.territories[from];
     if (fs.owner !== c.me || fs.armies < 2) continue;
     for (const to of enemyNeighbors(c, from)) {
@@ -766,7 +791,7 @@ function bestAttack(c: Ctx): AttackPlan | null {
       if (c.p.overextendCare > 0) {
         const left = Number.isFinite(odds.expectedAttackersLeftIfWin) ? odds.expectedAttackersLeftIfWin + stopAt - 1 : 1;
         const exposure = maxThreat(c, to) - left * 0.7;
-        const strategic = c.mineIn[TERRITORIES[to].continent] === CONTINENTS[TERRITORIES[to].continent].territories.length - 1;
+        const strategic = c.mineIn[c.tinfo[to].continent] === c.conts[c.tinfo[to].continent].territories.length - 1;
         if (exposure > 0 && !strategic) score -= c.p.overextendCare * Math.min(2.5, exposure / 6);
       }
       score = noisy(c, score);
@@ -821,9 +846,9 @@ function chooseOccupy(c: Ctx, ph: Extract<Phase, { kind: 'occupy' }>): Action {
 function importance(c: Ctx, t: TerritoryId): number {
   const threat = maxThreat(c, t);
   if (threat === 0 && enemyNeighbors(c, t).length === 0) return 0;
-  const cont = TERRITORIES[t].continent;
+  const cont = c.tinfo[t].continent;
   let v = threat + stagingScore(c, t, 0) * 2;
-  if (c.owner[cont] === c.me) v += CONTINENTS[cont].bonus * 1.5;
+  if (c.owner[cont] === c.me) v += c.conts[cont].bonus * 1.5;
   return v;
 }
 
@@ -831,7 +856,7 @@ function chooseFortify(c: Ctx): Action | null {
   const s = c.s;
   if (c.p.fortifyChance < 1 && random(c.rng) > c.p.fortifyChance) return null;
   let best: { from: TerritoryId; to: TerritoryId; count: number; score: number } | null = null;
-  for (const from of TERRITORY_IDS) {
+  for (const from of c.ids) {
     const fs = s.territories[from];
     if (fs.owner !== c.me || fs.armies < 2) continue;
     const interior = enemyNeighbors(c, from).length === 0;
