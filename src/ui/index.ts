@@ -2,7 +2,7 @@
 //
 // In game the only chrome is ink on the paper (docs/INK.md B5): the seat rings + the ensō menu at the
 // top; at the bottom the one line, the gold rule with the game's ensō, and the Turn Track pill with the
-// action pills; during a fight, the dice tray's header words. The breath line, the cards sheet and the
+// action pills; during a fight, its words in the one line (the ring carries dice only). The breath line, the cards sheet and the
 // menu sheets come and go.
 // v5.1 (QUIETER §3, "decide, don't ask"): no hand-off cover and no cup. Whose turn is the turn line, the
 // current seat's filled ring and its name in pigment. A tap on a ring that can be asked for peace offers
@@ -25,7 +25,6 @@ import type { ViewportInsets } from '../render/BoardView';
 import { h, hashSeed, motion, setAttr, toggle } from './dom';
 import { boardTrayGeometry as trayGeometry, inkTrayTop } from '../shared/tray';
 import { Announcements } from './hud/announce';
-import { BattleHeader } from './hud/battle';
 import { CardsSheet } from './hud/cards';
 import { BottomStrip } from './hud/strip';
 import { TopStrip } from './hud/topstrip';
@@ -108,27 +107,30 @@ export const mountUi: MountUi = (host, api) => {
   const hud = h('div', 'hud');
   const top = new TopStrip(send);
   const strip = new BottomStrip(send);
-  const battle = new BattleHeader();
   const announce = new Announcements();
   const cards = new CardsSheet(send);
   // Always-laid-out twin of the tray band, so the insets are right while the header is hidden.
   const bandProbe = h('div', 'band-probe');
   bandProbe.setAttribute('aria-hidden', 'true');
-  // Phones only (docs/MOBILE.md): the one-time rotate hint and the long-press name card.
+  // Phones only (docs/MOBILE.md): the one-time rotate hint. Every device: the territory note (fight text,
+  // 2026-10-05): the left margin on desktop, the line slot on touch. The fight itself writes in the one line
+  // (strip.ts): nothing rides on the dice ring.
   const rotate = new RotatePill();
   const nameCard = new NameCard();
-  hud.append(top.el, battle.el, strip.el, cards.scrim, cards.el, bandProbe, nameCard.el);
+  hud.append(top.el, strip.el, cards.scrim, cards.el, bandProbe);
   // The breath line and the rotate hint sit on the paper exactly where the strip's line does.
-  strip.el.querySelector('.st-say')!.append(announce.el, rotate.el);
+  const sayEl = strip.el.querySelector<HTMLElement>('.st-say')!;
+  sayEl.append(announce.el, rotate.el);
+  nameCard.home(hud, sayEl);
   // One line in the slot, ever (INK B4: one thing moves at a time). While a breath / epitaph line or the
   // rotate hint is on the paper, the strip's own line steps aside (it dries in 160 ms, easeInQuad); a
   // line arriving over a visible one brushes in only after that has gone and the paper has been still.
-  const say = { announce: false, hint: false };
+  const say = { announce: false, hint: false, note: false };
   // Phone landscape floats the breath line above the dock instead (mobile.css), so nothing to clear.
   const sayInSlot = () => !(layout.form === 'phone' && !layout.portrait);
   const syncSay = () => {
-    toggle(root, 'has-say', say.announce || say.hint);
-    strip.setLineAside((say.announce || say.hint) && sayInSlot());
+    toggle(root, 'has-say', say.announce || say.hint || say.note);
+    strip.setLineAside((say.announce || say.hint || say.note) && sayInSlot());
   };
   const slotShowing = () => sayInSlot() && (!root.classList.contains('has-say') || rotate.busy);
   announce.onShow = (on) => {
@@ -139,6 +141,10 @@ export const mountUi: MountUi = (host, api) => {
   };
   rotate.onShow = (on) => {
     say.hint = on;
+    syncSay();
+  };
+  nameCard.onShow = (on) => {
+    say.note = on;
     syncSay();
   };
   // The hint only speaks into a quiet moment of a human's own turn: never over a turn line, a fight,
@@ -403,7 +409,7 @@ export const mountUi: MountUi = (host, api) => {
     toggle(root, 'in-game', next.screen === 'game');
     // After the turn line (never over it); panning / zooming answers it too.
     rotate.update(hintQuiet(next), layout.form === 'phone' && layout.portrait);
-    nameCard.update(next.screen === 'game' ? next.game?.nameCard : null);
+    nameCard.update(next.screen === 'game' ? next.game?.nameCard : null, !!next.game?.battle || next.screen !== 'game');
     toggle(lost, 'hidden', !next.boardLost);
 
     if (next.screen === 'title' || next.overlay || prev?.screen === 'title') title.update(next);
@@ -434,7 +440,6 @@ export const mountUi: MountUi = (host, api) => {
       strip.setHolding(g.holding);
       // Ambient motion yields to the strike (INK A1): the rule's glint and breath rest while dice roll.
       toggle(root, 'is-striking', !!g.battle?.rolling);
-      battle.update(g.battle);
       announce.update(g.banner);
       syncSay();
       cards.update(g.cards);
@@ -448,7 +453,6 @@ export const mountUi: MountUi = (host, api) => {
       }
     } else if (!g && prev?.game) {
       strip.setHolding(null);
-      battle.update(null);
       announce.update(null);
       cards.update(null);
       confirm.update(null);

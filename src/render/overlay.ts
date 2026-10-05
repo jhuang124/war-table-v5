@@ -38,6 +38,8 @@ const CSS = `
 .rb-label.focus{font-size:calc(15px * var(--lab));color:#f7f2e8;z-index:3}
 .rb-label.on{opacity:1}
 .rb-label.one{white-space:nowrap}
+.rb-label.on.dry{opacity:.2;transition:opacity 200ms ease-out}
+.dry-now .rb-label{transition:none}
 .rb-cut{position:absolute;inset:0;background:#0b1224;opacity:0}
 `;
 
@@ -98,6 +100,9 @@ interface Label {
   h: number;
   /** Currently on screen. */
   on: boolean;
+  /** [fight text] where it was placed (container px), and whether it is drying under the dice ring. */
+  box?: [number, number, number, number] | null;
+  dry?: boolean;
   focus: boolean;
 }
 
@@ -690,6 +695,7 @@ export class Overlay {
       this.labelsDirty = true;
     }
     this.updateLabels(moved, r);
+    this.applyDry();
     // The "+N" preview beside a ring (placing) moves to the ring's left when a neighbour's count sits on its
     // right ("12 +7" beside a "1" reads as "+71").
     for (const b of this.badgeList) {
@@ -961,6 +967,7 @@ export class Overlay {
       // that line (or on the tray) stay hidden rather than print over it.
       if (place && this.occluder.on && this.overTray(place[0] - (lw * k) / 2, place[1] + 2, place[0] + (lw * k) / 2, place[1] + lh * k, this.headerBand)) place = null;
       const on = !!place;
+      l.box = place ? [place[0] - (lw * k) / 2, place[1], place[0] + (lw * k) / 2, place[1] + lh * k] : null;
       if (place) {
         boxes.push(place[0] - (lw * k) / 2, place[1], place[0] + (lw * k) / 2, place[1] + lh * k);
         const tr = `translate3d(${snap(place[0] - (lw * k) / 2, r)}px,${snap(place[1], r)}px,0)${small ? ' scale(0.8)' : ''}`;
@@ -975,6 +982,30 @@ export class Overlay {
         if (!on) l.el.style.visibility = 'hidden';
       }
     }
+  }
+
+  // [fight text] the board's own names under the dice ring's halo dry to 0.2 (200 ms) while it is up, and come
+  // back as it goes: words live on the rule, pieces on the board.
+  private dryRing: [number, number, number, number] | null = null;
+  /** The ring's box (container px) while it is up, else null; `instant` = no fade (reduced motion, instant speed). */
+  dryUnder(ring: [number, number, number, number] | null, instant = false): void {
+    this.root.classList.toggle('dry-now', instant);
+    this.dryRing = ring;
+  }
+  private applyDry(): void {
+    const r = this.dryRing;
+    for (const l of this.labels) {
+      const b = l.box;
+      const d = !!r && !!b && l.on && b[0] < r[2] && b[2] > r[0] && b[1] < r[3] && b[3] > r[1];
+      if (d !== !!l.dry) {
+        l.dry = d;
+        l.el.classList.toggle('dry', d);
+      }
+    }
+  }
+  /** Test hook: the names drying under the ring now. */
+  get dryLabels(): TerritoryId[] {
+    return this.labels.filter((l) => l.dry).map((l) => l.id);
   }
 
   /** A piece's screen box (figure top → stone or numeral bottom), its numeral, and its stone + figure alone; container px; null if hidden. */

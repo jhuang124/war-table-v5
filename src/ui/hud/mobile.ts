@@ -1,21 +1,23 @@
 // Phone-only HUD pieces (docs/MOBILE.md §1, §3):
 //   RotatePill — the one-time `Rotate for the full map` line on a portrait phone, in the dock's line
 //                slot; it dries after 4 s, at the first touch, or on rotating; never shown again.
-//   NameCard   — the long-press lines above the finger: territory, continent + bonus, owner, armies,
-//                serif words on the paper with a soft deepening behind them (no box, INK2 §3.3).
-//                Driven by the board's long-press callback through GameVM.nameCard; releasing hides it.
-//                v4 §7.3 (desktop, a click on any territory): the same lines with the name large, brushed
-//                in beside the pointer, held one second, then drying out on their own.
-//                v5 F5 (a long-press on a stone, 'stoneHistory'): the stone's history line is the second row.
+//   NameCard   — the territory's facts as a margin note (fight text, John 2026-10-05: "the name card
+//                becomes a margin note, for good"): name, its stone's history ('Siberia · 4 · held since
+//                the deal'), continent + bonus, owner, armies. It writes in ONE fixed place, never beside the
+//                pointer: desktop = the left margin under the seat strip (hover / select); touch = the dock's
+//                line slot above the rule, two lines at most (long-press; release dries it). Serif words
+//                on the paper, no box, no background; it writes and dries like the one line. Driven by
+//                GameVM.nameCard (the controller never sends one while a fight is armed or its ring is up).
 
 import type { NameCardVM } from '../../game/viewModel';
 import { PLAYER_COLORS } from '../../shared/palette';
-import { animateIn, animateOut, drawIn, EASE_IN_QUAD, emblem, h, minus, motion, setStyle, setText, toggle } from '../dom';
-import { layout } from '../layout';
+import { drawIn, EASE_IN_QUAD, emblem, h, minus, motion, setStyle, setText, toggle } from '../dom';
+import { layout, onLayout } from '../layout';
 
-/** Desktop: the name card holds this long after a click, then dries (v4 §7.3: "one second"). */
-const DESK_HOLD_MS = 1000;
+/** Desktop: the note holds this long after the pointer leaves the land (crossing a strait never blinks it). */
+const DESK_HOLD_MS = 700;
 const DESK_DRY_MS = 360;
+const SLOT_DRY_MS = 120;
 
 const ROTATE_KEY = 'risk3d.rotateHint.v1';
 
@@ -128,13 +130,18 @@ export class NameCard {
   private ownerName: HTMLSpanElement;
   private emb: HTMLSpanElement;
   private armies: HTMLSpanElement;
+  /** The note on the paper (its key), or -1 when none / drying. */
   private key = -1;
-  private deskT = 0;
-  private deskUntil = 0;
+  private holdT = 0;
+  private out: Animation | null = null;
+  /** Touch: the note writes in the dock's line slot; desktop: the left margin. */
+  private slot = false;
+  /** Touch: the note owns the line slot (true at once) / gave it back (false once dried). */
+  onShow: ((on: boolean) => void) | null = null;
 
   constructor() {
     this.el = h('div', 'name-card hidden');
-    this.el.setAttribute('role', 'tooltip');
+    this.el.setAttribute('role', 'note');
     this.title = h('div', 'nc-title');
     this.hist = h('div', 'nc-hist num hidden');
     this.hist.dataset.testid = 'name-card-history';
@@ -143,95 +150,93 @@ export class NameCard {
     this.emb = h('span', 'nc-emb');
     this.ownerName = h('span', 'nc-name');
     this.armies = h('span', 'nc-armies num');
-    this.owner.append(this.emb, this.ownerName, this.armies);
-    this.el.append(this.title, this.hist, this.cont, this.owner, h('i', 'nc-nub'));
+    this.owner.append(this.emb, this.ownerName, ' ', this.armies);
+    this.el.append(this.title, this.hist, this.cont, this.owner);
   }
 
-  /** Desktop: the card dries out by itself after its second (the controller's clear never cuts it short). */
-  private dryDesk(): void {
-    window.clearTimeout(this.deskT);
-    this.deskUntil = 0;
+  /** Where the note writes: the HUD's left margin (desktop) or the dock's line slot (touch); follows the layout. */
+  home(margin: HTMLElement, slot: HTMLElement): void {
+    const go = () => {
+      const inSlot = layout.touch;
+      if (inSlot !== this.slot && this.key !== -1) this.dry(true);
+      this.slot = inSlot;
+      const parent = inSlot ? slot : margin;
+      if (this.el.parentElement !== parent) parent.append(this.el);
+      toggle(this.el, 'in-slot', inSlot);
+      toggle(this.el, 'in-margin', !inSlot);
+      // The stone's history is the second row in the margin, the second line in the slot (after the facts).
+      if (inSlot) this.el.append(this.hist);
+      else this.el.insertBefore(this.hist, this.cont);
+    };
+    go();
+    onLayout(go);
+  }
+
+  /** Something (the note, or the note drying) is in the line slot (touch). */
+  get busy(): boolean {
+    return this.slot && (this.key !== -1 || this.out?.playState === 'running');
+  }
+
+  /** It dries (the line's easeInQuad); `now` = gone at once (a fight arming, a layout change). */
+  private dry(now = false): void {
+    window.clearTimeout(this.holdT);
+    this.holdT = 0;
     if (this.key === -1) return;
     this.key = -1;
     delete this.el.dataset.testid;
-    if (motion.reduced) return void this.el.classList.add('hidden');
-    const a = this.el.animate([{ opacity: 1 }, { opacity: 0 }], { duration: DESK_DRY_MS, easing: EASE_IN_QUAD, fill: 'forwards' });
+    const done = () => {
+      if (this.key !== -1) return;
+      this.el.classList.add('hidden');
+      if (this.slot) this.onShow?.(false);
+    };
+    this.out?.cancel();
+    this.out = null;
+    if (now || motion.reduced || typeof this.el.animate !== 'function') return done();
+    const a = (this.out = this.el.animate([{ opacity: 1 }, { opacity: 0 }], { duration: this.slot ? SLOT_DRY_MS : DESK_DRY_MS, easing: EASE_IN_QUAD, fill: 'forwards' }));
     a.onfinish = () => {
-      if (this.key === -1) this.el.classList.add('hidden');
+      if (this.out === a) this.out = null;
       a.cancel();
+      done();
     };
   }
 
-  update(vm: NameCardVM | null | undefined): void {
-    const desk = !layout.touch;
-    toggle(this.el, 'desk', desk);
-    if (desk && !vm && performance.now() < this.deskUntil) return;
+  /** `now`: put it away at once (a fight is on: the note never shares the screen with it). */
+  update(vm: NameCardVM | null | undefined, now = false): void {
     if (!vm) {
-      if (desk) return this.dryDesk();
-      if (this.key !== -1) {
-        this.key = -1;
-        delete this.el.dataset.testid;
-        animateOut(this.el, { dy: 4, ms: 110, remove: false }, () => {
-          if (this.key === -1) this.el.classList.add('hidden');
-        });
-      }
+      if (this.key === -1) return;
+      if (now || this.slot) return this.dry(now);
+      // Desktop: the pointer left the land; the note holds a moment, then dries.
+      if (!this.holdT) this.holdT = window.setTimeout(() => this.dry(), motion.reduced ? 0 : DESK_HOLD_MS);
       return;
     }
+    window.clearTimeout(this.holdT);
+    this.holdT = 0;
+    const wasOn = this.key !== -1;
     const fresh = vm.key !== this.key;
     this.key = vm.key;
+    if (this.out) {
+      this.out.cancel();
+      this.out = null;
+    }
     this.el.dataset.testid = 'name-card';
     setText(this.title, vm.territory);
     const hist = vm.history ? minus(vm.history) : '';
     toggle(this.hist, 'hidden', !hist);
-    if (hist !== this.hist.textContent) {
-      setText(this.hist, hist);
-      if (hist && !fresh) drawIn(this.hist, 300);
-    }
-    setText(this.cont, `${vm.continent} · +${vm.bonus}`);
+    if (hist !== this.hist.textContent) setText(this.hist, hist);
+    setText(this.cont, `${vm.continent} +${vm.bonus}`);
     this.emb.textContent = '';
     if (vm.owner) this.emb.append(emblem(vm.owner.color));
     setText(this.ownerName, vm.owner ? vm.owner.name : 'Unclaimed');
     setText(this.armies, vm.armies === 1 ? '1 army' : `${vm.armies} armies`);
-    setStyle(this.el, '--seat', vm.owner ? PLAYER_COLORS[vm.owner.color].base : 'var(--brass)');
+    setStyle(this.el, '--seat', vm.owner ? PLAYER_COLORS[vm.owner.color].light : 'var(--ivory-78)');
+    const hidden = this.el.classList.contains('hidden');
     this.el.classList.remove('hidden');
-    // Above the finger (a thumb covers ~40 px), clamped inside the safe screen; flips below near the top.
-    const r = this.el.getBoundingClientRect();
-    const W = window.innerWidth;
-    const w = r.width || 200;
-    const hgt = r.height || 90;
-    // Above the finger; below it near the top pills; beside it when neither fits (a short landscape
-    // screen), so it never covers the top pills or the dock.
-    const H = window.innerHeight;
-    const top = document.querySelector('.topstrip')?.getBoundingClientRect().bottom ?? 0;
-    const dockEl = document.querySelector('.strip');
-    const dockTop = dockEl && (dockEl as HTMLElement).offsetParent !== null ? dockEl.getBoundingClientRect().top : H;
-    const minY = Math.max(12, top + 6);
-    const maxY = dockTop - 6;
-    let mode: 'above' | 'below' | 'side' = 'above';
-    if (vm.y - 56 - hgt < minY) mode = vm.y + 48 + hgt <= maxY ? 'below' : 'side';
-    let left: number;
-    let y: number;
-    if (mode === 'side') {
-      const right = vm.x + 40 + w <= W - 10;
-      left = right ? vm.x + 40 : vm.x - 40 - w;
-      y = Math.max(minY, Math.min(maxY - hgt, vm.y - hgt / 2));
-    } else {
-      left = Math.max(10, Math.min(W - 10 - w, vm.x - w / 2));
-      y = mode === 'below' ? vm.y + 48 : vm.y - 56 - hgt;
-    }
-    toggle(this.el, 'below', mode === 'below');
-    toggle(this.el, 'side', mode === 'side');
-    this.el.style.left = `${Math.round(left)}px`;
-    this.el.style.top = `${Math.round(y)}px`;
-    setStyle(this.el, '--nub-x', `${Math.round(vm.x - left)}px`);
-    const below = mode === 'below';
-    if (fresh && desk) {
-      // Brushed in large, held one second, then dried out.
-      this.el.getAnimations().forEach((a) => a.cancel());
-      drawIn(this.title, 260);
-      window.clearTimeout(this.deskT);
-      this.deskUntil = performance.now() + DESK_HOLD_MS;
-      this.deskT = window.setTimeout(() => this.dryDesk(), DESK_HOLD_MS);
-    } else if (fresh) animateIn(this.el, { dy: below ? -6 : 6, ms: 150, scale: 0.96 });
+    if (!this.slot) {
+      // The left margin, under the seat strip (≈ 90 px at 1440 × 900; lower if the seat strip is taller).
+      const top = document.querySelector('.topstrip')?.getBoundingClientRect().bottom ?? 0;
+      this.el.style.top = `${Math.round(Math.max(90, top + 24))}px`;
+    } else if (!wasOn) this.onShow?.(true);
+    // It writes in when it arrives on bare paper; moving from one territory to the next rewrites in place.
+    if (fresh && (!wasOn || hidden) && !motion.reduced) drawIn(this.el, 220, this.slot ? 120 : 0);
   }
 }

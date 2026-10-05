@@ -57,7 +57,7 @@ import * as engineNs from '../engine';
 import { DEFAULT_MAP_ID, activeMapId, isKnownMap, listMaps } from '../map/registry';
 import type { AudioEngine, PlayOptions, SfxName, V4Cue, V5Cue } from '../audio/types';
 import type { BoardHighlights, BoardView, PlayEventOptions, TerritoryPointerInfo, ViewportInsets } from '../render/BoardView';
-import { attackLine, buildStrip, buildTrack, emptySel, placeLeft, placeValue, selectionTargets, stagedTotal, tookLine, trackLockReason, type Placement, type Sel } from './strip';
+import { attackLine, attackOdds, buildStrip, buildTrack, emptySel, placeLeft, placeValue, selectionTargets, stagedTotal, tookLine, trackLockReason, type Placement, type Sel } from './strip';
 import {
   buildReplay,
   emptyStory,
@@ -649,8 +649,13 @@ class Controller {
   private menuKeys: boolean;
   private touch: boolean;
   private haptics: Haptics;
-  /** The long-press name card (touch), or null. */
+  /**
+   * The territory's facts (fight text, 2026-10-05: a margin note on desktop, the line slot on phones): hover /
+   * select on desktop, long-press on touch; never while a fight is armed or its ring is up. null = none.
+   */
   private nameCard: NameCardVM | null = null;
+  /** [fight text] the fight's counts as each pair's verdict lands (BoardView.onFightCount), while it rolls. */
+  private fightCount: { from: TerritoryId; to: TerritoryId; a: number; d: number } | null = null;
   /** The board's WebGL context is lost and rebuilding. */
   private boardLost = false;
   /** The board's dice tray is showing (onTrayChange). */
@@ -862,9 +867,20 @@ class Controller {
       if (!visible) this.clearLinger();
       this.invalidate();
     });
+    // [fight text] the line's counts tick down with each pair's verdict, as the header's did.
+    this.board.onFightCount?.((c) => {
+      if (!this.rolling) return;
+      this.fightCount = { from: c.from, to: c.to, a: c.attackerArmies, d: c.defenderArmies };
+      this.invalidate();
+    });
     // Only to tell an ocean click from a click on land (the board names hovered tiles itself).
     this.board.onTerritoryHover((info) => {
       this.overTile = info?.territory ?? null;
+      // [fight text] desktop: the hovered territory's facts write in the left margin (never during a fight).
+      if (!this.touch && this.screen === 'game' && !this.strokeLive) {
+        if (info) this.showNameCard(info);
+        else this.hideNameCard();
+      }
       // v5 E8: the hover odds line follows the pointer (desktop); only a change the line cares about redraws.
       const t = info?.territory ?? null;
       if (t === this.hoverTile) return;
@@ -1464,7 +1480,10 @@ class Controller {
           });
         } else {
           this.blockingNow = e;
-          if (e.ev.type === 'diceRolled') this.rolling = true;
+          if (e.ev.type === 'diceRolled') {
+            this.rolling = true;
+            this.fightCount = null;
+          }
           this.invalidate();
           let p: Promise<void>;
           try {
@@ -2606,12 +2625,26 @@ class Controller {
     this.haptics.play('select');
   }
 
-  /** The name card for `info`'s territory at the pointer (touch long-press; v4 desktop click). */
+  /**
+   * [fight text] A fight is armed, rolling or its ring is still up: the board already names the pair and the
+   * one line carries the fight, so the territory note stays away until the ring dries.
+   */
+  private fightUp(): boolean {
+    if (this.trayUp || this.fightPlaying()) return true;
+    const d = this.disp;
+    const s = this.state;
+    if (!d || !s) return false;
+    return !!this.buildBattle(d, this.viewSel(), this.interactive() && d.currentPlayer === s.currentPlayer);
+  }
+
+  /** The territory note for `info`'s territory (touch long-press; desktop hover / select). */
   private showNameCard(info: TerritoryPointerInfo): boolean {
     const d = this.disp;
     const t = info.territory;
     const tile = d?.territories[t];
-    if (!d || !tile) return false;
+    if (!d || !tile || this.overlay || this.confirm || this.fightUp()) return false;
+    // The same territory (a hover, then its click) keeps its note: only a new territory or a new press rewrites it.
+    const same = !this.touch && this.nameCard?.territory === tName(t);
     const c = mapDefOf(d.config).territories[t].continent;
     const owner = tile.owner >= 0 && d.players[tile.owner] ? seatRef(d, tile.owner) : null;
     this.nameCard = {
@@ -2622,7 +2655,7 @@ class Controller {
       armies: tile.armies,
       x: info.clientX,
       y: info.clientY,
-      key: ++this.nameCardKey,
+      key: same ? this.nameCard!.key : ++this.nameCardKey,
       history: this.meta ? stoneHistory(this.story(), d, t) : null,
     };
     this.invalidate();
@@ -2637,7 +2670,8 @@ class Controller {
 
   private onBoardClick(info: TerritoryPointerInfo): void {
     this.boardClicks++;
-    this.hideNameCard();
+    // (desktop: the hovered territory's note stays; a click that arms a fight puts it away in buildGame)
+    if (this.touch) this.hideNameCard();
     this.markActive();
     // v5 C1: any tap during the replay ends it (the recap shows).
     if (this.replay) {
@@ -4241,11 +4275,22 @@ class Controller {
     const banner = this.banner?.vm.kind === 'elimination' ? this.banner.vm : (this.turnBanner ?? this.banner?.vm ?? null);
     const strip = this.buildStripVM(d, sel, interactive);
     const cards = this.buildCards(d, interactive);
+    const battle = this.buildBattle(d, sel, interactive);
+    // [fight text] words live on the rule, pieces on the board: the fight folds into the one line (never over a
+    // refused click's reason), and the territory note gives way until the ring dries.
+    if (battle) {
+      if (strip.lineKind !== 'rejection') {
+        const pair = this.battlePair;
+        const odds = !battle.rolling && !battle.captured && !this.fightPlaying() && pair ? attackOdds(d, pair.from, pair.to, this.settings.showWinChance) : '';
+        strip.fight = { attacker: battle.attacker, defender: battle.defender, odds, captured: battle.captured };
+      }
+      this.nameCard = null;
+    }
     return {
       seats: this.buildSeats(d),
       strip,
       gold: this.buildGold(d, strip, cards),
-      battle: this.buildBattle(d, sel, interactive),
+      battle,
       cards,
       log: this.meta.log,
       round: d.round,
@@ -4457,6 +4502,9 @@ class Controller {
     return out;
   }
 
+  /** The pair the last buildBattle settled on (null = no fight). */
+  private battlePair: { from: TerritoryId; to: TerritoryId } | null = null;
+
   private buildBattle(d: GameState, sel: Sel, interactive: boolean): BattleVM | null {
     const g = this.eng;
     const now = this.now();
@@ -4489,6 +4537,7 @@ class Controller {
       pair = g;
       useEng = true;
     }
+    this.battlePair = pair;
     if (!pair) return null;
     const { from, to } = pair;
     const attacker = useEng && g ? g.attacker : d.territories[from].owner;
@@ -4497,8 +4546,14 @@ class Controller {
     // A decided engagement renders from its own record (the armies when the verdict landed), never from
     // the board after the occupy march has moved troops or the tile has changed hands.
     const decided = useEng && !!g && (!!g.endedAt || g.conquered);
-    const a = decided ? g!.startA - g!.attLost : d.territories[from].armies;
-    const def = decided ? Math.max(0, g!.startD - g!.defLost) : d.territories[to].owner === defender ? d.territories[to].armies : 0;
+    let a = decided ? g!.startA - g!.attLost : d.territories[from].armies;
+    let def = decided ? Math.max(0, g!.startD - g!.defLost) : d.territories[to].owner === defender ? d.territories[to].armies : 0;
+    // [fight text] mid-roll, the counts follow each pair's verdict on the board (never ahead of it).
+    const fc = this.fightCount;
+    if (!decided && this.rolling && useEng && fc && fc.from === from && fc.to === to) {
+      a = Math.min(a, fc.a);
+      def = Math.min(def, fc.d);
+    }
     return {
       attacker: { seat: seatRef(d, attacker), territory: tName(from), armies: a },
       defender: { seat: seatRef(d, defender), territory: tName(to), armies: def },

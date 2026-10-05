@@ -337,6 +337,15 @@ export interface StripVM {
    * lineKind stays 'narration'. null / absent = an ordinary line.
    */
   voice?: SeatRef | null;
+  /**
+   * Additive (fight text, 2026-10-05): while a fight is armed or rolling (GameVM.battle present, until the ring
+   * dries), the fight's words live in the one line instead of floating on the dice ring: 'Lusitania 5 →
+   * Tarraconensis 3 · 64% · likely', each name in its seat pigment; the counts tick down per pair while it rolls;
+   * on a conquest it reads `captured` ('Tarraconensis captured') for its last second. `odds` is '' while rolling
+   * (and when there is nothing to say). `line` stays the controller's plain sentence for readers and tests.
+   * null / absent = no fight: the HUD writes `line`.
+   */
+  fight?: { attacker: BattleSideVM; defender: BattleSideVM; odds: string; captured: string | null } | null;
 }
 
 export interface BattleSideVM {

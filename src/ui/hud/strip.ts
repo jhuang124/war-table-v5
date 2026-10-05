@@ -28,6 +28,7 @@ import { layout, onLayout } from '../layout';
 import { PLAYER_COLORS } from '../../shared/palette';
 import { ActionButton, uiButton } from '../controls';
 import { brushMark } from '../../shared/enso';
+import { FightWords } from './fight';
 import { countUp, drawIn, EASE_BRUSH, EASE_IN_QUAD, ensoEl, h, hashSeed, minus, motion, pop, ringEl, setAttr, setEnso, setStyle, setText, svg, toggle, underlineEl } from '../dom';
 
 /** A count's identity while it is on screen (its control and range): a new occupy closes it again. */
@@ -752,6 +753,9 @@ export class BottomStrip {
   readonly el: HTMLElement;
   private track: Track;
   private line = new Line();
+  /** [fight text] the fight's words, in the line's slot while a fight is armed or rolling. */
+  private fight = new FightWords();
+  private asideExt = false;
   private say: HTMLDivElement;
   private rule = new GoldRule();
   private count: HTMLDivElement;
@@ -826,7 +830,12 @@ export class BottomStrip {
     this.events.append(this.round, this.latest);
     // 'Update ready · reload' sits where the stack used to: centred above the line, words only.
     this.update$ = h('div', 'st-update hidden');
-    this.say.append(this.events, this.update$, this.line.el);
+    this.say.append(this.events, this.update$, this.line.el, this.fight.el);
+    // The fight owns the slot: the strip's sentence dries and waits (unseen changes land silently after).
+    this.fight.onSlot = (on) => {
+      toggle(this.say, 'has-fight', on);
+      this.line.setAside(this.asideExt || on);
+    };
     this.el.append(this.say, this.rule.el, this.seat.el, this.track.el, zone);
     this.say.append(this.breakdown.el);
     this.rule.onTap = () => send({ type: 'tapEnso' });
@@ -938,6 +947,7 @@ export class BottomStrip {
 
   private askKey = 0;
   private paintLine(vm: StripVM): void {
+    this.fight.update(vm.fight ?? null);
     if (this.ask) {
       toggle(this.line.el, 'is-voice', false);
       this.line.update(`Ask ${this.ask.name} for peace`, 'normal', -1000 - this.askKey, null);
@@ -974,7 +984,8 @@ export class BottomStrip {
 
   /** Another line owns the slot (a breath line, the rotate hint): the strip's line steps aside. */
   setLineAside(on: boolean): void {
-    this.line.setAside(on);
+    this.asideExt = on;
+    this.line.setAside(on || this.fight.busy);
   }
 
   update(vm: StripVM, gold?: GoldVM): void {

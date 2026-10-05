@@ -267,6 +267,16 @@ export function attackLine(s: GameState, from: TerritoryId, to: TerritoryId, sho
   return tries.find((x) => x.length <= ATTACK_LINE_MAX) ?? head;
 }
 
+/**
+ * The armed line's tail after 'From → To' ('64% · likely', or with the stake), for the fight in the line
+ * (StripVM.fight), where the names carry their counts. '' when the line is the two names alone.
+ */
+export function attackOdds(s: GameState, from: TerritoryId, to: TerritoryId, showWinChance: boolean): string {
+  const head = `${tName(from, s)} → ${tName(to, s)}`;
+  const line = attackLine(s, from, to, showWinChance);
+  return line.startsWith(head + SEP) ? line.slice(head.length + SEP.length) : '';
+}
+
 /** 'You took Brazil', and when the engine moved the armies in itself, '· 3 armies move in'. */
 export function tookLine(t: TerritoryId, moved: number | null): string {
   return moved ? `You took ${tName(t)}${SEP}${movesIn(moved)}` : `You took ${tName(t)}`;

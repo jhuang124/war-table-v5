@@ -254,6 +254,58 @@ export const createBoardView: CreateBoardView = async (opts: BoardViewOptions): 
     tray.hide(ms);
     emitTray(false);
   };
+  // [fight text, 2026-10-05] words live on the rule, pieces on the board: while the ring is up, the board's own
+  // territory names (the overlay) and continent labels whose boxes meet the ring's box dry to 0.2 over 200 ms,
+  // and come back as it goes. Reduced motion / instant speed: at once. (The continent labels are meshes: their
+  // opacity is scaled only while they draw, so the continents' own tweens are untouched.)
+  const DRY_A = 0.2;
+  let dryAt = 0;
+  const dryV = new THREE.Vector3();
+  const contBox = (m: THREE.Mesh): [number, number, number, number] | null => {
+    const g = m.geometry as THREE.PlaneGeometry | undefined;
+    if (!g?.parameters || !m.visible) return null;
+    const hw = (g.parameters.width / 2) * 0.9 * m.scale.x;
+    const hd = (g.parameters.height / 2) * 0.8 * m.scale.y;
+    const b: [number, number, number, number] = [Infinity, Infinity, -Infinity, -Infinity];
+    for (const [dx, dz] of [[-hw, -hd], [hw, -hd], [-hw, hd], [hw, hd]]) {
+      dryV.set(m.position.x + dx, m.position.y, m.position.z + dz).project(camera);
+      const x = (dryV.x * 0.5 + 0.5) * W;
+      const y = (-dryV.y * 0.5 + 0.5) * H;
+      b[0] = Math.min(b[0], x);
+      b[1] = Math.min(b[1], y);
+      b[2] = Math.max(b[2], x);
+      b[3] = Math.max(b[3], y);
+    }
+    return b;
+  };
+  const dryUnderRing = (ring: [number, number, number, number] | null, now: number) => {
+    const instant = reduced || anim.instant;
+    overlay.dryUnder(ring, instant);
+    const dt = dryAt ? Math.min(100, Math.max(0, now - dryAt)) : 16;
+    dryAt = now;
+    for (const o of continents.group.children) {
+      const m = o as THREE.Mesh;
+      const u = m.userData as { dry?: number; dryBase?: number };
+      const cur = u.dry ?? 1;
+      const b = ring ? contBox(m) : null;
+      const goal = b && ring && b[0] < ring[2] && b[2] > ring[0] && b[1] < ring[3] && b[3] > ring[1] ? DRY_A : 1;
+      if (goal === cur) continue;
+      if (u.dry === undefined) {
+        m.onBeforeRender = () => {
+          const mat = m.material as THREE.MeshBasicMaterial;
+          u.dryBase = mat.opacity;
+          mat.opacity *= u.dry ?? 1;
+        };
+        m.onAfterRender = () => {
+          if (u.dryBase !== undefined) (m.material as THREE.MeshBasicMaterial).opacity = u.dryBase;
+          u.dryBase = undefined;
+        };
+      }
+      const step = (dt / 200) * (1 - DRY_A);
+      u.dry = instant ? goal : cur < goal ? Math.min(goal, cur + step) : Math.max(goal, cur - step);
+      invalidate();
+    }
+  };
   /**
    * The fight recession (docs/INK2.md §2.2): while the ink ring is up, every territory but the pair recedes
    * to dim 1.3 on desktop (1.0 on phones, the armed dim only) over 180 ms; the pair stays at 0; the count
@@ -3125,6 +3177,7 @@ export const createBoardView: CreateBoardView = async (opts: BoardViewOptions): 
     } else {
       oc.hx0 = oc.hx1 = oc.hy0 = undefined;
     }
+    dryUnderRing(oc.on && oc.ring ? oc.ring : null, now);
     overlay.update(camera, rect0);
 
     renderer.info.reset();

@@ -486,27 +486,41 @@
 .count-slider:focus-visible { outline: none; }
 .count-slider:focus-visible .cs-knob { color: var(--gold); }
 
-/* The dice tray's header: serif words on the paper above the tray */
-.battle {
-  position: absolute; z-index: 7; left: 50%; transform: translateX(-50%); width: min(46rem, 80vw);
-  bottom: calc(var(--band-bottom) + var(--tray-top, 150px)); height: var(--strip, 28px); pointer-events: none;
-  display: grid; grid-template-rows: 1fr;
-}
-/* The header lives on the tray: while a fight is only armed (no tray yet) the line already says it. */
-.battle { transition: opacity 200ms ease-out; }
-.battle.no-tray { opacity: 0; }
+/* The tray band's always-laid-out twin (the insets). */
 .band-probe { position: absolute; left: 50%; width: 1px; bottom: var(--band-bottom); height: var(--tray); visibility: hidden; pointer-events: none; }
-.bt-head { position: relative; display: flex; align-items: flex-end; justify-content: center; gap: 0.9rem; min-height: 0; padding-bottom: 0.2rem; }
-.bt-head::before {
-  content: ''; position: absolute; inset: -0.4rem 18% -0.2rem; z-index: -1;
-  background: radial-gradient(closest-side, rgba(11, 18, 36, 0.15), rgba(11, 18, 36, 0));
+
+/* The fight in the one line (fight text, 2026-10-05): 'Lusitania 5 → Tarraconensis 3 · 64% · likely' in the
+   line's slot while a fight is armed or rolling; each name in its seat's light pigment, the counts ivory. The
+   dice ring carries dice only. */
+.st-fight {
+  position: absolute; left: 0; right: 0; bottom: 0; display: block; text-align: center; pointer-events: none;
+  font-size: 1.5rem; font-weight: 600; line-height: 1.2; letter-spacing: 0.005em; color: var(--ivory-90);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
-/* Legibility comes from a tight halo on the words, not a dark band across the board (INK F2). */
-.bt-head { text-shadow: 0 0 0.35em rgba(11, 18, 36, 0.85), 0 0 0.12em rgba(11, 18, 36, 0.9); }
-.bt-side { display: inline-flex; align-items: baseline; gap: 0.5rem; font-weight: 600; font-size: 1.5rem; white-space: nowrap; color: var(--seat-light); line-height: 1; }
-.bt-armies { color: var(--ivory); display: inline-block; min-width: 1ch; }
-.bt-vs { font-size: 1.125rem; color: var(--ivory-40); line-height: 1; }
-.bt-captured { font-weight: 600; font-size: 1.5rem; white-space: nowrap; color: var(--seat-light, var(--ivory)); display: inline-block; line-height: 1; }
+.st-fight.hidden, .st-fight .hidden { display: none; }
+.has-say .st-fight { opacity: 0; transition: opacity 160ms cubic-bezier(0.11, 0, 0.5, 0); }
+.bt-side { color: var(--seat-light); }
+.bt-armies { color: var(--ivory); display: inline-block; min-width: 1ch; font-variant-numeric: lining-nums tabular-nums; }
+.bt-vs { color: var(--ivory-55); font-weight: 500; }
+.bt-odds { color: var(--ivory-78); }
+.bt-captured { color: var(--seat-light, var(--ivory)); }
+
+/* The territory note (fight text, 2026-10-05: the name card becomes a margin note, for good). Desktop: the left
+   margin under the seat strip, left-aligned serif lines on the paper; no box, no background, a tight halo on the
+   words only (as the line's). Written on hover / select; dries like the one line. */
+.name-card.in-margin:not(.hidden) {
+  display: block; position: absolute; z-index: 9; left: 24px; top: 90px; max-width: 18rem; pointer-events: none;
+  text-align: left; text-shadow: 0 0 0.35em rgba(11, 18, 36, 0.85), 0 0 0.12em rgba(11, 18, 36, 0.9);
+}
+.name-card.in-margin .nc-title { font-size: 1.5rem; font-weight: 600; line-height: 1.15; color: var(--ivory-90); }
+.name-card.in-margin .nc-hist { margin-top: 0.15rem; font-size: 1.125rem; font-style: italic; line-height: 1.25; color: var(--ivory-78); }
+.name-card.in-margin .nc-cont { margin-top: 0.15rem; font-size: 0.875rem; font-weight: 600; letter-spacing: 0.04em; color: var(--ivory-55); }
+.name-card.in-margin .nc-owner { margin-top: 0.3rem; display: flex; align-items: center; gap: 0.4rem; font-size: 1.125rem; font-weight: 600; color: var(--ivory-78); }
+.name-card.in-margin .nc-name { color: var(--seat); }
+.name-card.in-margin .nc-armies { color: var(--ivory-78); white-space: nowrap; }
+.name-card.in-margin .nc-armies::before { content: '· '; color: var(--ivory-40); }
+.name-card .nc-emb .emb { width: 0.85rem; height: 0.85rem; }
+.name-card .hidden { display: none; }
 
 /* The breath / continent / epitaph line: on the paper where the strip's line sits (moved into .st-say) */
 .announce { position: absolute; z-index: 9; left: 0; right: 0; bottom: 0; display: grid; justify-items: center; align-items: end; pointer-events: none; }

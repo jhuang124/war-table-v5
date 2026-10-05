@@ -18,7 +18,7 @@
 .scrim.leaving, .scrim.leaving *, .cards-scrim.leaving, .form-phone .cards-sheet.leaving, .form-phone .cards-sheet.leaving * { pointer-events: none !important; }
 
 /* Phone-only parts, off everywhere by default. */
-.grab, .tr-short, .sw-title, .sw-name, .cards-scrim, .rotate-hint, .name-card { display: none; }
+.grab, .tr-short, .sw-title, .sw-name, .cards-scrim, .rotate-hint, .name-card.hidden { display: none; }
 
 /* ------------------------------------------------------------------------ */
 /* Touch (phones + tablets)                                                  */
@@ -35,38 +35,24 @@
   .touch .swatch:hover { opacity: 1; }
 }
 
-/* The long-press name card: serif lines on the paper above the finger, a soft radial deepening behind
-   them (as the tray header's halo); no border, no box. */
-.touch .name-card:not(.hidden) {
-  display: block; position: fixed; z-index: 40; pointer-events: none; min-width: 11rem; max-width: 16rem;
-  padding: 0.55rem 0.9rem 0.65rem; border: 0; border-radius: 0; background: transparent;
-  text-shadow: 0 0 0.35em rgba(11, 18, 36, 0.9), 0 0 0.12em rgba(11, 18, 36, 0.9);
+/* The territory note on touch (fight text, 2026-10-05): the long-press facts write in the dock's line slot
+   above the rule, two lines at most ('India · Asia +7 · John · 5 armies', then the stone's history); no box. */
+.name-card.in-slot:not(.hidden) {
+  display: block; position: absolute; z-index: 9; left: 0; right: 0; bottom: 0; pointer-events: none;
+  text-align: center; font-size: 1.125rem; line-height: 1.18; color: var(--ivory-78);
 }
-.touch .name-card:not(.hidden)::before {
-  content: ''; position: absolute; inset: -1.2rem -1.6rem; z-index: -1; pointer-events: none;
-  background: radial-gradient(closest-side, rgba(11, 18, 36, 0.86), rgba(11, 18, 36, 0.6) 55%, rgba(11, 18, 36, 0));
-}
-.nc-title { font-weight: 600; font-size: 1.5rem; color: var(--ivory); line-height: 1.1; }
-.nc-cont { margin-top: 0.1rem; font-size: 1.125rem; color: var(--ivory-55); }
-.nc-hist { margin-top: 0.15rem; font-size: 1.125rem; font-style: italic; line-height: 1.25; color: var(--ivory-78); }
-.nc-owner { display: flex; align-items: center; gap: 0.4rem; margin-top: 0.4rem; font-size: 1.125rem; font-weight: 600; color: var(--ivory-90); }
-.nc-emb .emb { width: 0.85rem; height: 0.85rem; }
-.nc-armies { margin-left: auto; padding-left: 0.9rem; color: var(--ivory); white-space: nowrap; }
-.nc-nub { display: none; }
-
-/* Desktop (v4 §7.3): a click on any territory brushes its name in large beside the pointer for one
-   second; the same lines on the paper with the same soft deepening, the name at 40 px. */
-:root:not(.touch) .name-card.desk:not(.hidden) {
-  display: block; position: fixed; z-index: 40; pointer-events: none; min-width: 12rem; max-width: 22rem;
-  padding: 0.55rem 1rem 0.65rem; border: 0; border-radius: 0; background: transparent;
-  text-shadow: 0 0 0.35em rgba(11, 18, 36, 0.9), 0 0 0.12em rgba(11, 18, 36, 0.9);
-}
-:root:not(.touch) .name-card.desk:not(.hidden)::before {
-  content: ''; position: absolute; inset: -1.2rem -1.8rem; z-index: -1; pointer-events: none;
-  background: radial-gradient(closest-side, rgba(11, 18, 36, 0.8), rgba(11, 18, 36, 0.55) 55%, rgba(11, 18, 36, 0));
-}
-.name-card.desk .nc-title { font-size: 2.5rem; font-weight: 500; line-height: 1.05; }
-.name-card.desk .nc-cont, .name-card.desk .nc-owner { font-size: 1.125rem; }
+.name-card.in-slot > div { display: inline; }
+.name-card.in-slot .nc-title { font-weight: 600; color: var(--ivory-90); }
+.name-card.in-slot .nc-cont::before, .name-card.in-slot .nc-owner::before { content: ' · '; color: var(--ivory-40); }
+.name-card.in-slot .nc-owner .nc-emb { display: none; }
+.name-card.in-slot .nc-name { font-weight: 600; color: var(--seat); }
+.name-card.in-slot .nc-armies::before { content: '· '; color: var(--ivory-40); }
+/* the stone's history: the second line */
+.name-card.in-slot .nc-hist { display: block; font-style: italic; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.name-card.in-slot .nc-hist.hidden { display: none; }
+/* Landscape phones: the slot is one row between the track and the actions: the note rises just above the dock,
+   as the breath line does. */
+.form-phone.landscape .name-card.in-slot:not(.hidden) { position: fixed; bottom: calc(var(--dock-clear, 70px) + 0.35rem); }
 
 /* Every device: the board's WebGL context was lost and is rebuilding — one serif line on the paper. */
 .board-lost {
@@ -196,20 +182,10 @@
 .form-tablet.dock-stacked .st-line { font-size: 1.125rem; }
 .form-tablet.dock-stacked .ln-text { white-space: normal; text-align: center; }
 
-/* ---- Dice tray header ---- */
-/* Only with the tray under it; each side's name gives way before its number does. */
-.form-phone .battle { width: calc(100vw - 16px); }
-.form-phone .bt-head { gap: 0.55rem; padding: 0 0.5rem 0.15rem; }
-.form-phone .bt-side { font-size: 1.125rem; gap: 0.35rem; min-width: 0; max-width: 45%; }
-.form-phone .bt-terr { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.form-phone .bt-captured { font-size: 1.125rem; }
-.form-phone .bt-vs { font-size: 1.125rem; flex: none; }
-/* Landscape phones: the board is shortest here, so the header steps down to ~80 % with the dice
-   (src/shared/tray.ts) and fewer army counts hide under them mid-roll. */
-.form-phone.landscape .bt-head { gap: 0.45rem; padding-bottom: 0.1rem; }
-.form-phone.landscape .bt-side { font-size: 0.875rem; gap: 0.28rem; }
-.form-phone.landscape .bt-captured { font-size: 0.875rem; }
-.form-phone.landscape .bt-vs { font-size: 0.875rem; }
+/* ---- The fight in the line (phones): the dock's line size; two lines at most ---- */
+.form-phone .st-fight { font-size: 1.125rem; line-height: 1.18; white-space: normal; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.form-phone .st-fight.hidden { display: none; }
+.form-tablet.dock-stacked .st-fight { font-size: 1.125rem; }
 
 /* ---- The rotate hint (portrait, once): one serif line on the paper, in the dock's line slot ---- */
 .form-phone.portrait .rotate-hint:not(.hidden) {
