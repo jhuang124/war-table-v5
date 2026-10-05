@@ -3,7 +3,7 @@
 import { createHash } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 import { createGame, defaultConfig } from '../../src/engine/setup';
-import { BORDERS, CONTINENTS, TERRITORY_IDS, mapRulesOf } from '../../src/engine/mapData';
+import { BORDERS, CONTINENTS, TERRITORY_IDS, mapDefOf, mapRulesOf } from '../../src/engine/mapData';
 import { listMaps, getBoard, rawBoard, resolveMapId, mapIdOf, laneShores, activeMapId } from '../../src/map/registry';
 import { packData, packIds } from '../../src/map/packs';
 import { BOARD, seaLaneBetween } from '../../src/map';
@@ -18,14 +18,19 @@ const saveOf = (config: Record<string, unknown>) => JSON.stringify({ v: 1, saved
 describe('map registry', () => {
   it('lists classic first, then true-world, with seats and counts', () => {
     const maps = listMaps();
-    expect(maps.map((m) => m.id)).toEqual(['classic', 'true-world']);
+    expect(maps.map((m) => m.id).slice(0, 2)).toEqual(['classic', 'true-world']);
     for (const m of maps) {
       expect(m.name.length).toBeGreaterThan(0);
       expect(m.description.length).toBeGreaterThan(0);
+      expect(m.seats).toEqual(packData(m.id).rules.seats);
+      expect(m.territories).toBe(packData(m.id).rules.territories.length);
+      expect(m.continents).toBe(packData(m.id).rules.continents.length);
+      expect(m.thumbnail).toMatch(/thumb\.png/);
+    }
+    for (const m of maps.slice(0, 2)) {
       expect(m.seats).toEqual({ min: 2, max: 4 });
       expect(m.territories).toBe(42);
       expect(m.continents).toBe(6);
-      expect(m.thumbnail).toMatch(/thumb\.png/);
     }
     expect(maps[1].rulesFrom).toBe('classic');
   });
@@ -48,12 +53,20 @@ describe('map registry', () => {
   it('every playable pack has every territory, and plays by the rules the engine knows', () => {
     for (const id of packIds()) {
       const b = getBoard(id);
-      expect(Object.keys(b.territories).sort()).toEqual([...TERRITORY_IDS].sort());
-      expect(Object.keys(b.continents).sort()).toEqual(Object.keys(CONTINENTS).sort());
+      // Each pack plays by its own rules + topology, read through mapDefOf (docs/MAPS.md, "A new board").
+      const def = mapDefOf({ mapId: id });
+      expect(def.id).toBe(id);
+      expect(Object.keys(b.territories).sort()).toEqual([...def.territoryIds].sort());
+      expect(Object.keys(b.continents).sort()).toEqual([...def.continentIds].sort());
       const { rules, topology } = mapRulesOf({ mapId: id });
-      // The engine plays classic's rules + topology only (docs/MAPS.md, "A new board").
-      expect(topology.borders).toEqual(BORDERS);
-      expect(rules.territories.map((t) => t.id)).toEqual(TERRITORY_IDS);
+      expect(rules.territories.map((t) => t.id)).toEqual(def.territoryIds);
+      expect(topology.borders).toEqual(def.topology.borders);
+      // A pack that takes classic's rules still plays classic's board exactly.
+      if (packData(id).rulesFrom === 'classic' || id === 'classic') {
+        expect(topology.borders).toEqual(BORDERS);
+        expect(def.territoryIds).toEqual(TERRITORY_IDS);
+        expect([...def.continentIds].sort()).toEqual(Object.keys(CONTINENTS).sort());
+      }
       for (const lane of b.seaLanes) expect(lane.shore).toHaveLength(2);
     }
   });
