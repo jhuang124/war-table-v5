@@ -9,8 +9,8 @@
     { "id": "hispania", "name": "Hispania", "bonus": 2 },
     { "id": "italia", "name": "Italia", "bonus": 5 },
     { "id": "illyricum", "name": "Illyricum", "bonus": 4 },
-    { "id": "graecia_asia", "name": "Graecia & Asia", "bonus": 5 },
-    { "id": "oriens", "name": "Oriens", "bonus": 3 },
+    { "id": "graecia_asia", "name": "Graecia & Asia", "bonus": 6 },
+    { "id": "oriens", "name": "Oriens", "bonus": 4 },
     { "id": "africa", "name": "Africa", "bonus": 2 }
   ],
   "territories": [

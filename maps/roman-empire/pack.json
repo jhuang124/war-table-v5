@@ -2,10 +2,13 @@
   "format": 1,
   "id": "roman-empire",
   "name": "Roman Empire",
-  "description": "TODO: one plain line in John's voice saying what is different about this board.",
+  "description": "The Mediterranean as Rome held it: provinces, straits and the Nile.",
   "thumbnail": "thumb.png",
   "hidden": true,
   "presentation": {
-    "anchorClearance": 1.3
+    "anchorClearance": 1.3,
+    "anchorOverhang": {
+      "ownLand": 0.25
+    }
   }
 }

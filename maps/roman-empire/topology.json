@@ -35,7 +35,6 @@
     ["etruria", "latium"],
     ["etruria", "sardinia_et_corsica"],
     ["latium", "campania"],
-    ["latium", "apulia"],
     ["campania", "apulia"],
     ["campania", "sicilia"],
     ["apulia", "macedonia"],
