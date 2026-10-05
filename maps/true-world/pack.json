@@ -2,8 +2,13 @@
   "format": 1,
   "id": "true-world",
   "name": "True World",
-  "description": "The same 42 territories and rules on a truer world map: real proportions, real straits, a real Mediterranean.",
+  "description": "The same 42 on a truer world.",
   "extends": "classic",
   "thumbnail": "thumb.png",
-  "presentation": { "anchorClearance": 1.3, "anchorOverhang": { "ownLand": 0.25 } }
+  "presentation": {
+    "anchorClearance": 1.3,
+    "anchorOverhang": {
+      "ownLand": 0.25
+    }
+  }
 }

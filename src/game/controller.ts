@@ -626,6 +626,8 @@ function newGameExtras(d: NewGameDraft): Pick<NewGameVM, 'maps' | 'mapId' | 'per
       seats: m.seats.min === m.seats.max ? `${m.seats.min} players` : `${m.seats.min}–${m.seats.max} players`,
       thumbnail: m.thumbnail,
       disabled: n < m.seats.min || n > m.seats.max,
+      // v6 maps: the Where row scales the summary ("first to N") by the map's size
+      territories: m.territories,
     })),
     mapId: d.mapId ?? DEFAULT_MAP_ID,
     personalities: PERSONALITY_IDS.map((id) => ({ id, name: PERSONALITIES[id].name, line: PERSONALITIES[id].line })),
