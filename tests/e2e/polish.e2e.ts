@@ -127,7 +127,8 @@ await audit('all-placed');
 const eligibleCur = await segCursor('attack');
 const currentCur = await segCursor('place');
 check(lockedCur !== 'pointer' && eligibleCur === 'pointer' && currentCur !== 'pointer', `track cursor: locked ${lockedCur}, eligible ${eligibleCur}, current ${currentCur}`, results);
-await seg(page, 'attack');
+// v5.1 E1: Place advances to Attack by itself once all armies are placed; click only if it has not yet
+if ((await ui(page)).step !== 'Attack') await seg(page, 'attack');
 await idle(page);
 await audit('attack');
 await clickT(page, 'siberia');

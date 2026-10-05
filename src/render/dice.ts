@@ -172,7 +172,7 @@ export const VERDICT_SILENCE_MS = 250;
 export const DICE_TUMBLE_MS = 450;
 export const DICE_SETTLE_MS = 100;
 /** [fight v5] The verdict after the hush (pair hairlines + splashes): 260 → 240 for headroom under the 1.25 s budget. */
-const VERDICT_MS = 240;
+const VERDICT_MS = 220; // 240 → 220: the line's per-pair tick adds a frame; keeps a single roll under 1.25 s
 /** The ring brushes itself on (INK2 §2.2 t = 0): 220 ms, clockwise from the west. Reduced motion: a 150 ms fade. */
 const RING_DRAW_MS = 220;
 /** The ring's ink (`--coast`, silver on indigo) and the wash inside it (the deep paper). */
