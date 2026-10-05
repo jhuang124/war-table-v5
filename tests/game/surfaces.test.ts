@@ -170,7 +170,8 @@ describe('New game draft extras (v3, presets.ts; v5.1 D three decisions)', () =>
   it('the New game view offers both maps and the three personalities, and its More fold survives re-renders', () => {
     const { c } = make();
     const ng = c.getViewModel().newGame;
-    expect(ng.maps?.map((m) => m.id)).toEqual(['classic', 'true-world']);
+    expect(ng.maps?.map((m) => m.id).slice(0, 2)).toEqual(['classic', 'true-world']);
+    expect(ng.maps?.map((m) => m.id)).not.toContain('test-twelve');
     expect(ng.maps?.[1].seats).toBe('2–4 players');
     expect(ng.mapId).toBe('classic');
     expect(ng.personalities?.map((p) => p.name)).toEqual(['Turtle', 'Opportunist', 'Warlord']);

@@ -49,7 +49,8 @@ describe('test-twelve: the pack', () => {
   it('is registered for the engine but hidden from the picker and from boot', () => {
     expect(allPackIds()).toContain('test-twelve');
     expect(packIds()).not.toContain('test-twelve');
-    expect(listMaps().map((m) => m.id)).toEqual(['classic', 'true-world']);
+    expect(listMaps().map((m) => m.id)).not.toContain('test-twelve');
+    expect(listMaps().map((m) => m.id).slice(0, 2)).toEqual(['classic', 'true-world']);
     expect(resolveMapId({ search: '?map=test-twelve', allowUrl: true })).toBe('classic');
   });
 
