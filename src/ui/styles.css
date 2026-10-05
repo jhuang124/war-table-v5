@@ -847,24 +847,33 @@
 .st-update .ev-update:hover { opacity: 1; }
 
 /* New game (v3): the map picker, an AI seat's personality, house rules that don't apply */
-.map-picker { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); gap: 1.75rem; pointer-events: auto; }
-.map-opt {
-  appearance: none; position: relative; display: grid; grid-template-columns: 8.75rem minmax(0, 1fr); gap: 0.95rem; align-items: start;
-  padding: 0.3rem 0; border: 0; border-radius: 0; background: transparent; color: var(--ivory-55); text-align: left; cursor: pointer; font-family: var(--serif);
-  transition: color 120ms ease-out;
+/* v6 Where: one ink tile per map in a row that scrolls sideways (five fit at 1440). A tile is the thumbnail
+   in a hairline paper edge, square corners, the name in the serif at 18 px, one line at 14 px. The chosen
+   tile is full strength with the brush underline; the others rest at 0.72. */
+.map-picker {
+  --tiles: 5; --tile-gap: 1.25rem; container-type: inline-size;
+  display: flex; gap: var(--tile-gap); overflow-x: auto; overflow-y: hidden; overscroll-behavior-x: contain;
+  scroll-snap-type: x mandatory; scroll-padding-left: 0; padding: 0.2rem 0 0.55rem; pointer-events: auto;
+  scrollbar-width: thin; scrollbar-color: rgba(240, 235, 224, 0.2) transparent;
 }
-.map-thumb { display: block; width: 8.75rem; aspect-ratio: 480 / 238; border-radius: 0; outline: 1px solid var(--ivory-28); outline-offset: -1px; overflow: hidden; background: var(--paper-deep, #0b1224); opacity: 0.7; transition: opacity 160ms ease-out; }
-.map-img { display: block; width: 100%; height: 100%; object-fit: cover; border-radius: 0; }
-.map-text { display: flex; flex-direction: column; gap: 0.18rem; min-width: 0; }
-.map-name { position: relative; align-self: flex-start; font-weight: 600; font-size: 1.125rem; line-height: 1.1; color: inherit; padding-bottom: 0.3rem; }
-.map-ul { top: auto; bottom: -0.2rem; color: var(--ivory-70); opacity: 0; clip-path: inset(0 100% 0 0); transition: opacity 140ms var(--dry), clip-path 0ms linear 140ms; }
+.where-cell { min-width: 0; }
+.map-opt {
+  appearance: none; position: relative; flex: 0 0 calc((100cqw - (var(--tiles) - 1) * var(--tile-gap)) / var(--tiles)); min-width: 0;
+  display: flex; flex-direction: column; align-items: stretch; gap: 0.3rem; scroll-snap-align: start;
+  padding: 0; border: 0; border-radius: 0; background: transparent; color: var(--ivory); text-align: left; cursor: pointer; font-family: var(--serif);
+  opacity: 0.72; transition: opacity 160ms ease-out;
+}
+.map-thumb {
+  display: block; width: 100%; aspect-ratio: 480 / 300; border-radius: 0; outline: 1px solid var(--ivory-28); outline-offset: -1px;
+  overflow: hidden; background: #0e1830; margin-bottom: 0.25rem;
+}
+.map-img { display: block; width: 100%; height: 100%; object-fit: contain; border-radius: 0; user-select: none; -webkit-user-drag: none; }
+.map-name { position: relative; align-self: flex-start; max-width: 100%; font-weight: 600; font-size: 1.125rem; line-height: 1.15; color: inherit; padding-bottom: 0.3rem; white-space: nowrap; }
+.map-ul { top: auto; bottom: -0.15rem; color: var(--ivory-70); opacity: 0; clip-path: inset(0 100% 0 0); transition: opacity 140ms var(--dry), clip-path 0ms linear 140ms; }
 .map-opt.on .map-ul { opacity: 1; clip-path: inset(0 0 0 0); transition: clip-path 240ms var(--brush), opacity 60ms ease-out; }
-.map-desc { font-size: 0.875rem; line-height: 1.3; color: var(--ivory-40); }
-.map-seats { font-size: 1.125rem; color: var(--ivory-40); }
-.map-opt:hover { color: var(--ivory-90); }
-.map-opt.on { color: var(--ivory); }
-.map-opt.on .map-thumb { opacity: 1; }
-.map-opt.on .map-desc, .map-opt.on .map-seats { color: var(--ivory-55); }
+.map-desc { font-size: 0.875rem; line-height: 1.3; color: var(--ivory-70); display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; overflow: hidden; }
+.map-opt:hover { opacity: 0.88; }
+.map-opt.on { opacity: 1; cursor: default; }
 .map-opt[aria-disabled='true'] { opacity: 0.4; cursor: default; }
 .ui-root .map-opt:focus-visible { outline: none; }
 .ui-root .map-opt:focus-visible .map-name { text-decoration: underline; text-decoration-color: var(--gold); text-decoration-thickness: 1px; text-underline-offset: 0.3em; }
@@ -878,7 +887,6 @@
 /* v3: the map row and the personalities take room; the sheet keeps everything on a 900 px screen. */
 .ng-grid { row-gap: 0.95rem; }
 .ng-sheet > .sheet-head { margin-bottom: 1.1rem; }
-.map-desc { font-size: 0.875rem; line-height: 1.25; }
 .seat-row.has-pers { padding-bottom: 1rem; }
 .ng-foot { margin-top: 1.1rem; padding-top: 1rem; }
 

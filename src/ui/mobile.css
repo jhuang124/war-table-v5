@@ -320,7 +320,7 @@
 }
 .form-phone .ng-sheet > .ng-grid {
   margin: 0; padding: 0.5rem max(1.25rem, var(--sa-r)) 1.25rem max(1.25rem, var(--sa-l));
-  grid-template-columns: minmax(0, 1fr); gap: 0.35rem; overscroll-behavior: contain; touch-action: pan-y; -webkit-overflow-scrolling: touch; scrollbar-width: none;
+  grid-template-columns: minmax(0, 1fr); gap: 0.35rem; overscroll-behavior: contain; touch-action: pan-x pan-y; -webkit-overflow-scrolling: touch; scrollbar-width: none;
 }
 .form-phone .ng-grid > .ng-label { padding-top: 0.9rem; }
 .form-phone .ng-grid > .ng-label:empty, .form-phone .ng-grid > div:empty { display: none; }
@@ -340,10 +340,16 @@
 .form-phone .seat-row > .pers-wrap.off { display: none; }
 .form-phone .seat-row.has-pers { padding-bottom: 0.5rem; }
 .form-phone .pers-line { position: static; display: block; margin-top: -0.35rem; margin-left: 0 !important; white-space: normal; }
-.form-phone .map-picker { grid-auto-flow: row; gap: 0.6rem; }
-.form-phone .map-opt { grid-template-columns: 7rem minmax(0, 1fr); gap: 0.75rem; }
-.form-phone .map-thumb { width: 7rem; }
-.form-phone .map-name { font-size: 1.125rem; }
+/* Where: about two tiles and a fifth in view (the cut one says "more"), snapping; the row runs to the
+   screen's right edge. A tile is a tap target far taller than 44 px. */
+.form-phone .map-picker {
+  --tiles: 2.2; --tile-gap: 0.9rem;
+  margin-right: calc(-1 * max(1.25rem, var(--sa-r))); padding-right: max(1.25rem, var(--sa-r)); scroll-padding-left: 0;
+  touch-action: pan-x pan-y; scrollbar-width: none;
+}
+.form-phone .map-picker::-webkit-scrollbar { display: none; }
+.form-phone .map-opt:not([aria-disabled='true']):hover { opacity: 0.72; }
+.form-phone .map-opt.on:hover { opacity: 1; }
 .form-phone .add-seat { height: 2.75rem; margin-top: 0.1rem; }
 .form-phone .seg-cards { gap: 1rem; }
 .form-phone .seg-cards .seg-label { font-size: 1.125rem; }
@@ -359,7 +365,7 @@
 .form-phone .ng-foot .btn.big { width: 100%; min-width: 0; height: 3.25rem; font-size: 1.125rem; }
 /* Landscape: one-line seat rows fit; the footer is one row */
 .form-phone.landscape .seat-row { grid-template-columns: 2.9rem minmax(6rem, 1fr) auto minmax(0, 13rem) 2.75rem; grid-template-areas: 'emb name kind diff rm' '. pers pers pers pers'; padding: 0.25rem 0; }
-.form-phone.landscape .map-picker { grid-auto-flow: column; }
+.form-phone.landscape .map-picker { --tiles: 4.3; margin-right: calc(-1 * max(1.25rem, calc(var(--sa-r) - 8px))); padding-right: max(1.25rem, calc(var(--sa-r) - 8px)); }
 .form-phone.landscape .ng-foot { flex-direction: row; align-items: center; padding-top: 0.5rem; padding-bottom: calc(var(--sa-b) + 0.5rem); }
 .form-phone.landscape .ng-sum { align-items: flex-start; text-align: left; flex: 1; }
 .form-phone.landscape .ng-foot .btn.big { width: auto; min-width: 11rem; height: 2.875rem; }

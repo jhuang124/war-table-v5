@@ -13,6 +13,9 @@
 // opens in place (NewGameVM.advancedOpen; the UI's own state until the controller sends it). Personalities
 // are random and hidden: an AI seat shows a personality row only with More open, and it reads 'Any' until a
 // player picks one. Truces are gone (standing replaces them; the controller decides).
+// v6 maps (John 2026-10-04): the map leaves the fold and becomes the second decision, a row of ink tiles
+// between Seats and Length (Who · Where · How long · Start). More keeps difficulty, personalities, setup and
+// the house rules. The summary's "first to N territories" counts the chosen map's territories.
 
 import type { AiDifficulty, AiPersonality, PlayerColorId, PlayerKind } from '../../engine/types';
 import type { HouseRulesDraft, LengthPreset, MapOptionVM, NewGameVM, PersonalityOptionVM, SeatDraft, SetupPreset, UiIntent } from '../../game/viewModel';
@@ -236,46 +239,68 @@ class SeatRow {
 }
 
 /**
- * The map picker (v3, docs/MAPS.md): every pack as its thumbnail (radius 0, a 1 px ivory hairline frame), its
- * name in serif, one plain line and the seats it takes. The picked one's name carries the brush underline.
+ * Where (v6 maps, John 2026-10-04: the map is a primary decision): one ink tile per offered pack, in a row
+ * that scrolls sideways when there are more than fit (five at 1440, about two at 390 px, snapping). A tile
+ * is the pack's thumbnail in a hairline paper edge (square corners), its name in the serif at 18 px and its
+ * one line at 14 px. The chosen tile is at full strength with the brush underline under its name; the
+ * others rest at 0.72. Hidden packs never show. Arrow keys move the choice (one radio group).
  */
 class MapPicker {
   readonly el: HTMLDivElement;
   private opts = new Map<string, HTMLButtonElement>();
   private key = '';
+  private picked = '';
+  private ids: string[] = [];
+  private disabled = new Set<string>();
 
   constructor(private send: Send) {
     this.el = h('div', 'map-picker');
     this.el.dataset.testid = 'map-picker';
     this.el.setAttribute('role', 'radiogroup');
     this.el.setAttribute('aria-label', 'Map');
+    this.el.addEventListener('keydown', (e) => {
+      const step = e.key === 'ArrowRight' || e.key === 'ArrowDown' ? 1 : e.key === 'ArrowLeft' || e.key === 'ArrowUp' ? -1 : 0;
+      if (!step) return;
+      e.preventDefault();
+      const live = this.ids.filter((id) => !this.disabled.has(id));
+      const i = live.indexOf(this.picked);
+      const next = live[(i + step + live.length) % live.length];
+      if (!next || next === this.picked) return;
+      this.send({ type: 'map', id: next });
+      this.opts.get(next)?.focus();
+    });
   }
 
-  update(maps: MapOptionVM[], mapId: string): void {
+  update(all: MapOptionVM[], mapId: string): void {
+    const maps = all.filter((m) => !m.hidden);
     const key = maps.map((m) => `${m.id}:${m.name}:${m.description}:${m.seats}:${m.thumbnail}:${m.disabled}`).join('|');
+    let fresh = false;
     if (key !== this.key) {
       this.key = key;
+      fresh = true;
       this.el.textContent = '';
       this.opts.clear();
+      this.ids = maps.map((m) => m.id);
+      this.disabled = new Set(maps.filter((m) => m.disabled).map((m) => m.id));
       for (const m of maps) {
         const b = h('button', 'map-opt');
         b.type = 'button';
         b.setAttribute('role', 'radio');
         b.dataset.testid = `map-${m.id}`;
         b.dataset.map = m.id;
+        b.title = m.disabled ? `${m.name} · ${m.seats}` : m.description;
         const frame = h('span', 'map-thumb');
         if (m.thumbnail) {
           const img = h('img', 'map-img');
           img.src = m.thumbnail;
           img.alt = '';
           img.decoding = 'async';
+          img.draggable = false;
           frame.append(img);
         }
-        const text = h('span', 'map-text');
         const name = h('span', 'map-name', m.name);
         name.append(underlineEl(hashSeed(`map-${m.id}`), undefined, 'brush-ul map-ul'));
-        text.append(name, h('span', 'map-desc', m.description), h('span', 'map-seats', m.seats));
-        b.append(frame, text);
+        b.append(frame, name, h('span', 'map-desc', m.description));
         if (m.disabled) b.setAttribute('aria-disabled', 'true');
         b.addEventListener('click', () => {
           if (m.disabled || b.classList.contains('on')) return;
@@ -285,13 +310,44 @@ class MapPicker {
         this.el.append(b);
       }
     }
+    const was = this.picked;
+    this.picked = mapId;
     for (const [id, b] of this.opts) {
       const on = id === mapId;
       toggle(b, 'on', on);
       b.setAttribute('aria-checked', String(on));
       b.tabIndex = on ? 0 : -1;
     }
+    // A chosen map off the row's visible part (a resumed draft, or a key press) slides into view.
+    if (fresh || was !== mapId) requestAnimationFrame(() => this.reveal());
   }
+
+  /** Bring the chosen tile fully into the row's view, scrolling only the row (never the sheet). */
+  reveal(): void {
+    const b = this.opts.get(this.picked);
+    if (!b || this.el.scrollWidth <= this.el.clientWidth) return;
+    const l = b.offsetLeft - this.el.offsetLeft;
+    const r = l + b.offsetWidth;
+    const view = this.el.scrollLeft;
+    const w = this.el.clientWidth;
+    const to = l < view ? l : r > view + w ? r - w : view;
+    if (to !== view) this.el.scrollTo({ left: to, behavior: motion.reduced ? 'auto' : 'smooth' });
+  }
+}
+
+/**
+ * The summary's goal, scaled to the chosen map: "first to N territories" is the length's share of this map's
+ * territories (the controller's line counts 42). The share comes from the length's own detail ('70% ...');
+ * no share in it (full conquest) leaves the line alone. Absent `territories` = the line as sent.
+ */
+export function summaryFor(vm: NewGameVM): string {
+  const map = vm.maps?.find((m) => m.id === (vm.mapId ?? vm.maps?.[0]?.id));
+  const size = map?.territories;
+  if (!size) return vm.summary;
+  const pct = Number(/(\d+)%/.exec(vm.lengthOptions.find((o) => o.id === vm.length)?.detail ?? '')?.[1] ?? NaN);
+  if (!Number.isFinite(pct) || pct >= 100) return vm.summary;
+  const need = Math.ceil((size * pct) / 100);
+  return vm.summary.replace(/first to \d+ territories/, `first to ${need} territories`);
 }
 
 export class NewGameScreen {
@@ -304,7 +360,7 @@ export class NewGameScreen {
   private summary: HTMLParagraphElement;
   private problems: HTMLUListElement;
   private start: HTMLButtonElement;
-  /** v5.1 D: the one 'More' word and the fold it opens (map, setup, house rules; the seats' AI rows show too). */
+  /** v5.1 D: the one 'More' word and the fold it opens (setup, house rules; the seats' AI rows show too). */
   private moreBtn: HTMLButtonElement;
   private more: HTMLDivElement;
   private sheet: HTMLDivElement;
@@ -312,6 +368,8 @@ export class NewGameScreen {
   private moreLocal = false;
   private moreShown = false;
   private maps: MapPicker;
+  private whereLabel: HTMLDivElement;
+  private whereCell: HTMLDivElement;
   private h: {
     neutral: Switch;
     missions: Switch;
@@ -336,6 +394,15 @@ export class NewGameScreen {
     const seatsCell = h('div', 'ng-cell');
     seatsCell.append(this.seatsWrap, this.addBtn);
     grid.append(h('div', 'ng-label', 'Seats'), seatsCell);
+    // Where (v6): the map, a primary decision, as a row of ink tiles.
+    this.maps = new MapPicker(send);
+    this.whereLabel = h('div', 'ng-label', 'Map');
+    // The row scrolls sideways inside a plain cell: a scroll container as a grid item gets no content-based
+    // minimum height, and the phone sheet (a height-bound grid) would squeeze it under Length.
+    this.whereCell = h('div', 'ng-cell where-cell');
+    this.whereCell.dataset.testid = 'ng-where';
+    this.whereCell.append(this.maps.el);
+    grid.append(this.whereLabel, this.whereCell);
     // Length
     this.length = new Segmented<LengthPreset>('seg-cards', (v) => send({ type: 'length', value: v }), 'Game length', 'length');
     grid.append(h('div', 'ng-label', 'Length'), this.length.el);
@@ -350,9 +417,6 @@ export class NewGameScreen {
     this.more = h('div', 'ng-more-body fold hidden');
     this.more.dataset.testid = 'ng-more-body';
     const mg = h('div', 'ng-grid ng-more-grid');
-    // Map (v3)
-    this.maps = new MapPicker(send);
-    mg.append(h('div', 'ng-label', 'Map'), this.maps.el);
     // Setup
     this.setup = new Segmented<SetupPreset>('seg-cards', (v) => send({ type: 'setup', value: v }), 'Setup', 'setup');
     mg.append(h('div', 'ng-label', 'Setup'), this.setup.el);
@@ -508,9 +572,10 @@ export class NewGameScreen {
       const taken = new Set(vm.seats.filter((_, j) => j !== i).map((x) => x.color));
       this.rows[i].update(s, taken, vm.canRemoveSeat, (counts.get(s.color) ?? 0) > 1, vm.personalities);
     });
-    if (vm.maps?.length) this.maps.update(vm.maps, vm.mapId ?? vm.maps[0].id);
-    toggle(this.maps.el, 'hidden', !vm.maps?.length);
-    toggle(this.maps.el.previousElementSibling as HTMLElement, 'hidden', !vm.maps?.length);
+    const offered = vm.maps?.filter((m) => !m.hidden) ?? [];
+    if (offered.length) this.maps.update(offered, vm.mapId ?? offered[0].id);
+    toggle(this.whereCell, 'hidden', !offered.length);
+    toggle(this.whereLabel, 'hidden', !offered.length);
     toggle(this.addBtn, 'hidden', !vm.canAddSeat);
 
     this.length.setOptions(vm.lengthOptions.map((o) => ({ value: o.id, label: o.label, detail: o.detail, meta: o.estimate })));
@@ -533,7 +598,7 @@ export class NewGameScreen {
     this.h.fortify.set(hr.fortifyRule);
     this.h.batch.set(String(hr.setupBatch));
     if (document.activeElement !== this.h.seed) this.h.seed.value = hr.seed == null ? '' : String(hr.seed);
-    setText(this.summary, vm.summary);
+    setText(this.summary, summaryFor(vm));
     this.problems.textContent = '';
     for (const p of vm.problems) this.problems.append(h('li', '', p));
     toggle(this.problems, 'hidden', vm.problems.length === 0);

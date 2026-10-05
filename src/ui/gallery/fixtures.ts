@@ -325,6 +325,19 @@ export function fixtures(_W: number, _H: number): Fixture[] {
   };
   add('newgame-51', 'v5.1', 'New game · three decisions (More folded)', root({ screen: 'newGame', game: null, newGame: NG51 }));
   add('newgame-51-more', 'v5.1', 'New game · More open', root({ screen: 'newGame', game: null, newGame: NG51 }), { after: 'openMore' });
+  // v6 maps: Where, the map as the second decision (a row of ink tiles). Five maps (and one hidden pack that
+  // must never show), Roman Empire chosen so the summary counts its 36 territories; then the two that ship.
+  const thumb = (id: string) => new URL(`../../../maps/${id}/thumb.png`, import.meta.url).href;
+  const WHERE_MAPS: NonNullable<NewGameVM['maps']> = [
+    { id: 'classic', name: 'Classic', description: 'The board you know.', seats: '2–4 players', thumbnail: thumb('classic'), disabled: false, territories: 42 },
+    { id: 'true-world', name: 'True World', description: 'The same 42 on a truer world.', seats: '2–4 players', thumbnail: thumb('true-world'), disabled: false, territories: 42 },
+    { id: 'roman-empire', name: 'Roman Empire', description: 'The empire at its height, province by province.', seats: '2–4 players', thumbnail: null, disabled: false, territories: 36 },
+    { id: 'italian-conquest', name: 'Italian Conquest', description: 'The peninsula, city against city.', seats: '2–4 players', thumbnail: null, disabled: false, territories: 30 },
+    { id: 'test-strip', name: 'Test strip', description: 'Never offered.', seats: '2 players', thumbnail: null, disabled: false, territories: 6, hidden: true },
+    { id: 'modern-boston', name: 'Modern Boston', description: 'The city, neighborhood by neighborhood.', seats: '2–4 players', thumbnail: null, disabled: false, territories: 24 },
+  ];
+  add('newgame-where-5', 'v6 maps', 'New game · Where, five maps (Roman Empire chosen)', root({ screen: 'newGame', game: null, newGame: { ...NG51, maps: WHERE_MAPS, mapId: 'roman-empire' } }));
+  add('newgame-where-2', 'v6 maps', 'New game · Where, the two that ship', root({ screen: 'newGame', game: null, newGame: { ...NEW_GAME, maps: WHERE_MAPS.slice(0, 2), mapId: 'classic' } }));
   add('victory', 'Screens', 'Victory (intro banner)', root({ screen: 'victory', game: null, victory: VICTORY }));
   add('victory-full', 'Screens', 'Victory: awards + chart', root({ screen: 'victory', game: null, victory: VICTORY }), { after: 'skipVictoryIntro' });
 
