@@ -4,7 +4,6 @@
   "name": "Italian Conquest",
   "description": "Italy and every shore that touches it, for the player who likes a crowded board.",
   "thumbnail": "thumb.png",
-  "hidden": true,
   "order": 3,
   "presentation": {
     "anchorClearance": 1.3,

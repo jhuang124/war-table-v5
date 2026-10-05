@@ -14,16 +14,29 @@ replace them following **docs/MAP-AUTHORING.md**, ticking the list below. The pa
 
 ## Author checklist
 
-- [ ] (a) Region chosen; 25–45 territories a player could name.
-- [ ] (b) rules.json: 3–7 continents; bonuses by border count (verify prints a suggestion); names plain,
+- [x] (a) Region chosen; 25–45 territories a player could name.
+- [x] (b) rules.json: 3–7 continents; bonuses by border count (verify prints a suggestion); names plain,
       real, English, territory ≤ 22 characters, continent ≤ 18.
-- [ ] (c) topology.json: borders a player would guess from the map; sea lanes short, over water you can see.
-- [ ] (d) Recipe: source (+ source README and licence if local), frame, projection, assign (cutBy for
+- [x] (c) topology.json: borders a player would guess from the map; sea lanes short, over water you can see.
+- [x] (d) Recipe: source (+ source README and licence if local), frame, projection, assign (cutBy for
       splits), lane hints, continent and ocean label hints.
-- [ ] (e) `npm run build:map -- --map italian-conquest` and `npm run verify:map -- --map italian-conquest` pass; every preview in
+- [x] (e) `npm run build:map -- --map italian-conquest` and `npm run verify:map -- --map italian-conquest` pass; every preview in
       artifacts/map/italian-conquest/ read.
-- [ ] (f) On a dev server with `?map=italian-conquest`; board shots taken (`npx tsx scripts/map/board-shots.ts --map italian-conquest --url ...`).
-- [ ] (g) Balance: the sim in verify:map finishes; the taste checks in docs/MAPS.md "What an author
+- [x] (f) On a dev server with `?map=italian-conquest`; board shots taken (`npx tsx scripts/map/board-shots.ts --map italian-conquest --url ...`).
+- [x] (g) Balance: the sim in verify:map finishes; the taste checks in docs/MAPS.md "What an author
       hand-verifies" done (reads as the place, borders guessable, armies read, labels fit).
-- [ ] (h) Description: one plain line, no exclamation mark, says what is different about this board.
-- [ ] `hidden` removed from pack.json and `order` set; `npm run typecheck`, `npx vitest run`, `npm run verify:maps`.
+- [x] (h) Description: one plain line, no exclamation mark, says what is different about this board.
+- [x] `hidden` removed from pack.json and `order` set; `npm run typecheck`, `npx vitest run`, `npm run verify:maps`.
+
+## Decisions (against _claude/maps/PLAN.md)
+
+- 40 territories in 7 continents. Added to the plan's 37: Slovenia, Herzegovina (Bosnia split north/south)
+  and Salento (Puglia's heel), so the Balkan side isn't three giant pieces and Otranto has its own shore.
+- "Alpine North" is **North**: its label can't fit the Gulf of Venice at that length, and North pairs with South.
+- Corsica takes its crossing from **Tuscany** (Elba, the short one) as well as Liguria (the Genoa ferry).
+- The Ionian crossing is **Salento–Epirus** (Leuca to Corfu), not Calabria–Epirus, which would be ~300 km.
+- Malta stays, drawn at 2× (as Classic draws its islands); its army overhangs the water, as do Liguria's,
+  Corsica South's and Istria's (`anchorOverhang`).
+- Bonuses are verify's suggestions; the sim's games finish (30 games, median 10 rounds).
+- Decor: the rest of France, Switzerland, Austria, inland Croatia, Serbia, Kosovo, Macedonia, Bulgaria,
+  Thrace, the Aegean islands, Kefalonia and Zakynthos, Tunisia, Algeria.

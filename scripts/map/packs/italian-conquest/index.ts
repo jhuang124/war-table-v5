@@ -241,7 +241,7 @@ export const recipe: MapRecipe = {
   // that tells you where you are.
   otherLand: 'decor',
   // Malta is too small to hold an army disc at true size; drawn a little larger, as Classic draws its islands.
-  islandXform: { malta: { along: 2.6, across: 2.6, angle: -35 } },
+  islandXform: { malta: { along: 2.0, across: 2.0, angle: -35 } },
 
   laneHints: {
     'tuscany|corsica_north': { ha: [10.1, 42.8], hb: [9.45, 42.8] },
