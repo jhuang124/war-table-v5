@@ -39,7 +39,14 @@ if (process.argv.includes('--all')) {
   const { readdirSync } = await import('node:fs');
   const { spawnSync } = await import('node:child_process');
   const rest = process.argv.slice(2).filter((a) => a !== '--all');
-  const ids = readdirSync(resolve(ROOT, 'maps')).filter((d) => existsSync(resolve(ROOT, 'maps', d, 'pack.json'))).sort();
+  const all = readdirSync(resolve(ROOT, 'maps')).filter((d) => existsSync(resolve(ROOT, 'maps', d, 'pack.json'))).sort();
+  // A hidden pack with no board.json is an engine-only board (maps/test-twelve): the rules lint runs in vitest; skip it here.
+  const ids = all.filter((d) => {
+    if (existsSync(resolve(ROOT, 'maps', d, 'board.json'))) return true;
+    const hidden = (JSON.parse(readFileSync(resolve(ROOT, 'maps', d, 'pack.json'), 'utf8')) as { hidden?: boolean }).hidden;
+    if (hidden) console.log(`verify:maps: ${d} is hidden and ships no board.json (engine-only); skipped`);
+    return !hidden;
+  });
   const bad: string[] = [];
   for (const m of ids) {
     const r = spawnSync(process.execPath, [...process.execArgv, process.argv[1], '--map', m, ...rest], { stdio: 'inherit' });
