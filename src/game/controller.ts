@@ -56,6 +56,7 @@ import {
   type PlayerId,
   type TerritoryId,
 } from '../engine';
+import * as engineNs from '../engine';
 import { DEFAULT_MAP_ID, activeMapId, isKnownMap, listMaps } from '../map/registry';
 import type { AudioEngine, PlayOptions, SfxName, V4Cue, V5Cue } from '../audio/types';
 import type { BoardHighlights, BoardView, PlayEventOptions, TerritoryPointerInfo, ViewportInsets } from '../render/BoardView';
@@ -586,6 +587,19 @@ const TRUCE_EVENTS: ReadonlySet<GameEvent['type']> = new Set([
 ]);
 
 type FlashKind = 'tap' | 'stone' | 'mission' | 'standing' | 'peace';
+
+/**
+ * v5.1 C: the engine's 'why you cannot ask now' line ('You asked Sage in round 5 · ask again in round 8'), read
+ * through the namespace so this builds against the stub too (it lacks `peaceAskBlock`).
+ */
+function peaceAskBlockOf(s: GameState, human: PlayerId, ai: PlayerId): string | null {
+  const fn = (engineNs as unknown as { peaceAskBlock?: (s: GameState, h: PlayerId, a: PlayerId) => string | null }).peaceAskBlock;
+  try {
+    return fn ? fn(s, human, ai) : null;
+  } catch {
+    return null;
+  }
+}
 
 /** v5.1 E1: Place → Attack advances by itself this long after the last army is placed. */
 const AUTO_ATTACK_MS = 250;
@@ -1805,8 +1819,15 @@ class Controller {
         const actor =
           ev.type === 'truceBroken' ? ev.by : ev.type === 'truceAccepted' || (ev.type === 'truceDeclined' && ev.reason === 'declined') ? ev.to : ev.from;
         if (text && (aiPair || ev.type === 'truceBroken')) this.log('truce', actor, text);
-        if (aiPair && (ev.type === 'truceAccepted' || ev.type === 'truceBroken')) {
-          const line = ev.type === 'truceAccepted' ? `${pName(d, ev.from)} and ${pName(d, ev.to)} have an understanding` : `${pName(d, ev.by)} turned on ${pName(d, ev.against)}`;
+        // An understanding ends by standing (v5.1 engine: truceExpired reason 'standing') or by an attack.
+        const turned = ev.type === 'truceExpired' && (ev as { reason?: string }).reason === 'standing';
+        if (aiPair && (ev.type === 'truceAccepted' || ev.type === 'truceBroken' || turned)) {
+          const line =
+            ev.type === 'truceAccepted'
+              ? `${pName(d, ev.from)} and ${pName(d, ev.to)} have an understanding`
+              : ev.type === 'truceBroken'
+                ? `${pName(d, ev.by)} turned on ${pName(d, ev.against)}`
+                : `${pName(d, a)} turned on ${pName(d, b)}`;
           this.understandingLine(line);
         }
         // v5 D4: a truce broken against an AI seat: it says so as its next turn begins.
@@ -1825,13 +1846,27 @@ class Controller {
       case 'peaceBroken':
         this.onPeaceBroken(ev, d, skip);
         break;
-      case 'standingChanged':
-        // The seat mark changes on its own (SeatChipVM.standing reads the board); the Ledger hears only a hardening
-        // to hostile toward a human.
-        if (ev.standing === 'hostile' && this.isHumanSeat(ev.toward) && d.players[ev.ai]?.kind === 'ai') {
-          this.log('truce', ev.ai, this.hostileLine(e.after, ev.ai, ev.toward));
+      case 'standingChanged': {
+        // The seat mark changes on its own (SeatChipVM.standing reads the board). The one line speaks only when it
+        // is about the reader and the band is wary / hostile (or turns ally); the Ledger only when it hardens to
+        // hostile toward a human.
+        const toHuman = this.isHumanSeat(ev.toward) && d.players[ev.ai]?.kind === 'ai';
+        if (ev.standing === 'hostile' && toHuman) this.log('truce', ev.ai, this.hostileLine(e.after, ev.ai, ev.toward));
+        if (toHuman && !this.autoplayOn && !skip && ev.standing !== 'even' && ev.toward === this.standingReader(d)) {
+          let why = '';
+          try {
+            why = standingReason(e.after, ev.ai, ev.toward) || '';
+          } catch {
+            why = '';
+          }
+          // Never over a peace answer or a broken peace said a moment ago (they already carry the news).
+          if (why && this.flash?.kind !== 'peace') {
+            if (this.isAiDriven(d.currentPlayer)) this.narration = why;
+            else this.flashLine(why, 'standing', STANDING_MS, ev.ai);
+          }
         }
         break;
+      }
       case 'gameOver': {
         this.closeEngagement();
         this.closeTurnMetric();
@@ -3054,6 +3089,7 @@ class Controller {
     if (!p || p.kind !== 'ai' || p.neutral || p.eliminated) return {};
     const out: Pick<SeatChipVM, 'standing' | 'standingReason' | 'canAskPeace' | 'understandingWith'> = {};
     try {
+      // AI-to-AI understandings only; a human's peace is the standing mark ('ally'), not a tie.
       out.understandingWith = trucePartners(d, ai).filter((x) => d.players[x]?.kind === 'ai' && !d.players[x].eliminated);
       if (reader === null || !d.players[reader] || d.players[reader].eliminated) return out;
       out.standing = standingOf(d, ai, reader);
@@ -3111,11 +3147,21 @@ class Controller {
       return;
     }
     this.clearRejection();
-    const r = this.act({ type: 'askPeace', player: me, to });
-    if (!r.ok) {
-      // The engine said no before asking (once per three rounds, already at peace, not your main turn).
-      this.reject('peace_refused', r.error && r.error.length <= 60 ? r.error : `You cannot ask ${pName(s, to)} now`);
+    // Not now (asked recently, peace broken, not your main turn): the engine's own line, nothing applied.
+    let can = true;
+    try {
+      can = canAskPeace(s, me, to);
+    } catch {
+      can = true;
     }
+    const block = can ? null : peaceAskBlockOf(s, me, to);
+    if (block) {
+      this.reject('peace_blocked', block.replace(/\.$/, ''));
+      this.invalidate();
+      return;
+    }
+    const r = this.act({ type: 'askPeace', player: me, to });
+    if (!r.ok) this.reject('peace_refused', r.error && r.error.length <= 60 ? r.error.replace(/\.$/, '') : `You cannot ask ${pName(s, to)} now`);
     this.invalidate();
   }
 
@@ -3124,8 +3170,9 @@ class Controller {
     const ai = d.players[ev.from]?.kind === 'ai' ? ev.from : ev.to;
     const human = ai === ev.from ? ev.to : ev.from;
     const name = pName(d, ai);
-    const text = ev.reason?.trim()
-      ? ev.reason.trim()
+    const said = (truceSentence(d, ev) ?? ev.reason ?? '').trim();
+    const text = said
+      ? said
       : ev.accepted
         ? `${name} agrees${SEP}${roundsWord(ev.rounds)}`
         : `${name} refuses`;
@@ -3141,12 +3188,12 @@ class Controller {
     if (by.kind === 'human') {
       // The somber conquer variant plays with the attack itself; this is the line and the record.
       const line = `You broke the peace with ${pName(d, ev.against)}`;
-      this.log('truce', ev.by, `${pName(d, ev.by)} broke the peace with ${pName(d, ev.against)}`);
+      this.log('truce', ev.by, truceSentence(d, ev) || `${pName(d, ev.by)} broke the peace with ${pName(d, ev.against)}`);
       if (!this.autoplayOn) this.flashLine(line, 'peace', PEACE_MS);
       if (against.kind === 'ai') this.voices.aggrieve(ev.against, ev.by, 'truceBroken');
     } else if (against.kind === 'human') {
       const line = `${pName(d, ev.by)} broke the peace${SEP}it is hostile now`;
-      this.log('truce', ev.by, `${pName(d, ev.by)} broke the peace with ${pName(d, ev.against)}`);
+      this.log('truce', ev.by, truceSentence(d, ev) || `${pName(d, ev.by)} broke the peace with ${pName(d, ev.against)}`);
       if (!this.autoplayOn) {
         if (this.isAiDriven(d.currentPlayer)) this.narration = line;
         else this.flashLine(line, 'peace', PEACE_MS, ev.by);

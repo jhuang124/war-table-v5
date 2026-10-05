@@ -27,6 +27,7 @@ vi.mock('../../src/engine', async (importOriginal) => {
     standingOf: () => mock.standing,
     standingReason: () => mock.reason,
     canAskPeace: () => mock.canAsk,
+    peaceAskBlock: () => (mock.canAsk ? null : 'You asked Priya in round 2 · ask again in round 5.'),
     applyAction: (s: GameState, a: Parameters<typeof m.applyAction>[1]) => {
       if (a.type === 'askPeace' && mock.answer) {
         const state = m.cloneState(s);
@@ -211,6 +212,19 @@ describe('C · standing on the seat marks', () => {
     c.dispose();
   });
 
+  it("askPeace when the engine says not now: its own line ('You asked Priya in round 2 · ask again in round 5'), nothing applied", async () => {
+    mock.canAsk = false;
+    mock.answer = (_s, a) => [{ type: 'peaceAnswered', from: a.to, to: a.player, accepted: true, rounds: 3, reason: '' }];
+    const { c } = await load(table());
+    expect(c.getViewModel().game!.seats[2].canAskPeace).toBe(false);
+    c.intent({ type: 'askPeace', to: 2 });
+    await vi.advanceTimersByTimeAsync(20);
+    expect(c.hooks.ui().line).toBe('You asked Priya in round 2 · ask again in round 5');
+    expect(c.hooks.ui().lineKind).toBe('rejection');
+    expect(c.hooks.ledger().filter((l) => l.kind === 'truce')).toEqual([]);
+    c.dispose();
+  });
+
   it('askPeace the engine will not take: a plain rejection, nothing applied', async () => {
     const { c } = await load(table());
     const before = c.hooks.getState();
@@ -240,17 +254,16 @@ describe('C · standing on the seat marks', () => {
     r.c.dispose();
   });
 
-  it('standingChanged: no line; the Ledger only when it hardens to hostile toward a human', async () => {
+  it("standingChanged: a line only about the reader when wary / hostile (the engine's reason); the Ledger only on hostile toward a human", async () => {
     mock.reason = 'Priya is hostile · you took Ural';
     mock.answer = (_s, a) => [
       { type: 'standingChanged', ai: a.to, toward: a.player, standing: 'wary' },
       { type: 'standingChanged', ai: a.to, toward: a.player, standing: 'hostile' },
     ];
     const { c } = await load(table());
-    const line = c.hooks.ui().line;
     c.intent({ type: 'askPeace', to: 2 });
     await vi.advanceTimersByTimeAsync(50);
-    expect(c.hooks.ui().line).toBe(line);
+    expect(c.hooks.ui().line).toBe('Priya is hostile · you took Ural');
     const truce = c.hooks.ledger().filter((l) => l.kind === 'truce').map((l) => l.text);
     // two humans at the table: the Ledger names the seat rather than 'you'
     expect(truce).toEqual(['Priya is hostile to John · you took Ural']);
@@ -266,7 +279,7 @@ describe('C · standing on the seat marks', () => {
     c.intent({ type: 'askPeace', to: 2 });
     await vi.advanceTimersByTimeAsync(50);
     expect(c.hooks.ui().line).toBe('Priya and Ochre have an understanding');
-    expect(c.hooks.ledger().some((l) => l.kind === 'truce' && /^Ochre accepts Priya's truce/.test(l.text))).toBe(true);
+    expect(c.hooks.ledger().some((l) => l.kind === 'truce' && /Ochre/.test(l.text) && /Priya/.test(l.text))).toBe(true);
     c.dispose();
   });
 

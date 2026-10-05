@@ -489,23 +489,8 @@ describe('A5 the AI proposes rarely, and says why', () => {
     return s;
   };
 
-  it('a fresh pair: an offer, with a reason it can state', () => {
-    const s = base();
-    const p = chooseTruceProposal(s, 2);
-    expect(p).toMatchObject({ from: 2, to: 0 });
-    expect(truceReason(s, 2, 0)).toMatch(/^you share a border in (Asia|Europe)$/);
-    expect(truceReason(s, 0, 2)).toMatch(/^they share a border in /);
-  });
-
-  it('at most once per 3 rounds from a seat (so per pair), whatever came of it', () => {
-    const s = base();
-    const seats = s.players.length;
-    s.diplomacy = { truces: [], offers: [], proposedOn: { 2: s.turn - 2 * seats }, rebuffs: [] };
-    expect(chooseTruceProposal(s, 2)).toBeNull();
-    s.diplomacy.proposedOn = { 2: s.turn - 3 * seats };
-    expect(chooseTruceProposal(s, 2)).not.toBeNull();
-  });
-
+  // v5.1 C: 'a fresh pair: an offer, with a reason' and 'at most once per 3 rounds from a seat' retired: humans
+  // never receive proposals any more (standing and 'Ask X for peace' replace the offer protocol).
   it('a human hears one offer at a time, and none the round after one', () => {
     const s = base();
     s.diplomacy = { truces: [], offers: [{ from: 1, to: 0, rounds: 3, kind: 'noAttack', turn: s.turn - 1 }], proposedOn: {}, rebuffs: [] };
