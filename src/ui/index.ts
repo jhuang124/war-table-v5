@@ -464,8 +464,6 @@ export const mountUi: MountUi = (host, api) => {
   let lastHoverAt = 0;
   const isBtn = (t: EventTarget | null) => (t instanceof Element ? t.closest<HTMLElement>('button, [role="slider"]') : null);
   const onPointerDown = (e: PointerEvent) => {
-    // v5.1 C: anything but 'Ask' (or the ring that offered it) puts the offer away.
-    if (asking && !(e.target instanceof Element && e.target.closest('[data-testid="btn-askPeace"], .seat-chip.can-ask'))) setAsk(null);
     const b = isBtn(e.target);
     if (b && b.getAttribute('aria-disabled') !== 'true') b.classList.add('is-down');
     // Any press on the UI dismisses the turn banner (board clicks are the controller's).
@@ -579,6 +577,11 @@ export const mountUi: MountUi = (host, api) => {
   wake();
 
   root.addEventListener('pointerdown', onPointerDown);
+  // v5.1 C: a press anywhere (the board included) but 'Ask' or a ring that can be asked puts the offer away.
+  const onAnyDown = (e: PointerEvent) => {
+    if (asking && !(e.target instanceof Element && e.target.closest('[data-testid="btn-askPeace"], .seat-chip.can-ask'))) setAsk(null);
+  };
+  window.addEventListener('pointerdown', onAnyDown, true);
   window.addEventListener('pointerup', clearDown);
   window.addEventListener('pointercancel', clearDown);
   root.addEventListener('pointerleave', clearDown);
@@ -603,6 +606,7 @@ export const mountUi: MountUi = (host, api) => {
       window.removeEventListener('resize', queueMeasure);
       window.removeEventListener('resize', onResizeScale);
       window.removeEventListener('pointerup', clearDown);
+      window.removeEventListener('pointerdown', onAnyDown, true);
       window.removeEventListener('pointercancel', clearDown);
       window.removeEventListener('keydown', onKey, true);
       root.remove();
