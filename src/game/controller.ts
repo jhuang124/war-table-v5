@@ -447,11 +447,11 @@ const defaultClock = (): Clock => ({
 // v4 A1, the readable reel: steady beats, no wall-clock caps. At Watch every beat plays at 1×, at Fast at
 // 2× (spacing, never pitch), at Skip the turn applies at once and the receipt carries it.
 /** The breath before an AI turn's first move. */
-const THINK_TURN_START = 300;
+const THINK_TURN_START = 240; // v6: trimmed with FIRST_BEAT to keep the AI-turn median under 6 s (Pillar 5)
 /** The breath before each AI engagement (× the turn's compression): the room reads one line, then the next. */
 const AI_GAP_MS = 160;
 /** An AI's placements land within this (tier-0 swells, staggered). */
-const AI_PLACE_MS = 600;
+const AI_PLACE_MS = 520;
 /** Beats in an AI turn before every beat is shortened proportionally (Pillar 5: a round stays in budget). */
 const AI_BEATS_CAP = 5;
 /** Round-1 AI turns before any human has moved: nothing is at stake yet (Start → first click ≤ 20 s). */
@@ -459,7 +459,7 @@ const AI_BEATS_CAP_OPENING = 3;
 /** The most a long turn is compressed (4×): past this a rampage takes its beats. */
 const AI_MIN_SCALE = 0.25;
 /** 'Sage goes first': the line holds before the opening AI move (A5). */
-const FIRST_BEAT_MS = 1200;
+const FIRST_BEAT_MS = 1000;
 /** No input and no events this long on a human's turn: the score thins (B3, §7.14). */
 const IDLE_MS = 60_000;
 /** 'You took Brazil · 3 armies move in' holds this long after the click, then the next instruction returns. */
@@ -769,6 +769,8 @@ class Controller {
    * standing reason, a peace answer. `seat` sets it in that AI's light tint (StripVM.voice).
    */
   private flash: { text: string; until: number; kind: FlashKind; seat?: PlayerId } | null = null;
+  /** v5.1 standing: the latest sentence about the reader, held until the reader's own turn begins (the band moves at turn boundaries). */
+  private pendingStanding: { ai: PlayerId; toward: PlayerId; why: string } | null = null;
   /** The enemy tile under the pointer while a source is picked (the hover odds line, desktop). */
   private hoverTile: TerritoryId | null = null;
   /** The seat ring under the pointer (its territories lift, the rest rest). */
@@ -1672,6 +1674,15 @@ class Controller {
           const show = () => this.showTurnBanner(ev.player, ev.reinforcements.total, recap, d, ev.round);
           if (this.receipt) this.bannerAfterReceipt = show;
           else show();
+          // v5.1 standing: a band that moved toward this reader since their last turn is said now, once, after the
+          // turn line has had its moment (never during another seat's turn)
+          const ps = this.pendingStanding;
+          if (ps && ps.toward === ev.player && !skip && !this.autoplayOn) {
+            this.pendingStanding = null;
+            this.timer(() => {
+              if (this.state?.currentPlayer === ev.player && this.flash?.kind !== 'peace') this.flashLine(ps.why, 'standing', STANDING_MS, ps.ai);
+            }, 1600);
+          } else if (ps && ps.toward === ev.player) this.pendingStanding = null;
         }
         this.log('turn', ev.player, `${poss(pName(d, ev.player))} turn${SEP}${ev.reinforcements.total} to place`, ev.round);
         // v5.1 B: the cup went (no objects as UI); the sound of the turn passing stays: one wood set-down
@@ -1862,11 +1873,10 @@ class Controller {
           } catch {
             why = '';
           }
-          // Never over a peace answer or a broken peace said a moment ago (they already carry the news).
-          if (why && this.flash?.kind !== 'peace') {
-            if (this.isAiDriven(d.currentPlayer)) this.narration = why;
-            else this.flashLine(why, 'standing', STANDING_MS, ev.ai);
-          }
+          // Never over a peace answer or a broken peace said a moment ago (they already carry the news). During an
+          // AI's turn the line belongs to the seat that is acting: the mark changes silently and the sentence waits
+          // for the reader's own turn (it is read then from the mark; the Ledger already has a hostile turn).
+          if (why) this.pendingStanding = { ai: ev.ai, toward: ev.toward, why };
         }
         break;
       }

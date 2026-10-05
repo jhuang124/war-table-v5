@@ -254,7 +254,7 @@ describe('C · standing on the seat marks', () => {
     r.c.dispose();
   });
 
-  it("standingChanged: a line only about the reader when wary / hostile (the engine's reason); the Ledger only on hostile toward a human", async () => {
+  it("standingChanged: the mark moves, the Ledger notes hostile toward a human, and the sentence waits for the reader's turn", async () => {
     mock.reason = 'Priya is hostile · you took Ural';
     mock.answer = (_s, a) => [
       { type: 'standingChanged', ai: a.to, toward: a.player, standing: 'wary' },
@@ -263,7 +263,9 @@ describe('C · standing on the seat marks', () => {
     const { c } = await load(table());
     c.intent({ type: 'askPeace', to: 2 });
     await vi.advanceTimersByTimeAsync(50);
-    expect(c.hooks.ui().line).toBe('Priya is hostile · you took Ural');
+    // v6: the sentence is held for the reader's own turn start (bands move at turn boundaries, while another seat's
+    // line is on screen); right now the mark changed and the Ledger has the hostile turn, the line is untouched
+    expect(c.hooks.ui().line).not.toBe('Priya is hostile · you took Ural');
     const truce = c.hooks.ledger().filter((l) => l.kind === 'truce').map((l) => l.text);
     // two humans at the table: the Ledger names the seat rather than 'you'
     expect(truce).toEqual(['Priya is hostile to John · you took Ural']);

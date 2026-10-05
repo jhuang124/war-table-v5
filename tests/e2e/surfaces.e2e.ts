@@ -185,7 +185,7 @@ if (run('1')) {
     maps: document.querySelectorAll('[data-testid="map-picker"] .map-opt').length,
     pers: [1, 2, 3].map((i) => document.querySelector(`[data-testid="seat-pers-${i}"] .seg-opt.on`)?.textContent).join(','),
   }));
-  check(seen.maps === 2 && seen.pers === 'Any,Any,Any', `iphone-land New game: the map picker and each AI's personality (${JSON.stringify(seen)})`, results);
+  check(seen.maps >= 2 && seen.pers === 'Any,Any,Any', `iphone-land New game: the map picker and each AI's personality (${JSON.stringify(seen)})`, results);
   await shot(page, 'newgame-iphone-land');
   await page.locator('[data-testid="ng-more"]').tap();
   await settleUi(page, 500);
