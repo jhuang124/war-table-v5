@@ -1,0 +1,11 @@
+{
+  "format": 1,
+  "id": "modern-boston",
+  "name": "Modern Boston",
+  "description": "The city by neighbourhood: the harbour is the only border that matters.",
+  "thumbnail": "thumb.png",
+  "order": 4,
+  "presentation": {
+    "anchorClearance": 1.3
+  }
+}

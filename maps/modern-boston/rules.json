@@ -1,0 +1,41 @@
+{
+  "format": 1,
+  "seats": { "min": 2, "max": 4 },
+  "startingArmies": { "2": 24, "3": 21, "4": 18 },
+  "cardSymbols": ["infantry", "cavalry", "artillery"],
+  "continents": [
+    { "id": "downtown", "name": "Downtown", "bonus": 4 },
+    { "id": "back_bay_fenway", "name": "Back Bay & Fenway", "bonus": 4 },
+    { "id": "allston_brighton", "name": "Allston–Brighton", "bonus": 1 },
+    { "id": "roxbury_dorchester", "name": "Roxbury & Dot", "bonus": 3 },
+    { "id": "southwest", "name": "The Southwest", "bonus": 3 },
+    { "id": "harbour", "name": "The Harbour", "bonus": 4 }
+  ],
+  "territories": [
+    { "id": "north_end", "name": "North End", "continent": "downtown" },
+    { "id": "west_end", "name": "West End", "continent": "downtown" },
+    { "id": "beacon_hill", "name": "Beacon Hill", "continent": "downtown" },
+    { "id": "downtown", "name": "Downtown", "continent": "downtown" },
+    { "id": "chinatown", "name": "Chinatown", "continent": "downtown" },
+    { "id": "back_bay", "name": "Back Bay", "continent": "back_bay_fenway" },
+    { "id": "south_end", "name": "South End", "continent": "back_bay_fenway" },
+    { "id": "fenway", "name": "Fenway", "continent": "back_bay_fenway" },
+    { "id": "longwood", "name": "Longwood", "continent": "back_bay_fenway" },
+    { "id": "mission_hill", "name": "Mission Hill", "continent": "back_bay_fenway" },
+    { "id": "allston", "name": "Allston", "continent": "allston_brighton" },
+    { "id": "brighton", "name": "Brighton", "continent": "allston_brighton" },
+    { "id": "roxbury", "name": "Roxbury", "continent": "roxbury_dorchester" },
+    { "id": "dorchester_north", "name": "Dorchester North", "continent": "roxbury_dorchester" },
+    { "id": "dorchester_south", "name": "Dorchester South", "continent": "roxbury_dorchester" },
+    { "id": "mattapan", "name": "Mattapan", "continent": "roxbury_dorchester" },
+    { "id": "jamaica_plain", "name": "Jamaica Plain", "continent": "southwest" },
+    { "id": "roslindale", "name": "Roslindale", "continent": "southwest" },
+    { "id": "west_roxbury", "name": "West Roxbury", "continent": "southwest" },
+    { "id": "hyde_park", "name": "Hyde Park", "continent": "southwest" },
+    { "id": "charlestown", "name": "Charlestown", "continent": "harbour" },
+    { "id": "east_boston", "name": "East Boston", "continent": "harbour" },
+    { "id": "south_boston", "name": "South Boston", "continent": "harbour" },
+    { "id": "seaport", "name": "Seaport", "continent": "harbour" },
+    { "id": "harbor_islands", "name": "Harbor Islands", "continent": "harbour" }
+  ]
+}
