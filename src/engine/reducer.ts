@@ -81,7 +81,6 @@ import {
   updatePeak,
   type Draft,
 } from './flow';
-import { ADJACENCY, CONTINENTS, TERRITORIES, TERRITORY_IDS } from './mapData';
 import { missionComplete } from './missions';
 import { random, rollDie } from './rng';
 import { clearHardened, noteStanding, peaceAnswer, peaceAskBlock, PEACE_ROUNDS } from './standing';
@@ -90,6 +89,7 @@ import {
   defendDiceFor,
   fortifyPath,
   isTerritoryId,
+  mapOf,
   maxAttackDice,
   territoryCount,
   territoryName,
@@ -113,7 +113,7 @@ import {
 
 export function cloneState(s: GameState): GameState {
   const territories = {} as Record<TerritoryId, TerritoryState>;
-  for (const t of TERRITORY_IDS) {
+  for (const t of mapOf(s).territoryIds) {
     const x = s.territories[t];
     territories[t] = { owner: x.owner, armies: x.armies };
   }
@@ -175,7 +175,7 @@ function phaseBlurb(state: GameState): string {
     case 'attack':
       return "You're in the attack step.";
     case 'occupy':
-      return `Move armies into ${territoryName(ph.to)} first.`;
+      return `Move armies into ${territoryName(ph.to, state)} first.`;
     case 'fortify':
       return "You're in the fortify step — fortify or end your turn.";
     case 'game-over':
@@ -229,7 +229,7 @@ function validateInner(state: GameState, action: Action): string | null {
   }
 
   const t = (x: unknown, label = 'territory'): string | null =>
-    isTerritoryId(x) ? null : `Pick a valid ${label}.`;
+    isTerritoryId(x, state) ? null : `Pick a valid ${label}.`;
   const own = (x: TerritoryId): boolean => state.territories[x].owner === a.player;
 
   switch (a.type) {
@@ -237,14 +237,14 @@ function validateInner(state: GameState, action: Action): string | null {
       if (ph.kind !== 'setup-claim') return phaseBlurb(state);
       const e = t(a.territory);
       if (e) return e;
-      if (state.territories[a.territory].owner !== UNCLAIMED) return `${territoryName(a.territory)} is already claimed.`;
+      if (state.territories[a.territory].owner !== UNCLAIMED) return `${territoryName(a.territory, state)} is already claimed.`;
       return null;
     }
     case 'placeSetup': {
       if (ph.kind !== 'setup-place') return phaseBlurb(state);
       const e = t(a.territory);
       if (e) return e;
-      if (!own(a.territory)) return `${territoryName(a.territory)} isn't yours.`;
+      if (!own(a.territory)) return `${territoryName(a.territory, state)} isn't yours.`;
       if (!isPosInt(a.count)) return 'Place at least 1 army.';
       if (a.count > ph.toPlace) return `You have only ${armies(ph.toPlace)} to place this turn.`;
       return null;
@@ -266,7 +266,7 @@ function validateInner(state: GameState, action: Action): string | null {
       if (ph.mustTrade) return 'You hold 5 or more cards — trade in a set first.';
       const e = t(a.territory);
       if (e) return e;
-      if (!own(a.territory)) return `${territoryName(a.territory)} isn't yours.`;
+      if (!own(a.territory)) return `${territoryName(a.territory, state)} isn't yours.`;
       if (!isPosInt(a.count)) return 'Place at least 1 army.';
       if (ph.remaining === 0) return 'No armies left to place.';
       if (a.count > ph.remaining) return `Only ${armies(ph.remaining)} left to place.`;
@@ -278,8 +278,8 @@ function validateInner(state: GameState, action: Action): string | null {
       if (e) return e;
       if (!isPosInt(a.count)) return 'Take back at least 1 army.';
       const placed = ph.placed[a.territory] ?? 0;
-      if (placed === 0) return `You haven't placed any armies on ${territoryName(a.territory)} this turn.`;
-      if (a.count > placed) return `You placed only ${armies(placed)} on ${territoryName(a.territory)} this turn.`;
+      if (placed === 0) return `You haven't placed any armies on ${territoryName(a.territory, state)} this turn.`;
+      if (a.count > placed) return `You placed only ${armies(placed)} on ${territoryName(a.territory, state)} this turn.`;
       return null;
     }
     case 'endReinforce': {
@@ -293,19 +293,19 @@ function validateInner(state: GameState, action: Action): string | null {
       if (ph.kind !== 'attack') return phaseBlurb(state);
       const e = t(a.from, 'territory to attack from') ?? t(a.to, 'territory to attack');
       if (e) return e;
-      if (!own(a.from)) return `${territoryName(a.from)} isn't yours.`;
-      if (own(a.to)) return `${territoryName(a.to)} is already yours.`;
-      if (!ADJACENCY[a.from].includes(a.to)) return `${territoryName(a.from)} doesn't border ${territoryName(a.to)}.`;
+      if (!own(a.from)) return `${territoryName(a.from, state)} isn't yours.`;
+      if (own(a.to)) return `${territoryName(a.to, state)} is already yours.`;
+      if (!mapOf(state).adjacency[a.from].includes(a.to)) return `${territoryName(a.from, state)} doesn't border ${territoryName(a.to, state)}.`;
       const fa = state.territories[a.from].armies;
-      if (fa < 2) return `${territoryName(a.from)} needs at least 2 armies to attack.`;
+      if (fa < 2) return `${territoryName(a.from, state)} needs at least 2 armies to attack.`;
       if (a.type === 'attack') {
         if (a.dice !== 1 && a.dice !== 2 && a.dice !== 3) return 'Roll 1, 2, or 3 dice.';
         const m = maxAttackDice(state, a.from);
-        if (a.dice > m) return `${territoryName(a.from)} can roll at most ${m === 1 ? '1 die' : `${m} dice`}.`;
+        if (a.dice > m) return `${territoryName(a.from, state)} can roll at most ${m === 1 ? '1 die' : `${m} dice`}.`;
       } else {
         const stopAt = a.stopAt ?? 1;
         if (!isPosInt(stopAt)) return 'Blitz must stop at 1 army or more.';
-        if (fa <= stopAt) return `${territoryName(a.from)} has only ${armies(fa)} — nothing to blitz with.`;
+        if (fa <= stopAt) return `${territoryName(a.from, state)} has only ${armies(fa)} — nothing to blitz with.`;
       }
       return null;
     }
@@ -323,17 +323,17 @@ function validateInner(state: GameState, action: Action): string | null {
       if (ph.kind !== 'fortify') return ph.kind === 'attack' ? 'End your attack before fortifying.' : phaseBlurb(state);
       const e = t(a.from, 'territory to move from') ?? t(a.to, 'territory to move to');
       if (e) return e;
-      if (!own(a.from)) return `${territoryName(a.from)} isn't yours.`;
-      if (!own(a.to)) return `${territoryName(a.to)} isn't yours.`;
+      if (!own(a.from)) return `${territoryName(a.from, state)} isn't yours.`;
+      if (!own(a.to)) return `${territoryName(a.to, state)} isn't yours.`;
       if (a.from === a.to) return 'Pick two different territories.';
       if (!isPosInt(a.count)) return 'Move at least 1 army.';
       const fa = state.territories[a.from].armies;
-      if (fa < 2) return `${territoryName(a.from)} has no armies to spare — 1 must stay behind.`;
+      if (fa < 2) return `${territoryName(a.from, state)} has no armies to spare — 1 must stay behind.`;
       if (a.count > fa - 1) return `You can move at most ${armies(fa - 1)} — 1 must stay behind.`;
       if (!fortifyPath(state, a.from, a.to)) {
         return state.config.fortifyRule === 'adjacent'
-          ? `House rules: fortify only to a neighboring territory, and ${territoryName(a.to)} doesn't border ${territoryName(a.from)}.`
-          : `No chain of your territories links ${territoryName(a.from)} and ${territoryName(a.to)}.`;
+          ? `House rules: fortify only to a neighboring territory, and ${territoryName(a.to, state)} doesn't border ${territoryName(a.from, state)}.`
+          : `No chain of your territories links ${territoryName(a.from, state)} and ${territoryName(a.to, state)}.`;
       }
       return null;
     }
@@ -421,7 +421,7 @@ function execute(d: Draft, a: Action): void {
       p.setupArmies = Math.max(0, p.setupArmies - 1);
       emit(d, { type: 'territoryClaimed', player: a.player, territory: a.territory });
       updatePeak(d, a.player);
-      if (TERRITORY_IDS.every((t) => s.territories[t].owner !== UNCLAIMED)) {
+      if (mapOf(s).territoryIds.every((t) => s.territories[t].owner !== UNCLAIMED)) {
         afterTerritoriesAssigned(d);
       } else {
         s.currentPlayer = nextSeat(s, a.player, (p) => !s.players[p].neutral)!.player;
@@ -734,13 +734,14 @@ function completeOccupy(
   s.territories[to].armies += count;
   emit(d, { type: 'armiesMoved', player, from, to, count, reason: 'occupy' });
 
-  const c = TERRITORIES[to].continent;
-  const others = CONTINENTS[c].territories.filter((x) => x !== to);
+  const m = mapOf(s);
+  const c = m.territories[to].continent;
+  const others = m.continents[c].territories.filter((x) => x !== to);
   if (prev >= 0 && others.every((x) => s.territories[x].owner === prev)) {
     emit(d, { type: 'continentLost', player: prev, continent: c, to: player });
     addGrudge(s, prev, player, GRUDGE_CONTINENT);
   }
-  if (CONTINENTS[c].territories.every((x) => s.territories[x].owner === player)) {
+  if (m.continents[c].territories.every((x) => s.territories[x].owner === player)) {
     emit(d, { type: 'continentGained', player, continent: c });
   }
 

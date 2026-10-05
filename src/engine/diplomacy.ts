@@ -170,8 +170,8 @@ export function truceSentence(state: GameState, e: GameEvent): string | null {
         ? `${poss(e.from)} truce offer to ${name(e.to)} lapses`
         : `${name(e.to)} turns down ${poss(e.from)} truce`;
     case 'truceBroken':
-      if (ais(e.by, e.against)) return `${name(e.by)} turned on ${name(e.against)}${SEP}attacks ${territoryName(e.to)}`;
-      return `${name(e.by)} breaks the truce with ${name(e.against)}${SEP}attacks ${territoryName(e.to)}`;
+      if (ais(e.by, e.against)) return `${name(e.by)} turned on ${name(e.against)}${SEP}attacks ${territoryName(e.to, state)}`;
+      return `${name(e.by)} breaks the truce with ${name(e.against)}${SEP}attacks ${territoryName(e.to, state)}`;
     case 'truceExpired':
       if (e.reason === 'standing') return `${name(e.from)} turned on ${name(e.to)}`;
       if (ais(e.from, e.to)) return `The understanding between ${name(e.from)} and ${name(e.to)} ends`;

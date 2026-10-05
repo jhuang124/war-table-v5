@@ -3,6 +3,7 @@ import {
   applyAction,
   cloneState,
   createGame,
+  mapOf,
   TERRITORY_IDS,
   type Action,
   type ActionResult,
@@ -103,7 +104,7 @@ export interface ScenarioOpts {
 export function scenario(o: ScenarioOpts = {}): GameState {
   const n = o.players ?? 2;
   const s = cloneState(createGame(config(n, o.config)).state);
-  for (const t of TERRITORY_IDS) {
+  for (const t of mapOf(s).territoryIds) {
     const spec = o.terr?.[t];
     s.territories[t] = spec ? { owner: spec[0], armies: spec[1] } : { owner: o.fill ?? 0, armies: 1 };
   }
@@ -123,7 +124,7 @@ export function scenario(o: ScenarioOpts = {}): GameState {
   }
   s.deck = all;
   for (const p of s.players) {
-    p.eliminated = !TERRITORY_IDS.some((t) => s.territories[t].owner === p.id);
+    p.eliminated = !mapOf(s).territoryIds.some((t) => s.territories[t].owner === p.id);
   }
   s.currentPlayer = o.current ?? 0;
   s.firstPlayer = 0;
@@ -164,7 +165,7 @@ export function passTurn(state: GameState): { state: GameState; events: GameEven
   if (s.phase.kind === 'reinforce') {
     const ph = s.phase;
     if (ph.remaining > 0) {
-      const t = TERRITORY_IDS.find((x) => s.territories[x].owner === p)!;
+      const t = mapOf(s).territoryIds.find((x) => s.territories[x].owner === p)!;
       const r = act(s, { type: 'reinforce', player: p, territory: t, count: ph.remaining });
       s = r.state;
       events.push(...r.events);

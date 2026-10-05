@@ -6,7 +6,7 @@
 // Rules and topology (no geometry) live in src/map/packs.ts, which the engine reads.
 
 import type { BoardGeometry, SeaLaneGeom, Vec2 } from './types';
-import { DEFAULT_MAP_ID, isKnownMap, mapIdOf, packData, packIds } from './packs';
+import { DEFAULT_MAP_ID, isHiddenMap, isKnownMap, mapIdOf, packData, packIds } from './packs';
 
 import classicBoard from '../../maps/classic/board.json';
 import trueWorldBoard from '../../maps/true-world/board.json';
@@ -25,6 +25,7 @@ const THUMBS: Record<string, string> = {
   'true-world': new URL('../../maps/true-world/thumb.png', import.meta.url).href,
 };
 
+// Visible packs only: a hidden pack (manifest.hidden, e.g. the engine's test-twelve) may ship no board.
 for (const id of packIds()) if (!RAW_BOARDS[id]) throw new Error(`map pack ${id} has no board.json registered in src/map/registry.ts`);
 
 export interface MapInfo {
@@ -42,7 +43,7 @@ export interface MapInfo {
   rulesFrom: string;
 }
 
-/** Every playable map, in picker order (classic first). */
+/** Every playable map, in picker order (classic first). Hidden packs (manifest.hidden) are never listed. */
 export function listMaps(): MapInfo[] {
   return packIds().map((id) => {
     const p = packData(id);
@@ -61,7 +62,10 @@ export function listMaps(): MapInfo[] {
 
 /** The raw generated file for a pack (tests prove classic's is byte-identical to the pre-pack board). */
 export function rawBoard(id: string): BoardGeometry {
-  return RAW_BOARDS[mapIdOf(id)] as BoardGeometry;
+  const key = mapIdOf(id);
+  const raw = RAW_BOARDS[key];
+  if (!raw) throw new Error(`map pack ${key} has no board.json (a hidden, engine-only pack)`);
+  return raw as BoardGeometry;
 }
 
 /** [on a's coast, on b's coast]: the lane's own `shore`, else its first and last points. */
@@ -104,19 +108,25 @@ export function resolveMapId(opts: { search?: string; save?: string | null; allo
   if (opts.allowUrl && opts.search) {
     const want = new URLSearchParams(opts.search).get('map');
     if (want) {
-      if (isKnownMap(want)) return want;
+      if (bootable(want)) return want;
       console.warn(`[risk] ?map=${want}: no such map pack; using ${DEFAULT_MAP_ID}`);
     }
   }
   if (opts.save) {
     try {
       const f = JSON.parse(opts.save) as { state?: { config?: { mapId?: string } } };
-      return mapIdOf(f?.state?.config);
+      const id = mapIdOf(f?.state?.config);
+      return bootable(id) ? id : DEFAULT_MAP_ID;
     } catch {
       /* unreadable save: the controller discards it too */
     }
   }
   return DEFAULT_MAP_ID;
+}
+
+/** A pack the page may boot on: registered, not hidden, with a board. */
+function bootable(id: string): boolean {
+  return isKnownMap(id) && !isHiddenMap(id) && !!RAW_BOARDS[id];
 }
 
 /** Same key as src/game/storage.ts SAVE_KEY (not imported: src/map stays free of game code). */

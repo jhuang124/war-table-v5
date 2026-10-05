@@ -3,9 +3,9 @@
 // personality) never proposes and always declines.
 
 import { grudgeOf, offerBetween, recentlyRebuffed, truceBetween } from '../diplomacy';
-import { ADJACENCY, CONTINENTS, TERRITORIES, TERRITORY_IDS } from '../mapData';
 import type { GameState, PlayerId, TruceProposal } from '../types';
 import { standingOf } from '../standing';
+import { continentName, mapOf } from '../rules';
 import { TEMPERAMENTS } from './personality';
 
 interface Border {
@@ -16,13 +16,14 @@ interface Border {
 }
 
 function border(s: GameState, me: PlayerId, them: PlayerId): Border {
+  const m = mapOf(s);
   let theirs = 0;
   let mine = 0;
-  for (const t of TERRITORY_IDS) {
+  for (const t of m.territoryIds) {
     const x = s.territories[t];
     if (x.owner !== me && x.owner !== them) continue;
     const other = x.owner === me ? them : me;
-    if (!ADJACENCY[t].some((n) => s.territories[n].owner === other)) continue;
+    if (!m.adjacency[t].some((n) => s.territories[n].owner === other)) continue;
     if (x.owner === me) mine += x.armies;
     else theirs += x.armies;
   }
@@ -30,17 +31,19 @@ function border(s: GameState, me: PlayerId, them: PlayerId): Border {
 }
 
 function share(s: GameState, p: PlayerId): number {
+  const m = mapOf(s);
   let n = 0;
-  for (const t of TERRITORY_IDS) if (s.territories[t].owner === p) n++;
-  return n / TERRITORY_IDS.length;
+  for (const t of m.territoryIds) if (s.territories[t].owner === p) n++;
+  return n / m.size;
 }
 
 /** Opponent seats (not neutral, not eliminated) that border `me`. */
 function neighbourSeats(s: GameState, me: PlayerId): Set<PlayerId> {
+  const m = mapOf(s);
   const out = new Set<PlayerId>();
-  for (const t of TERRITORY_IDS) {
+  for (const t of m.territoryIds) {
     if (s.territories[t].owner !== me) continue;
-    for (const n of ADJACENCY[t]) {
+    for (const n of m.adjacency[t]) {
       const o = s.territories[n].owner;
       if (o >= 0 && o !== me && !s.players[o].neutral && !s.players[o].eliminated) out.add(o);
     }
@@ -50,6 +53,7 @@ function neighbourSeats(s: GameState, me: PlayerId): Set<PlayerId> {
 
 /** Offer score from the answering seat's side; > 0 = accept. */
 export function truceScore(s: GameState, offer: TruceProposal): number {
+  const m = mapOf(s);
   const me = offer.to;
   const from = offer.from;
   const pl = s.players[me];
@@ -66,7 +70,7 @@ export function truceScore(s: GameState, offer: TruceProposal): number {
   if (pl.personality === 'opportunist' && ratio < 0.6) v -= 1.5; // they're weak: better eaten than befriended
   if (pl.personality === 'warlord') {
     let theirT = 0;
-    for (const t of TERRITORY_IDS) if (s.territories[t].owner === from) theirT++;
+    for (const t of m.territoryIds) if (s.territories[t].owner === from) theirT++;
     if (theirT <= 4) v -= 3; // prey
   }
   return v;
@@ -111,14 +115,15 @@ export function lastOfferRound(s: GameState, a: PlayerId, b: PlayerId): number |
  * 'they share a border in Asia'. The AI only proposes when it can state one (v4 A5).
  */
 export function truceReason(s: GameState, from: PlayerId, to: PlayerId): string | null {
+  const m = mapOf(s);
   const touches: Partial<Record<string, number>> = {};
-  for (const t of TERRITORY_IDS) {
+  for (const t of m.territoryIds) {
     const o = s.territories[t].owner;
     if (o !== from && o !== to) continue;
     const other = o === from ? to : from;
-    for (const n of ADJACENCY[t]) {
+    for (const n of m.adjacency[t]) {
       if (s.territories[n].owner !== other) continue;
-      const c = TERRITORIES[t].continent;
+      const c = m.territories[t].continent;
       touches[c] = (touches[c] ?? 0) + 1;
     }
   }
@@ -126,7 +131,7 @@ export function truceReason(s: GameState, from: PlayerId, to: PlayerId): string 
   for (const [c, n] of Object.entries(touches)) if (!best || (n ?? 0) > (touches[best] ?? 0)) best = c;
   if (!best) return null;
   const who = s.players[to]?.kind === 'human' ? 'you' : 'they';
-  return `${who} share a border in ${CONTINENTS[best as keyof typeof CONTINENTS].name}`;
+  return `${who} share a border in ${continentName(best, m)}`;
 }
 
 /**

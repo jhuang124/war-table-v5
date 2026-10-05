@@ -1,0 +1,8 @@
+{
+  "format": 1,
+  "id": "test-twelve",
+  "name": "Test Twelve",
+  "description": "A twelve-territory board for engine tests: three continents, two sea crossings, two or three players. Not offered in the picker.",
+  "hidden": true,
+  "presentation": { "anchorClearance": 1.3 }
+}
