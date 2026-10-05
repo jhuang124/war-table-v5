@@ -23,7 +23,7 @@ await page.waitForFunction(() => window.__risk?.ui().screen === 'title');
 await clickBtn(page, 'title-new');
 await page.waitForFunction(() => window.__risk.ui().screen === 'newGame');
 await page.waitForTimeout(300);
-const FOLDED = ['ng-more-body', 'map-picker', 'setup-placeOwn', 'house-neutral', 'house-missions', 'house-seed', 'seat-diff-1', 'seat-pers-1'];
+const FOLDED = ['ng-more-body', 'setup-placeOwn', 'house-neutral', 'house-missions', 'house-seed', 'seat-diff-1', 'seat-pers-1'];
 const top = async () =>
   page.evaluate(() => {
     const vis = (e: Element) => (e as HTMLElement).checkVisibility?.({ visibilityProperty: true, opacityProperty: true }) ?? true;
@@ -36,8 +36,8 @@ const top = async () =>
 const t0 = await top();
 const before = await Promise.all(FOLDED.map(shown));
 check(
-  t0.labels.filter(Boolean).join(' / ') === 'Seats / Length' && (await shown('ng-more')) && (await shown('ng-start')) && before.every((v) => !v),
-  `New game shows Seats / Length / ${t0.more} / Start and nothing folded (${t0.labels.filter(Boolean).join(', ')}; folded shown: ${FOLDED.filter((_, i) => before[i]).join(', ') || 'none'})`,
+  t0.labels.filter(Boolean).join(' / ') === 'Seats / Map / Length' && (await shown('ng-more')) && (await shown('ng-start')) && before.every((v) => !v),
+  `New game shows Seats / Map / Length / ${t0.more} / Start and nothing folded (${t0.labels.filter(Boolean).join(', ')}; folded shown: ${FOLDED.filter((_, i) => before[i]).join(', ') || 'none'})`,
   results,
 );
 await clickBtn(page, 'ng-more');

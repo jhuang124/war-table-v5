@@ -227,6 +227,17 @@ export async function place(page: Page, t: string, n?: number): Promise<void> {
   await clickBtn(page, 'btn-place');
 }
 
+/** v6: pick a Where-row tile. The row snap-scrolls the chosen tile into view, so a pointer click waits on stability forever; dispatch instead. */
+export async function pickMap(page: Page, id: string): Promise<void> {
+  await dismissReceipt(page);
+  await page.evaluate((mid) => {
+    const el = document.querySelector<HTMLElement>(`[data-testid="map-${mid}"]`);
+    if (!el) throw new Error(`no map tile for ${mid}`);
+    el.click();
+  }, id);
+  await page.waitForTimeout(250);
+}
+
 export async function clickBtn(page: Page, testid: string): Promise<void> {
   // v4: the receipt covers the strip until it is put away (a human's first tap does that)
   await dismissReceipt(page);

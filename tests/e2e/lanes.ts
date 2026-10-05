@@ -64,6 +64,7 @@ export const FLOWS: Record<string, FlowSpec> = {
   },
   v4: { lane: 'logic', realtime: true, why: 'v4 audits: type scale and numeral floor, drift ≥ 1 px / 2 s, tier bands on a real fight, an old save\'s pending truce never hides Place N' },
   v5: { lane: 'logic', realtime: true, why: 'v5 audits: the holding dab during Place, front lines + evening hooks, a human fight rolls, End game now builds a replay with ≤ 3 moments' },
+  maps: { lane: 'logic', why: 'v6 maps: every visible pack boots with ?map=<id>, shows picked on the Where row, deals its own territory count, and takes a placement (rest shots in artifacts/e2e/maps-<id>.png)' },
   squint: { lane: 'logic', why: 'v3 squint guard: at 30 % scale, the five tallest stacks and the continent outlines out-contrast the washes (numbers reported)' },
   pwa: { lane: 'logic', why: 'manifest, service worker, offline boot (its own production build and server)' },
   surfaces: {

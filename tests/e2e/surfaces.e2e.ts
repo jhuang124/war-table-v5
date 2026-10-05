@@ -16,7 +16,7 @@
 // Screenshots go to artifacts/surfaces/.
 import { mkdirSync } from 'node:fs';
 import type { Page } from 'playwright';
-import { BASE, Q, check, clearStorage, clickBtn, finish, idle, loadScenario, open, scenario, state, ui } from './lib';
+import { BASE, Q, check, clearStorage, clickBtn, pickMap, finish, idle, loadScenario, open, scenario, state, ui } from './lib';
 import { longPress, openDevice, type DeviceName } from './mobile-lib';
 import type { GameState } from '../../src/engine';
 
@@ -89,10 +89,8 @@ if (run('1')) {
   check((await page.evaluate(() => window.__risk.map())) === 'classic', 'a fresh page boots on Classic', results);
   await clickBtn(page, 'title-new');
   await settleUi(page, 700);
-  // v5.1 D: the map picker is folded under More
-  check(!(await page.locator('[data-testid="map-picker"]').isVisible()), 'the map picker is folded away until More', results);
-  await clickBtn(page, 'ng-more');
-  await settleUi(page, 500);
+  // v6 maps: the map is a primary decision, the Where row of ink tiles (John, 2026-10-04)
+  check(await page.locator('[data-testid="ng-where"]').isVisible(), 'the Where row of map tiles shows without opening More', results);
   const maps = await page.locator('[data-testid="map-picker"] .map-opt').evaluateAll((els) =>
     els.map((e) => ({
       id: (e as HTMLElement).dataset.map,
@@ -104,8 +102,8 @@ if (run('1')) {
     })),
   );
   check(
-    maps.length === 2 && maps[0].id === 'classic' && maps[0].on && maps[1].id === 'true-world' && maps.every((m) => m.desc && m.thumb && m.seats === '2–4 players'),
-    `the picker offers Classic (picked) and True World, each a thumbnail, a line and its seats (${JSON.stringify(maps)})`,
+    maps.length >= 2 && maps[0].id === 'classic' && maps[0].on && maps.some((m) => m.id === 'true-world') && maps.every((m) => m.desc && m.thumb),
+    `the Where row offers Classic (picked), True World and the rest, each an ink thumbnail and one line (${maps.map((m) => m.id).join(', ')})`,
     results,
   );
   // AI seats: personality 'Any' by default (v5.1 D: random and hidden), each word still titled with its line
@@ -117,7 +115,7 @@ if (run('1')) {
     })),
   );
   check(pers.map((p) => p.on).join(',') === 'Any,Any,Any' && pers.every((p) => !p.line && /Remembers who hurt it/.test(p.title ?? '')), `AI seats default to Any (random, hidden), no line under it (${JSON.stringify(pers)})`, results);
-  await clickBtn(page, 'map-true-world');
+  await pickMap(page, 'true-world');
   await settleUi(page);
   const picked = await page.evaluate(() => ({
     tw: document.querySelector('[data-testid="map-true-world"]')?.getAttribute('aria-checked'),
@@ -132,7 +130,9 @@ if (run('1')) {
     truces: document.querySelectorAll('[data-testid="house-truces"]').length,
   }));
   check(house.neutral === 'false' && house.neutralNa === true && house.truces === 0, `house rules: Neutral armies off (dimmed: 4 seats), no Truces switch (${JSON.stringify(house)})`, results);
-  await page.locator('[data-testid="house-seed"]').scrollIntoViewIfNeeded();
+  // (a plain scrollIntoView: Playwright's stability wait stalls on the sheet while the Where row's snap scroll settles)
+  await page.evaluate(() => document.querySelector('[data-testid="house-seed"]')?.scrollIntoView({ block: 'center' }));
+  await page.waitForTimeout(300);
   await shot(page, 'newgame-house-1440x900');
   // Start: the page reloads onto True World and deals the game there
   await Promise.all([page.waitForEvent('framenavigated', { timeout: 15000 }), clickBtn(page, 'ng-start')]);
