@@ -20,7 +20,7 @@
 //           dry in (`uTexOn` 0 → 1, 400 ms). `setQuality()` steps the fallback ladder down.
 import * as THREE from 'three';
 import type { BoardGeometry, Vec2 } from '../map/types';
-import { TERRITORY_IDS, TERRITORIES, CONTINENT_IDS } from '../engine/mapData';
+import { TERRITORY_IDS, TERRITORIES, CONTINENT_IDS } from './activeMap';
 import type { ContinentId, TerritoryId } from '../engine/types';
 import { loadStreaks, loadTexMaps, type StreakData, type TexMaps } from './texmaps';
 
@@ -776,7 +776,7 @@ export async function buildInk(g: BoardGeometry, opt: InkOptions): Promise<InkLa
   const fieldH = Math.round((fieldW * BH) / BW);
   const sF = fieldW / BW;
   const index = (t: TerritoryId) => TERRITORY_IDS.indexOf(t) + 1;
-  const contOf = new Uint8Array(64).fill(255);
+  const contOf = new Uint8Array(Math.max(64, TERRITORY_IDS.length + 1)).fill(255);
   TERRITORY_IDS.forEach((t, i) => (contOf[i + 1] = CONTINENT_IDS.indexOf(TERRITORIES[t].continent)));
 
   // --- id map (field resolution) ------------------------------------------------------------

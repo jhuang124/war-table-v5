@@ -10,11 +10,8 @@
 //        → queue empty: pending click-through inputs run; all settled: syncState, next AI beat.
 
 import {
-  CONTINENTS,
-  CONTINENT_IDS,
-  TERRITORIES,
-  TERRITORY_IDS,
   UNCLAIMED,
+  mapDefOf,
   applyAction,
   attackSources,
   attackTargets,
@@ -76,7 +73,7 @@ import {
   type StoryLedger,
 } from './story';
 import { Voices, type VoiceEntry, type VoiceKind, type VoiceVars } from './voice';
-import { SEP, armies, attackBegins, attackTakes, attackThrownBack, cName, click, goesFirst, pName, pct, poss, seatRef, setTouchCopy, tName, upper } from './copy';
+import { SEP, armies, attackBegins, attackTakes, attackThrownBack, cName, click, goesFirst, pName, pct, poss, seatRef, setCopyMap, setTouchCopy, tName, upper } from './copy';
 import { eventTier } from './timingModel';
 import { createHaptics, type Haptics } from './haptics';
 import { applyEventToDisplay, isBlocking } from './display';
@@ -85,6 +82,7 @@ import { autoChain, bestSet, noSetStatus } from './helpers';
 import {
   addSeat,
   buildNewGameVM,
+  autoSetupBatch,
   defaultDraft,
   draftToConfig,
   lengthRules,
@@ -497,7 +495,7 @@ function freshMeta(id: string): GameMeta {
 }
 
 /** A saved meta from this or an older build: keep the fields that still exist and are well-formed. */
-function restoreMeta(id: string, saved: Partial<GameMeta> | undefined): GameMeta {
+function restoreMeta(id: string, saved: Partial<GameMeta> | undefined, config?: { mapId?: string } | null): GameMeta {
   const m = freshMeta(id);
   if (!saved || saved.id !== id) return m;
   if (saved.recap && typeof saved.recap === 'object') {
@@ -509,7 +507,7 @@ function restoreMeta(id: string, saved: Partial<GameMeta> | undefined): GameMeta
   if (Array.isArray(saved.nearGoal)) m.nearGoal = saved.nearGoal;
   m.finalRoundShown = !!saved.finalRoundShown;
   m.lastTurnKind = saved.lastTurnKind ?? null;
-  m.sel = restoreSel(saved.sel);
+  m.sel = restoreSel(saved.sel, config);
   if (saved.out && typeof saved.out === 'object') {
     m.out = {};
     for (const [k, v] of Object.entries(saved.out)) if (v && typeof v.by === 'number' && typeof v.round === 'number') m.out[Number(k)] = { by: v.by, round: v.round };
@@ -520,19 +518,19 @@ function restoreMeta(id: string, saved: Partial<GameMeta> | undefined): GameMeta
   }
   if (saved.rings && typeof saved.rings === 'object') {
     m.rings = {};
-    for (const [k, v] of Object.entries(saved.rings)) if (Array.isArray(v)) m.rings[Number(k)] = v.filter((t) => (TERRITORY_IDS as readonly string[]).includes(t));
+    for (const [k, v] of Object.entries(saved.rings)) if (Array.isArray(v)) m.rings[Number(k)] = v.filter((t) => !!mapDefOf(config).territories[t]);
   }
   m.firstMoved = !!saved.firstMoved;
-  m.story = restoreStory(saved.story);
+  m.story = restoreStory(saved.story, config);
   if (Array.isArray(saved.revealed)) m.revealed = saved.revealed.filter((x) => typeof x === 'number');
   return m;
 }
 
-function restoreSel(x: unknown): Sel {
+function restoreSel(x: unknown, config?: { mapId?: string } | null): Sel {
   const sel = emptySel();
   if (!x || typeof x !== 'object') return sel;
   const o = x as Partial<Sel>;
-  const tid = (t: unknown): TerritoryId | null => (typeof t === 'string' && (TERRITORY_IDS as readonly string[]).includes(t) ? (t as TerritoryId) : null);
+  const tid = (t: unknown): TerritoryId | null => (typeof t === 'string' && !!mapDefOf(config).territories[t] ? (t as TerritoryId) : null);
   const num = (n: unknown): number | null => (typeof n === 'number' && Number.isFinite(n) ? n : null);
   sel.selected = tid(o.selected);
   sel.target = tid(o.target);
@@ -840,6 +838,7 @@ class Controller {
     const ui = readJson<UiFile>(this.kv, UI_KEY);
     if (ui?.lastSetup) this.draft = sanitizeDraft(ui.lastSetup);
     this.bootMap = opts.bootMap ?? activeMapId();
+    setCopyMap({ mapId: this.bootMap });
     this.reloadFn = opts.reload ?? (typeof location !== 'undefined' && typeof window !== 'undefined' ? () => reloadPage() : null);
     this.refreshSaveSummary();
 
@@ -1120,11 +1119,12 @@ class Controller {
     const { state, events } = createGame(config);
     this.resetGameLocals();
     this.state = state;
+    setCopyMap(state.config);
     this.meta = freshMeta(state.id);
     this.seedScore(state);
     // The deal plays from an empty board.
     const blank = cloneState(state);
-    for (const t of TERRITORY_IDS) blank.territories[t] = { owner: UNCLAIMED, armies: 0 };
+    for (const t of mapDefOf(state.config).territoryIds) blank.territories[t] = { owner: UNCLAIMED, armies: 0 };
     blank.round = 0;
     blank.turn = 0;
     blank.currentPlayer = state.firstPlayer;
@@ -1204,10 +1204,11 @@ class Controller {
     const s = f.state;
     this.resetGameLocals();
     this.state = s;
+    setCopyMap(s.config);
     this.disp = cloneState(s);
     this.seedScore(s);
     const ui = readJson<UiFile>(this.kv, UI_KEY);
-    this.meta = restoreMeta(s.id, ui?.game);
+    this.meta = restoreMeta(s.id, ui?.game, s.config);
     this.sel = this.meta.sel;
     this.validateSel();
     if (s.phase.kind === 'occupy' && this.sel.occupyCount === null) {
@@ -1744,7 +1745,7 @@ class Controller {
       case 'continentGained': {
         const name = pName(d, ev.player);
         const c = ev.continent;
-        const bonus = CONTINENTS[c].bonus;
+        const bonus = mapDefOf(d.config).continents[c].bonus;
         // Human involvement only: a human took it, or took it from a human. AI-vs-AI just flares.
         const lc = this.lastConquest;
         const involved = this.isHumanSeat(ev.player) || (!!lc && lc.attacker === ev.player && this.isHumanSeat(lc.victim));
@@ -2599,12 +2600,12 @@ class Controller {
     const t = info.territory;
     const tile = d?.territories[t];
     if (!d || !tile) return false;
-    const c = TERRITORIES[t].continent;
+    const c = mapDefOf(d.config).territories[t].continent;
     const owner = tile.owner >= 0 && d.players[tile.owner] ? seatRef(d, tile.owner) : null;
     this.nameCard = {
       territory: tName(t),
       continent: cName(c),
-      bonus: CONTINENTS[c].bonus,
+      bonus: mapDefOf(d.config).continents[c].bonus,
       owner,
       armies: tile.armies,
       x: info.clientX,
@@ -2917,7 +2918,7 @@ class Controller {
       }
       // A save from before placements were tracked: take back a whole tile.
       if (!last) {
-        const t = TERRITORY_IDS.find((x) => (ph.placed[x] ?? 0) > 0);
+        const t = mapDefOf(s.config).territoryIds.find((x) => (ph.placed[x] ?? 0) > 0);
         if (t) last = { t, n: ph.placed[t]! };
       }
       if (!last) return;
@@ -3283,7 +3284,7 @@ class Controller {
       if (seg !== 'done') return;
       const staged = { ...this.sel.staged };
       this.sel = emptySel();
-      for (const t of TERRITORY_IDS) {
+      for (const t of mapDefOf(s.config).territoryIds) {
         const n = staged[t];
         if (n) this.act({ type: 'placeSetup', player: me, territory: t, count: n });
       }
@@ -3538,7 +3539,7 @@ class Controller {
         break;
       }
       case 'tapLane': {
-        if (this.screen !== 'game' || !TERRITORIES[i.from] || !TERRITORIES[i.to]) break;
+        if (this.screen !== 'game' || !mapDefOf(this.state?.config).territories[i.from] || !mapDefOf(this.state?.config).territories[i.to]) break;
         const a = this.panOf(i.from);
         const b = this.panOf(i.to);
         this.cue('glint', { ...(a !== null ? { pan: a } : {}), ...(b !== null ? { panTo: b } : {}), duration: 0.5 } as PlayOptions);
@@ -3791,7 +3792,7 @@ class Controller {
     const s = this.state;
     if (!s) return 'End the game now?';
     const leader = this.standingsOrder(s)[0];
-    return `End the game now? ${pName(s, leader)} wins on territories (${territoryCount(s, leader)} of 42).`;
+    return `End the game now? ${pName(s, leader)} wins on territories (${territoryCount(s, leader)} of ${mapDefOf(s.config).size}).`;
   }
 
   private endGameNow(): void {
@@ -3856,7 +3857,7 @@ class Controller {
   /** v5 F2: a tapped continent label: its name and bonus (and holder) for a moment, its land pulses once. */
   private tapContinent(c: ContinentId): void {
     const d = this.disp;
-    const info = CONTINENTS[c];
+    const info = d ? mapDefOf(d.config).continents[c] : undefined;
     if (!d || !info || this.screen !== 'game') return;
     const owners = new Set<number>(info.territories.map((t) => d.territories[t]?.owner ?? -1));
     const holder: number = owners.size === 1 ? [...owners][0] : -1;
@@ -4298,7 +4299,7 @@ class Controller {
     const house = s ? s.config : this.draft.house;
     if (s) {
       const need = territoriesNeeded(s);
-      lines.push(need >= 42 ? 'Goal: take every territory.' : `Goal: first to ${need} territories wins.`);
+      lines.push(need >= mapDefOf(s.config).size ? 'Goal: take every territory.' : `Goal: first to ${need} territories wins.`);
       if (s.config.turnLimit) lines.push(`Game ends after round ${s.config.turnLimit}${SEP}most territories wins.`);
     } else lines.push(buildNewGameVM(this.draft).summary);
     lines.push(
@@ -4326,9 +4327,9 @@ class Controller {
       current: p.id === d.currentPlayer && d.phase.kind !== 'game-over',
       eliminated: p.eliminated,
       territories: territoryCount(d, p.id),
-      armies: TERRITORY_IDS.reduce((n, t) => n + (d.territories[t].owner === p.id ? d.territories[t].armies : 0), 0),
+      armies: mapDefOf(d.config).territoryIds.reduce((n, t) => n + (d.territories[t].owner === p.id ? d.territories[t].armies : 0), 0),
       cards: p.cards.length,
-      continents: CONTINENT_IDS.filter((c) => CONTINENTS[c].territories.every((t) => d.territories[t].owner === p.id)),
+      continents: mapDefOf(d.config).continentIds.filter((c) => mapDefOf(d.config).continents[c].territories.every((t) => d.territories[t].owner === p.id)),
       lostKey: this.lostKeys[p.id] ?? 0,
       out: p.eliminated && this.meta?.out?.[p.id] && d.players[this.meta.out[p.id].by] ? { by: seatRef(d, this.meta.out[p.id].by), round: this.meta.out[p.id].round } : null,
     }));
@@ -4520,7 +4521,7 @@ class Controller {
   private attackableTargets(d: GameState, me: PlayerId): TerritoryId[] {
     const out = new Set<TerritoryId>();
     for (const src of attackSources(d, me)) for (const t of attackTargets(d, src)) out.add(t);
-    return TERRITORY_IDS.filter((t) => out.has(t));
+    return mapDefOf(d.config).territoryIds.filter((t) => out.has(t));
   }
 
   /**
@@ -4532,7 +4533,7 @@ class Controller {
     // v5 F7: a hovered seat ring: its territories lift a shade and the rest rest, while the pointer is there.
     const d = this.disp;
     if (this.hoverSeatId !== null && d && !this.receipt && this.screen === 'game') {
-      const theirs = TERRITORY_IDS.filter((t) => d.territories[t].owner === this.hoverSeatId);
+      const theirs = mapDefOf(d.config).territoryIds.filter((t) => d.territories[t].owner === this.hoverSeatId);
       base = { selectable: theirs, dimOthers: true };
     }
     const rings = this.loserRings();
@@ -4564,13 +4565,13 @@ class Controller {
     const sel = this.viewSel();
     const me = d.currentPlayer;
     const ph = d.phase;
-    const own = () => TERRITORY_IDS.filter((t) => d.territories[t].owner === me);
+    const own = () => mapDefOf(d.config).territoryIds.filter((t) => d.territories[t].owner === me);
     const picked = sel.selected && d.territories[sel.selected].owner === me ? sel.selected : null;
     switch (ph.kind) {
       case 'setup-claim':
         // A random deal is playing: nothing to claim, so nothing glows.
         if (d.config.setupMode !== 'draft') return {};
-        return { selectable: TERRITORY_IDS.filter((t) => d.territories[t].owner === UNCLAIMED) };
+        return { selectable: mapDefOf(d.config).territoryIds.filter((t) => d.territories[t].owner === UNCLAIMED) };
       case 'setup-place': {
         const left = placeLeft(d, sel);
         const pending = { ...sel.staged };
@@ -5040,7 +5041,8 @@ class Controller {
       players,
     };
     if (config?.setupBatch === undefined && cfg.initialPlacement === 'manual' && this.draft.house.setupBatch === 'auto') {
-      cfg.setupBatch = Math.max(1, Math.ceil(((cfg.startingArmies ?? ({ 2: 40, 3: 35, 4: 30 } as Record<number, number>)[n]) - Math.floor(42 / n)) / 2));
+      const def = mapDefOf(cfg);
+      cfg.setupBatch = autoSetupBatch(n, cfg.startingArmies ?? def.startingArmies[n] ?? 30, def.size);
     }
     this.overlay = null;
     this.startGame(cfg);

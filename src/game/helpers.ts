@@ -2,9 +2,8 @@
 // bestSet, occupyDefault, autoSource, autoChain, oddsWord, plus the card-status line.
 
 import {
-  ADJACENCY,
-  TERRITORY_IDS,
   bonusTerritoryFor,
+  mapDefOf,
   setValue,
   validSets,
   type Card,
@@ -91,7 +90,7 @@ export function noSetStatus(hand: Card[]): string {
 // ---------------------------------------------------------------------------
 
 function enemyNeighbors(state: GameState, t: TerritoryId, owner: PlayerId): TerritoryId[] {
-  return ADJACENCY[t].filter((n) => state.territories[n].owner !== owner && state.territories[n].owner >= 0);
+  return mapDefOf(state.config).adjacency[t].filter((n) => state.territories[n].owner !== owner && state.territories[n].owner >= 0);
 }
 
 /**
@@ -120,14 +119,14 @@ export function autoSource(state: GameState, target: TerritoryId, player: Player
   let best: TerritoryId | null = null;
   let bestArmies = -1;
   let bestSafe = -1;
-  for (const n of ADJACENCY[target]) {
+  for (const n of mapDefOf(state.config).adjacency[target]) {
     const ts = state.territories[n];
     if (ts.owner !== player || ts.armies < 2) continue;
-    const safe = ADJACENCY[n].length - enemyNeighbors(state, n, player).length;
+    const safe = mapDefOf(state.config).adjacency[n].length - enemyNeighbors(state, n, player).length;
     const better =
       ts.armies > bestArmies ||
       (ts.armies === bestArmies && safe > bestSafe) ||
-      (ts.armies === bestArmies && safe === bestSafe && best !== null && TERRITORY_IDS.indexOf(n) < TERRITORY_IDS.indexOf(best));
+      (ts.armies === bestArmies && safe === bestSafe && best !== null && mapDefOf(state.config).territoryIds.indexOf(n) < mapDefOf(state.config).territoryIds.indexOf(best));
     if (better) {
       best = n;
       bestArmies = ts.armies;
@@ -156,5 +155,5 @@ export function autoChain(state: GameState, from: TerritoryId, to: TerritoryId):
 
 /** Own territories bordering `t`, any army count. */
 export function ownNeighbors(state: GameState, t: TerritoryId, player: PlayerId): TerritoryId[] {
-  return ADJACENCY[t].filter((n) => state.territories[n].owner === player);
+  return mapDefOf(state.config).adjacency[t].filter((n) => state.territories[n].owner === player);
 }

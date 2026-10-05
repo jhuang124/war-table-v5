@@ -13,7 +13,7 @@ import type {
   ViewportInsets,
 } from './BoardView';
 import type { GameEvent, GameState, PlayerId, TerritoryId } from '../engine/types';
-import { ADJACENCY, TERRITORIES, TERRITORY_IDS } from '../engine/mapData';
+import { ADJACENCY, TERRITORIES, TERRITORY_IDS } from './activeMap';
 import type { AudioEngine, PlayOptions, SfxName, StrokeHandle } from '../audio/types';
 import { PLAYER_COLORS, type PlayerPalette } from '../shared/palette';
 import { Animator, ease, clamp, READABLE, tierMs, type Run } from './anim';
@@ -2386,7 +2386,9 @@ export const createBoardView: CreateBoardView = async (opts: BoardViewOptions): 
   let focusGame: string | null = null;
   let pendingRecenter = false;
   const FOCUS_FALLBACK = (() => {
-    const ids = TERRITORY_IDS.filter((id) => ['europe', 'africa'].includes(TERRITORIES[id].continent));
+    // classic / true-world: Europe and Africa; any other map: the whole land.
+    const ea = TERRITORY_IDS.filter((id) => ['europe', 'africa'].includes(TERRITORIES[id].continent));
+    const ids = ea.length ? ea : TERRITORY_IDS;
     return ids.reduce((a, id) => a + tiles.get(id).anchorW.x, 0) / Math.max(1, ids.length);
   })();
   /**
@@ -3264,16 +3266,26 @@ export const createBoardView: CreateBoardView = async (opts: BoardViewOptions): 
   let needShadow = true;
 
   // --- warm-up: compile every material, render one hidden dice + flood frame ------------------
+  // A three-territory chain on the board (classic: Ural → Siberia → Yakutsk, as before; any map: the first chain).
+  const WARM: TerritoryId[] = (() => {
+    if (ADJACENCY.ural?.includes('siberia') && ADJACENCY.siberia?.includes('yakutsk')) return ['ural', 'siberia', 'yakutsk'];
+    for (const a of TERRITORY_IDS)
+      for (const b of ADJACENCY[a] ?? []) {
+        const c = (ADJACENCY[b] ?? []).find((x) => x !== a);
+        if (c) return [a, b, c];
+      }
+    return TERRITORY_IDS.slice(0, 2);
+  })();
   {
     const t0 = tiles.list[0];
     t0.uniforms.uFloodOn.value = 1;
     t0.uniforms.uFloodR.value = 3;
     tray.warm(PLAYER_COLORS.crimson, PLAYER_COLORS.cobalt);
     arrow.group.visible = true;
-    void arrow.show('ural', 'siberia', [1, 0, 0], null, 0);
-    route.show(['ural', 'siberia', 'yakutsk']);
+    void arrow.show(WARM[0], WARM[1], [1, 0, 0], null, 0);
+    route.show(WARM);
     live.group.visible = true;
-    tokens.setArmies('ural', 1, 'snap');
+    tokens.setArmies(WARM[0], 1, 'snap');
     tokens.update();
     try {
       renderer.compile(scene, camera);
@@ -3290,7 +3302,7 @@ export const createBoardView: CreateBoardView = async (opts: BoardViewOptions): 
     arrow.hide(true);
     route.hide();
     anim.skipAll();
-    tokens.setArmies('ural', 0, 'snap');
+    tokens.setArmies(WARM[0], 0, 'snap');
     tokens.markDirty();
     // The warm-up frame baked the arrow/route into the shadow map: re-render it clean.
     needShadow = true;

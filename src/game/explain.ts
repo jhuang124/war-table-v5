@@ -4,8 +4,8 @@
 // click that commits; rolling, placing, occupying and changing phase are buttons and the Turn Track.
 
 import {
-  ADJACENCY,
   UNCLAIMED,
+  mapDefOf,
   fortifySources,
   fortifyTargets,
   winProbability,
@@ -101,7 +101,7 @@ function explainAttack(state: GameState, ui: ExplainUi, t: TerritoryId): Explana
   const ts = state.territories[t];
   const sel = ui.selected;
   if (ts.owner !== me) {
-    if (sel && ADJACENCY[sel].includes(t) && state.territories[sel].armies >= 2 && state.territories[sel].owner === me) {
+    if (sel && mapDefOf(state.config).adjacency[sel].includes(t) && state.territories[sel].armies >= 2 && state.territories[sel].owner === me) {
       return ok(oddsVerb(state, sel, t, ui, 'Attack'), { kind: 'arm', from: sel, to: t });
     }
     const src = autoSource(state, t, me);
@@ -117,9 +117,9 @@ function explainAttack(state: GameState, ui: ExplainUi, t: TerritoryId): Explana
   // Own tile.
   if (sel === t) return ok('Deselect', { kind: 'deselect' });
   if (canAttackFrom(state, t, me)) {
-    const n = state.territories[t] && ADJACENCY[t].filter((x) => state.territories[x].owner !== me && state.territories[x].owner >= 0).length;
+    const n = state.territories[t] && mapDefOf(state.config).adjacency[t].filter((x) => state.territories[x].owner !== me && state.territories[x].owner >= 0).length;
     const verb = `Attack from here${SEP}${n === 1 ? '1 target' : `${n} targets`}`;
-    if (ui.target && ADJACENCY[t].includes(ui.target) && state.territories[ui.target].owner !== me) {
+    if (ui.target && mapDefOf(state.config).adjacency[t].includes(ui.target) && state.territories[ui.target].owner !== me) {
       return ok(verb, { kind: 'arm', from: t, to: ui.target });
     }
     return ok(verb, { kind: 'selectSource', t });

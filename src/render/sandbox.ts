@@ -2,6 +2,7 @@
 // style full/brief and seq; on-page controls drive speed, skip, highlights, camera, insets, etc.
 import { BOARD } from '../map';
 import { createBoardView } from './index';
+import { ADJACENCY, CONTINENTS, MAP, TERRITORY_IDS } from './activeMap';
 import type { BoardView, PlayEventOptions, ViewportInsets } from './BoardView';
 import {
   applyAction,
@@ -10,9 +11,6 @@ import {
   createGame,
   defaultConfig,
   fortifyPath,
-  CONTINENTS,
-  TERRITORY_IDS,
-  ADJACENCY,
   type Action,
   type GameEvent,
   type GameState,
@@ -318,7 +316,7 @@ function players(): PlayerConfig[] {
 }
 
 async function newGame(seed = Number(params.get('seed') ?? 7), skipDeal = false): Promise<void> {
-  const cfg = { ...defaultConfig(players()), seed, dominationPercent: 100 };
+  const cfg = { ...defaultConfig(players()), seed, dominationPercent: 100, mapId: MAP.id };
   const g = createGame(cfg);
   state = g.state;
   if (skipDeal) {
@@ -435,8 +433,9 @@ function demoHighlights(kind: string): void {
 }
 
 async function demoContinent(): Promise<void> {
+  // Player 0 takes South America; player 1 is one short of Australia (classic-rules maps only).
+  if (!CONTINENTS.south_america || !CONTINENTS.australia) return;
   busy = true;
-  // Player 0 takes South America; player 1 is one short of Australia.
   state = structuredClone(state);
   for (const t of CONTINENTS.south_america.territories) state.territories[t].owner = 0;
   const au = CONTINENTS.australia.territories;
@@ -550,8 +549,8 @@ function render(): void {
     ...['none', 'selectable', 'selected', 'arrow', 'pending', 'fortify'].map((k) => b(k, () => demoHighlights(k))),
     h('Camera'),
     b('Home', () => view.resetCamera()),
-    b('Europe', () => view.focusTerritories(CONTINENTS.europe.territories)),
-    b('Random', () => view.focusTerritories([TERRITORY_IDS[Math.floor(Math.random() * 42)]])),
+    b('Europe', () => view.focusTerritories(CONTINENTS.europe?.territories ?? TERRITORY_IDS)),
+    b('Random', () => view.focusTerritories([TERRITORY_IDS[Math.floor(Math.random() * TERRITORY_IDS.length)]])),
     b('Attract', () => {
       attract = !attract;
       view.setAttractMode(attract);

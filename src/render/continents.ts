@@ -6,7 +6,7 @@
 import * as THREE from 'three';
 import type { BoardGeometry } from '../map/types';
 import type { ContinentId, GameState, PlayerId, TerritoryId } from '../engine/types';
-import { CONTINENTS, CONTINENT_IDS } from '../engine/mapData';
+import { CONTINENTS, CONTINENT_IDS } from './activeMap';
 import { PLAYER_COLORS, continentInk } from '../shared/palette';
 import { Animator, ease, type Run } from './anim';
 import { INK_COAST, hexToRgb, mixRgb, setColor, toWorld, type RGB } from './util';
@@ -19,7 +19,7 @@ void INK_COAST;
  * The label in its continent's tint, lifted toward the ivory so the words read on the indigo. v4 E3: the label and
  * its bonus are Layer 1 with the outline they name (≥ 60 % against the paper; v3's were ≈ 25 %).
  */
-const tintOf = (ci: number): RGB => hexToRgb(continentInk(ci, 0.72));
+const tintOf = (ci: number): RGB => hexToRgb(continentInk(ci, 0.72, CONTINENT_IDS.length));
 /** Label opacity: unheld labels are Layer 1 at rest (lead round 2: a touch quieter); a held one a little stronger. */
 const LABEL_A = 0.8;
 const HELD_LABEL_A = 0.9;

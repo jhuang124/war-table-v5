@@ -4,9 +4,8 @@
 // fortify `Move N · end turn`, which says so). Pure: built from the displayed state + the selection.
 
 import {
-  CONTINENTS,
-  TERRITORIES,
   attackSources,
+  mapDefOf,
   attackTargets,
   fortifySources,
   fortifyTargets,
@@ -241,10 +240,11 @@ export function attackStake(s: GameState, from: TerritoryId, to: TerritoryId): s
   const them = s.territories[to].owner;
   if (me < 0 || them < 0 || me === them) return null;
   if (territoryCount(s, them) === 1) return `knocks out ${pName(s, them)}`;
-  const c = TERRITORIES[to].continent;
-  const others = CONTINENTS[c].territories.filter((t) => t !== to);
-  if (others.every((t) => s.territories[t].owner === me)) return `takes ${cName(c)}`;
-  if (others.every((t) => s.territories[t].owner === them)) return `breaks ${poss(pName(s, them))} ${cName(c)}`;
+  const m = mapDefOf(s.config);
+  const c = m.territories[to].continent;
+  const others = m.continents[c].territories.filter((t) => t !== to);
+  if (others.every((t) => s.territories[t].owner === me)) return `takes ${cName(c, s)}`;
+  if (others.every((t) => s.territories[t].owner === them)) return `breaks ${poss(pName(s, them))} ${cName(c, s)}`;
   return null;
 }
 
@@ -254,7 +254,7 @@ export function attackStake(s: GameState, from: TerritoryId, to: TerritoryId): s
  * characters: with long names the word gives way first (the number says it), then the stake.
  */
 export function attackLine(s: GameState, from: TerritoryId, to: TerritoryId, showWinChance: boolean): string {
-  const head = `${tName(from)} → ${tName(to)}`;
+  const head = `${tName(from, s)} → ${tName(to, s)}`;
   const a = s.territories[from].armies;
   const d = s.territories[to].armies;
   if (a < 2 || d < 1) return head;
@@ -276,7 +276,7 @@ export function tookLine(t: TerritoryId, moved: number | null): string {
 export function totalsLine(s: GameState, from: TerritoryId, to: TerritoryId, n: number): string {
   const a = s.territories[from].armies - n;
   const b = (s.territories[to].owner === s.territories[from].owner ? s.territories[to].armies : 0) + n;
-  return `${tName(from)} ${a}${SEP}${tName(to)} ${b}`;
+  return `${tName(from, s)} ${a}${SEP}${tName(to, s)} ${b}`;
 }
 
 export function buildStrip(inp: StripInput): StripVM {

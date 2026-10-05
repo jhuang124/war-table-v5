@@ -2,7 +2,8 @@
 // Tone: sentence case, verb first, ' · ' separator, real names and numbers, minus is U+2212,
 // arrows are →, the ellipsis is …. No poetry, no exclamation marks.
 
-import { CONTINENTS, TERRITORIES, type ContinentId, type GameState, type PlayerId, type TerritoryId } from '../engine';
+import { mapDefOf, type ContinentId, type GameState, type MapDef, type PlayerId, type TerritoryId } from '../engine';
+import { packIds } from '../map/packs';
 import type { SeatRef } from './viewModel';
 
 export const SEP = ' · ';
@@ -22,12 +23,36 @@ export function Click(): string {
 }
 export const MINUS = '−';
 
-export function tName(t: TerritoryId): string {
-  return TERRITORIES[t].name;
+/**
+ * The map the copy names territories and continents from: the game's `config.mapId`. The controller sets it
+ * whenever a game starts or loads (like setTouchCopy); default classic. A name missing from it is looked up in
+ * every registered pack, then falls back to the id itself.
+ */
+let copyMap: MapDef = mapDefOf(null);
+export function setCopyMap(config?: { mapId?: string } | null): void {
+  copyMap = mapDefOf(config);
+}
+export function copyMapId(): string {
+  return copyMap.id;
 }
 
-export function cName(c: ContinentId): string {
-  return CONTINENTS[c].name;
+function anyPack<T>(pick: (d: MapDef) => T | undefined): T | undefined {
+  for (const id of packIds()) {
+    const v = pick(mapDefOf({ mapId: id }));
+    if (v !== undefined) return v;
+  }
+  return undefined;
+}
+
+/** A territory's name on the game's map (`s` given: that game's map; else the copy map). */
+export function tName(t: TerritoryId, s?: Pick<GameState, 'config'>): string {
+  const def = s && typeof s === 'object' ? mapDefOf(s.config) : copyMap; // guard: .map(tName) passes an index
+  return def.territories[t]?.name ?? anyPack((d) => d.territories[t]?.name) ?? String(t);
+}
+
+export function cName(c: ContinentId, s?: Pick<GameState, 'config'>): string {
+  const def = s && typeof s === 'object' ? mapDefOf(s.config) : copyMap; // guard: .map(tName) passes an index
+  return def.continents[c]?.name ?? anyPack((d) => d.continents[c]?.name) ?? String(c);
 }
 
 export function pName(s: GameState, p: PlayerId): string {

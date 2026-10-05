@@ -33,7 +33,7 @@
 // In a fight the two figures turn to face each other, the attacker leans in, a hit knocks one back.
 import * as THREE from 'three';
 import type { TerritoryId } from '../engine/types';
-import { TERRITORY_IDS } from '../engine/mapData';
+import { TERRITORY_IDS } from './activeMap';
 import { Animator, ease, type Run } from './anim';
 import { IVORY, TILE_TOP, hexToRgb, type RGB } from './util';
 import { deepOf, type TileSet } from './tiles';

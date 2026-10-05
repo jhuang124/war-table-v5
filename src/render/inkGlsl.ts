@@ -7,7 +7,8 @@
 // All colour math is in display (sRGB) space and written out as is (the materials are unlit and not
 // tone-mapped), so the palette's hexes land on screen exactly.
 import * as THREE from 'three';
-import { CONTINENT_TINTS } from '../shared/palette';
+import { continentTint } from '../shared/palette';
+import { CONTINENT_IDS, TERRITORY_IDS } from './activeMap';
 import type { InkLayer } from './ink';
 import { GOLD, INK_BORDER, INK_COAST, INK_TERR, IVORY, LAMP_UMBER, PAPER, PAPER_DEEP, PAPER_FIBRE, hexToRgb, unclaimedRgb, type RGB } from './util';
 
@@ -58,8 +59,15 @@ export const FRONT_A = 0.95;
 export const FRONT_LIFT = 0.6;
 export const COAST_BLOOM = 0.2;
 export const TERR_A = 0.75;
-/** The continents' paper tints: src/shared/palette.ts CONTINENT_TINTS. */
-export const CONT_TINTS = CONTINENT_TINTS;
+/**
+ * v6 maps: continent slots in the shaders' uniform arrays: the active map's continent count, never fewer than
+ * classic's six (so classic compiles the same shader). A continent's index is its CONTINENT_IDS index.
+ */
+export const CONT_SLOTS = Math.max(6, CONTINENT_IDS.length);
+/** The continents' paper tints (src/shared/palette.ts continentTint, by index of the active map's count), CONT_SLOTS long. */
+export const CONT_TINTS = Array.from({ length: CONT_SLOTS }, (_, i) => continentTint(i, CONTINENT_IDS.length));
+/** Width of the per-territory data texture: one texel per territory + texel 0, a power of two, at least 64. */
+export const TERR_TEX_W = Math.max(64, 2 ** Math.ceil(Math.log2(TERRITORY_IDS.length + 1)));
 const v3 = (hex: string | RGB) => {
   const c = typeof hex === 'string' ? hexToRgb(hex) : hex;
   return new THREE.Vector3(c[0], c[1], c[2]);
@@ -145,14 +153,14 @@ function neutralTexture(): THREE.DataTexture {
 }
 
 /**
- * Per-territory data (64×1 RGBA8): R = coast glow 0..1, G = ink dim 0..1, B = continent index, A = the displayed
+ * Per-territory data (TERR_TEX_W×1 RGBA8; 64 on classic): R = coast glow 0..1, G = ink dim 0..1, B = continent index, A = the displayed
  * owner's seat + 1 ([place v5] front lines; 0 = unclaimed or the neutral seat).
  */
 export function makeTerrTexture(ink: InkLayer): THREE.DataTexture {
-  const d = new Uint8Array(64 * 4);
-  for (let i = 1; i <= 42; i++) d[i * 4 + 2] = ink.continentIndex(i);
+  const d = new Uint8Array(TERR_TEX_W * 4);
+  for (let i = 1; i <= TERRITORY_IDS.length; i++) d[i * 4 + 2] = ink.continentIndex(i);
   d[2] = 255;
-  const t = new THREE.DataTexture(d, 64, 1, THREE.RGBAFormat, THREE.UnsignedByteType);
+  const t = new THREE.DataTexture(d, TERR_TEX_W, 1, THREE.RGBAFormat, THREE.UnsignedByteType);
   t.magFilter = t.minFilter = THREE.NearestFilter;
   t.generateMipmaps = false;
   t.needsUpdate = true;
@@ -184,12 +192,12 @@ export function makeSharedUniforms(ink: InkLayer, boardW: number, boardH: number
     uLiftA: { value: new THREE.Vector2(0, 0) },
     uLiftB: { value: new THREE.Vector2(0, 0) },
     uBreath: { value: 0 },
-    uContColor: { value: Array.from({ length: 6 }, () => new THREE.Vector3(1, 1, 1)) },
+    uContColor: { value: Array.from({ length: CONT_SLOTS }, () => new THREE.Vector3(1, 1, 1)) },
     uCont: { value: ink.cont },
     uContLine: { value: v3(CONT_LINE) },
     uContTint: { value: CONT_TINTS.map((h) => v3(h)) },
     uContW: { value: 0.11 },
-    uContSweep: { value: Array.from({ length: 6 }, () => new THREE.Vector4(0, 0, 0, 0)) },
+    uContSweep: { value: Array.from({ length: CONT_SLOTS }, () => new THREE.Vector4(0, 0, 0, 0)) },
     uPaperTex: { value: neutralTexture() },
     uWashTex: { value: neutralTexture() },
     uTexOn: { value: 0 },
@@ -228,11 +236,11 @@ uniform vec3 uUnclaimed;
 uniform vec2 uLiftA;
 uniform vec2 uLiftB;
 uniform float uBreath;
-uniform vec3 uContColor[6];
-uniform vec4 uContSweep[6];
+uniform vec3 uContColor[${CONT_SLOTS}];
+uniform vec4 uContSweep[${CONT_SLOTS}];
 uniform sampler2D uCont;
 uniform vec3 uContLine;
-uniform vec3 uContTint[6];
+uniform vec3 uContTint[${CONT_SLOTS}];
 uniform float uContW;
 uniform sampler2D uPaperTex;
 uniform sampler2D uWashTex;
@@ -452,7 +460,7 @@ vec3 continentInk(vec3 c, vec2 bp, float sea) {
   vec4 kn = texelFetch(uCont, ivec2(uv * uFieldSize), 0);
   int own = int(kn.g * 255.0 + 0.5);
   // the region's paper tint: the continent's hue at the paper's own lightness (a zone, never a glow)
-  if (own < 6 && sea > 0.001) {
+  if (own < ${CONT_SLOTS} && sea > 0.001) {
     vec3 t = uContTint[own];
     float lc = dot(c, vec3(0.299, 0.587, 0.114));
     float lt = max(dot(t, vec3(0.299, 0.587, 0.114)), 1e-3);
@@ -468,7 +476,7 @@ vec3 continentInk(vec3 c, vec2 bp, float sea) {
   a *= brushJit(bp);
   int li = int(kn.b * 255.0 + 0.5);
   vec3 lc = uContLine;
-  if (li < 6) {
+  if (li < ${CONT_SLOTS}) {
     vec4 sw = uContSweep[li];
     if (sw.w > 0.001) {
       vec2 dd = bp - sw.xy;

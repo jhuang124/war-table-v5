@@ -2,7 +2,7 @@
 // counts, highlights, instant events (or modelled 1× durations with `simulateTimings`). Used until the
 // Three.js renderer lands, and by the controller's e2e checks (?stub=1).
 
-import { TERRITORY_IDS, cloneState, type GameEvent, type GameState, type TerritoryId } from '../engine';
+import { cloneState, type GameEvent, type GameState, type TerritoryId } from '../engine';
 import type { AudioEngine } from '../audio/types';
 import type { BoardGeometry, Vec2 } from '../map/types';
 import type {
@@ -38,6 +38,8 @@ function pointInRing(x: number, y: number, ring: Vec2[]): boolean {
 
 export function createStubBoard(opts: StubBoardOptions): BoardView {
   const { container, geometry } = opts;
+  // v6: the board's own territories (any map), in its file order.
+  const TERRITORY_IDS = Object.keys(geometry.territories) as TerritoryId[];
   const canvas = document.createElement('canvas');
   canvas.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;display:block;cursor:default';
   canvas.dataset.stub = '1';

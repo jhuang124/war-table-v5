@@ -2,8 +2,8 @@
 // presets with honest time estimates, the summary line, and the problems that block Start.
 
 import { PLAYER_COLORS, PLAYER_COLOR_IDS, DEFAULT_SEAT_COLORS } from '../shared/palette';
-import { isPersonality, PERSONALITY_IDS, STARTING_ARMIES, type AiPersonality, type GameConfig, type PlayerColorId } from '../engine';
-import { DEFAULT_MAP_ID, mapIdOf } from '../map/packs';
+import { isPersonality, mapDefOf, PERSONALITY_IDS, type AiPersonality, type MapDef, type GameConfig, type PlayerColorId } from '../engine';
+import { DEFAULT_MAP_ID, mapIdOf, packData } from '../map/packs';
 import { SEP } from './copy';
 import type { HouseRulesDraft, LengthPreset, NewGameVM, SeatDraft, SetupPreset } from './viewModel';
 
@@ -169,13 +169,39 @@ export function lengthRules(
   }
 }
 
-/** Two passes of manual placement: ceil((startingArmies − floor(42 / n)) / 2) → 10 for 2p/4p, 11 for 3p. */
-export function autoSetupBatch(players: number, startingArmies = STARTING_ARMIES[players] ?? 30): number {
-  return Math.max(1, Math.ceil((startingArmies - Math.floor(42 / players)) / 2));
+/**
+ * Two passes of manual placement: ceil((startingArmies − floor(size / n)) / 2), size = the map's territory
+ * count (classic: 42 → 10 for 2p/4p, 11 for 3p). Defaults read classic.
+ */
+export function autoSetupBatch(players: number, startingArmies?: number, size?: number): number {
+  const def = mapDefOf(null);
+  const armies = startingArmies ?? def.startingArmies[players] ?? 30;
+  return Math.max(1, Math.ceil((armies - Math.floor((size ?? def.size) / players)) / 2));
 }
 
-export function territoriesToWin(percent: number): number {
-  return Math.ceil((42 * percent) / 100);
+/** autoSetupBatch on a map (its starting armies and size). */
+function autoSetupBatchFor(n: number, mapId?: string): number {
+  const def = mapDefOf({ mapId: mapIdOf(mapId ?? null) });
+  return autoSetupBatch(n, def.startingArmies[n], def.size);
+}
+
+/**
+ * The territory count a share of the map means (`dominationPercent` 70 → 30 of classic's 42). Rounds up,
+ * exactly as the engine's `territoriesNeeded` does, so the New game line and the game agree.
+ * (v6: the engine's `targetTerritories(def, share)` was not in this build; this is the local equivalent.)
+ */
+export function targetTerritories(def: Pick<MapDef, 'size'>, share: number): number {
+  return Math.ceil(def.size * share - 1e-9);
+}
+
+/** Territories to win at `percent` of the map (`config.mapId`, absent = classic). */
+export function territoriesToWin(percent: number, config?: { mapId?: string } | null): number {
+  return targetTerritories(mapDefOf(config), percent / 100);
+}
+
+/** "of the world" on a world map (classic rules), "of the map" on any other board. */
+function ofWhere(mapId?: string): string {
+  return packData(mapIdOf(mapId ?? null)).rulesFrom === DEFAULT_MAP_ID ? 'of the world' : 'of the map';
 }
 
 export function draftToConfig(d: NewGameDraft, seed: number): GameConfig {
@@ -200,7 +226,7 @@ export function draftToConfig(d: NewGameDraft, seed: number): GameConfig {
     players,
     setupMode: d.house.draft ? 'draft' : 'random',
     initialPlacement: d.setup === 'placeOwn' ? 'manual' : 'auto',
-    setupBatch: d.house.setupBatch === 'auto' ? autoSetupBatch(n) : d.house.setupBatch,
+    setupBatch: d.house.setupBatch === 'auto' ? autoSetupBatchFor(n, d.mapId) : d.house.setupBatch,
     cardBonus: d.house.cardBonus,
     fortifyRule: d.house.fortifyRule,
     dominationPercent,
@@ -277,7 +303,7 @@ export function draftSummary(d: NewGameDraft): string {
   const { dominationPercent, turnLimit } = lengthRules(d.length, n, usesNeutral(d));
   const deal = d.house.draft ? 'Territories claimed in turn' : 'Territories dealt at random';
   const place = d.setup === 'quickDeal' ? 'armies placed for you' : 'you place your own armies';
-  const need = territoriesToWin(dominationPercent);
+  const need = territoriesToWin(dominationPercent, { mapId: mapIdOf(d.mapId ?? null) });
   // v5 G: with Missions on, a secret mission is the other way to win.
   const m = d.house.missions === true && missionsApply(d);
   const goal =
@@ -302,7 +328,7 @@ export function buildNewGameVM(d: NewGameDraft): NewGameVM {
     house: d.house,
     lengthOptions: [
       { id: 'quick', label: 'Quick', detail: `${q.dominationPercent}% or ${q.turnLimit} rounds`, estimate: lengthEstimate('quick', d.seats, neutral) },
-      { id: 'evening', label: 'Evening', detail: `${e.dominationPercent}% of the world`, estimate: lengthEstimate('evening', d.seats, neutral) },
+      { id: 'evening', label: 'Evening', detail: `${e.dominationPercent}% ${ofWhere(d.mapId)}`, estimate: lengthEstimate('evening', d.seats, neutral) },
       { id: 'full', label: 'Full conquest', detail: 'every territory', estimate: lengthEstimate('full', d.seats, neutral) },
     ],
     setupOptions: [

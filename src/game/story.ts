@@ -4,9 +4,7 @@
 // rematch's first seat. Pure: plain data in, plain data and plain sentences out.
 
 import {
-  CONTINENTS,
-  CONTINENT_IDS,
-  TERRITORY_IDS,
+  mapDefOf,
   type ContinentId,
   type GameState,
   type PlayerColorId,
@@ -21,7 +19,7 @@ import type { ReplayVM } from './viewModel';
 // The ledger
 // ---------------------------------------------------------------------------
 
-/** One board at a round's start: owners and armies in TERRITORY_IDS order (owner −1 = nobody). */
+/** One board at a round's start: owners and armies in the map's territory order (owner −1 = nobody). */
 export interface StorySnap {
   r: number;
   o: number[];
@@ -42,12 +40,13 @@ export function emptyStory(): StoryLedger {
 }
 
 /** A saved ledger from this or an older build: keep what is well-formed for this map. */
-export function restoreStory(x: unknown): StoryLedger {
+export function restoreStory(x: unknown, config?: { mapId?: string } | null): StoryLedger {
   const out = emptyStory();
   if (!x || typeof x !== 'object') return out;
   const o = x as Partial<StoryLedger>;
-  const n = TERRITORY_IDS.length;
-  const known = new Set<string>(TERRITORY_IDS);
+  const ids = mapDefOf(config).territoryIds;
+  const n = ids.length;
+  const known = new Set<string>(ids);
   if (Array.isArray(o.snaps)) {
     for (const s of o.snaps) {
       if (s && typeof s.r === 'number' && Array.isArray(s.o) && Array.isArray(s.a) && s.o.length === n && s.a.length === n) out.snaps.push({ r: s.r, o: [...s.o], a: [...s.a] });
@@ -67,8 +66,8 @@ export function noteRoundStart(l: StoryLedger, s: GameState, round: number): voi
   if (round < 1 || l.snaps.some((x) => x.r === round)) return;
   l.snaps.push({
     r: round,
-    o: TERRITORY_IDS.map((t) => s.territories[t]?.owner ?? -1),
-    a: TERRITORY_IDS.map((t) => s.territories[t]?.armies ?? 0),
+    o: mapDefOf(s.config).territoryIds.map((t) => s.territories[t]?.owner ?? -1),
+    a: mapDefOf(s.config).territoryIds.map((t) => s.territories[t]?.armies ?? 0),
   });
 }
 
@@ -139,8 +138,8 @@ export function rematchFirst(s: GameState, winner: PlayerId | null): PlayerId {
   if (!pool.length) return seats[0]?.id ?? 0;
   const out = pool.filter((p) => p.eliminated).sort((a, b) => (a.eliminatedOnTurn ?? 0) - (b.eliminatedOnTurn ?? 0) || a.id - b.id);
   if (out.length) return out[0].id;
-  const terr = (id: PlayerId) => TERRITORY_IDS.filter((t) => s.territories[t].owner === id).length;
-  const arm = (id: PlayerId) => TERRITORY_IDS.reduce((n, t) => n + (s.territories[t].owner === id ? s.territories[t].armies : 0), 0);
+  const terr = (id: PlayerId) => mapDefOf(s.config).territoryIds.filter((t) => s.territories[t].owner === id).length;
+  const arm = (id: PlayerId) => mapDefOf(s.config).territoryIds.reduce((n, t) => n + (s.territories[t].owner === id ? s.territories[t].armies : 0), 0);
   return [...pool].sort((a, b) => terr(a.id) - terr(b.id) || arm(a.id) - arm(b.id) || a.id - b.id)[0].id;
 }
 
@@ -160,13 +159,13 @@ export function replayMsPerRound(rounds: number): number {
 
 interface Frame {
   round: number;
-  /** Owner per territory, TERRITORY_IDS order, at the round's end. */
+  /** Owner per territory, the map's territory order, at the round's end. */
   o: number[];
   a: number[];
 }
 
 function boardOf(s: GameState): { o: number[]; a: number[] } {
-  return { o: TERRITORY_IDS.map((t) => s.territories[t]?.owner ?? -1), a: TERRITORY_IDS.map((t) => s.territories[t]?.armies ?? 0) };
+  return { o: mapDefOf(s.config).territoryIds.map((t) => s.territories[t]?.owner ?? -1), a: mapDefOf(s.config).territoryIds.map((t) => s.territories[t]?.armies ?? 0) };
 }
 
 /** Round-end boards: round r ends where round r + 1 starts; the last round ends on the final board. */
@@ -195,8 +194,9 @@ function colorOf(s: GameState, p: number): PlayerColorId | 'neutral' | null {
   return pl.neutral ? 'neutral' : pl.color;
 }
 
-function holderOf(o: number[], c: ContinentId): number {
-  const idx = CONTINENTS[c].territories.map((t) => TERRITORY_IDS.indexOf(t));
+function holderOf(o: number[], c: ContinentId, s: GameState): number {
+  const m = mapDefOf(s.config);
+  const idx = m.continents[c].territories.map((t) => m.territoryIds.indexOf(t));
   const first = o[idx[0]];
   return first >= 0 && idx.every((i) => o[i] === first) ? first : -1;
 }
@@ -210,19 +210,19 @@ export function roundSentence(l: StoryLedger, s: GameState, round: number, end: 
   }
   if (end) {
     let best: { c: ContinentId; p: number } | null = null;
-    for (const c of CONTINENT_IDS) {
-      const h = holderOf(end, c);
+    for (const c of mapDefOf(s.config).continentIds) {
+      const h = holderOf(end, c, s);
       if (h < 0 || s.players[h]?.neutral) continue;
-      if (prev && holderOf(prev, c) === h) continue;
-      if (!best || CONTINENTS[c].bonus > CONTINENTS[best.c].bonus) best = { c, p: h };
+      if (prev && holderOf(prev, c, s) === h) continue;
+      if (!best || mapDefOf(s.config).continents[c].bonus > mapDefOf(s.config).continents[best.c].bonus) best = { c, p: h };
     }
-    if (best) return `${pName(s, best.p)} took ${cName(best.c)}`;
+    if (best) return `${pName(s, best.p)} took ${cName(best.c, s)}`;
   }
   const took = l.took.filter((x) => x[0] === round);
   const perT = new Map<TerritoryId, number>();
   for (const x of took) perT.set(x[1], (perT.get(x[1]) ?? 0) + 1);
   const hot = [...perT.entries()].sort((a, b) => b[1] - a[1])[0];
-  if (hot && hot[1] >= 2) return `${tName(hot[0])} changed hands ${times(hot[1])}`;
+  if (hot && hot[1] >= 2) return `${tName(hot[0], s)} changed hands ${times(hot[1])}`;
   const perP = new Map<number, StoryLedger['took']>();
   for (const x of took) perP.set(x[2], [...(perP.get(x[2]) ?? []), x]);
   const top = [...perP.entries()].sort((a, b) => b[1].length - a[1].length || a[0] - b[0])[0];
@@ -230,7 +230,7 @@ export function roundSentence(l: StoryLedger, s: GameState, round: number, end: 
     const [p, xs] = top;
     if (xs.length === 1) {
       const [, t, , from] = xs[0];
-      return from >= 0 && s.players[from] ? `${pName(s, p)} took ${tName(t)} from ${pName(s, from)}` : `${pName(s, p)} took ${tName(t)}`;
+      return from >= 0 && s.players[from] ? `${pName(s, p)} took ${tName(t, s)} from ${pName(s, from)}` : `${pName(s, p)} took ${tName(t, s)}`;
     }
     return `${pName(s, p)} took ${xs.length} territories`;
   }
@@ -257,7 +257,7 @@ export function momentCandidates(l: StoryLedger, s: GameState, winner: PlayerId)
   for (const [k, n] of perRT) {
     if (n < 2) continue;
     const [r, t] = k.split('|');
-    out.push({ round: Number(r), kind: 'contested', score: 40 + 15 * n, text: `Round ${r}: ${tName(t as TerritoryId)} changed hands ${times(n)}` });
+    out.push({ round: Number(r), kind: 'contested', score: 40 + 15 * n, text: `Round ${r}: ${tName(t as TerritoryId, s)} changed hands ${times(n)}` });
   }
   // A seat's biggest round (never outranks a knockout).
   const perRP = new Map<string, number>();
@@ -273,15 +273,15 @@ export function momentCandidates(l: StoryLedger, s: GameState, winner: PlayerId)
     // held since the first round was dealt, not taken: it is a turning point only when nothing else is. The
     // winner's and the humans' continents come first.
     const weight = (p: number, startIdx: number) => (startIdx === 0 ? -40 : 0) + (p === winner || human(p) ? 10 : 0);
-    for (const c of CONTINENT_IDS) {
+    for (const c of mapDefOf(s.config).continentIds) {
       let runStart = -1;
       let holder = -1;
       for (let i = 0; i < fr.length; i++) {
-        const h = holderOf(fr[i].o, c);
+        const h = holderOf(fr[i].o, c, s);
         if (h !== holder) {
           if (holder >= 0 && !s.players[holder]?.neutral) {
             const len = fr[i - 1].round - fr[runStart].round + 1;
-            if (len >= 3) out.push({ round: fr[runStart].round, kind: 'held', score: 45 + 3 * len + CONTINENTS[c].bonus + weight(holder, runStart), text: `Round ${fr[runStart].round}: ${pName(s, holder)} took ${cName(c)} and held it ${len} rounds` });
+            if (len >= 3) out.push({ round: fr[runStart].round, kind: 'held', score: 45 + 3 * len + mapDefOf(s.config).continents[c].bonus + weight(holder, runStart), text: `Round ${fr[runStart].round}: ${pName(s, holder)} took ${cName(c, s)} and held it ${len} rounds` });
           }
           holder = h;
           runStart = i;
@@ -290,7 +290,7 @@ export function momentCandidates(l: StoryLedger, s: GameState, winner: PlayerId)
       if (holder >= 0 && !s.players[holder]?.neutral && runStart >= 0) {
         const len = fr[fr.length - 1].round - fr[runStart].round + 1;
         if (len >= 2 || fr.length <= 2) {
-          out.push({ round: fr[runStart].round, kind: 'held', score: 60 + 3 * len + CONTINENTS[c].bonus + weight(holder, runStart), text: `Round ${fr[runStart].round}: ${pName(s, holder)} took ${cName(c)} and held it to the end` });
+          out.push({ round: fr[runStart].round, kind: 'held', score: 60 + 3 * len + mapDefOf(s.config).continents[c].bonus + weight(holder, runStart), text: `Round ${fr[runStart].round}: ${pName(s, holder)} took ${cName(c, s)} and held it to the end` });
         }
       }
     }
@@ -330,7 +330,7 @@ export function pickMoments(cands: Candidate[], n = 3): string[] {
 export function buildMoments(l: StoryLedger, s: GameState, winner: PlayerId): string[] {
   const m = pickMoments(momentCandidates(l, s, winner));
   if (m.length) return m;
-  const held = TERRITORY_IDS.filter((t) => s.territories[t].owner === winner).length;
+  const held = mapDefOf(s.config).territoryIds.filter((t) => s.territories[t].owner === winner).length;
   return [`Round ${Math.max(1, s.round)}: ${pName(s, winner)} held ${plural(held, 'territory', 'territories')}`];
 }
 
@@ -341,7 +341,7 @@ export function buildReplay(l: StoryLedger, s: GameState, winner: PlayerId, key:
   let prev: number[] | null = null;
   for (const f of fr) {
     const owners: ReplayVM['rounds'][number]['owners'] = {};
-    TERRITORY_IDS.forEach((t, i) => {
+    mapDefOf(s.config).territoryIds.forEach((t, i) => {
       const c = colorOf(s, f.o[i]);
       if (c) owners[t] = c;
     });
@@ -356,7 +356,7 @@ export function replayBoard(l: StoryLedger, s: GameState, index: number): GameSt
   const f = frames(l, s)[index];
   if (!f) return null;
   const territories = { ...s.territories };
-  TERRITORY_IDS.forEach((t, i) => {
+  mapDefOf(s.config).territoryIds.forEach((t, i) => {
     territories[t] = { owner: f.o[i], armies: Math.max(f.o[i] >= 0 ? 1 : 0, f.a[i]) };
   });
   return { ...s, territories, round: f.round };

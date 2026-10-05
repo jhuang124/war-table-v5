@@ -8,7 +8,7 @@
 // the seat's deep ink, at full height (the board is flat: nothing squashes them onto a tilted face any more).
 import * as THREE from 'three';
 import type { TerritoryId } from '../engine/types';
-import { TERRITORY_IDS, TERRITORIES } from '../engine/mapData';
+import { TERRITORY_IDS, TERRITORIES } from './activeMap';
 import { PLAYER_COLORS, type PlayerPalette } from '../shared/palette';
 import type { BoardGeometry } from '../map/types';
 import type { TileSet } from './tiles';

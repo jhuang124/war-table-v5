@@ -49,8 +49,8 @@ export function buildRecap(entry: RecapEntry | undefined, state: GameState): str
   const total = attackers.reduce((n, x) => n + x.ts.length, 0);
   const named =
     attackers.length === 1
-      ? `${pName(state, attackers[0].a)} took ${joinNames(attackers[0].ts.map(tName))} from you`
-      : attackers.map((x) => `${pName(state, x.a)} took ${joinNames(x.ts.map(tName))}`).join(', ');
+      ? `${pName(state, attackers[0].a)} took ${joinNames(attackers[0].ts.map((t) => tName(t)))} from you`
+      : attackers.map((x) => `${pName(state, x.a)} took ${joinNames(x.ts.map((t) => tName(t)))}`).join(', ');
   if (named.length <= RECAP_MAX) return named;
   const who = joinNames(attackers.map((x) => pName(state, x.a)));
   return `${who} took ${total} of yours`;
@@ -278,7 +278,7 @@ function tookPhrase(state: GameState, reader: PlayerId, took: { t: TerritoryId; 
     .map((g) => {
       const who = g.from === reader ? 'you' : pName(state, g.from);
       const counts = level === 2 || (level === 1 && g.from !== reader);
-      return counts ? `${g.ts.length} from ${who}` : `${joinNames(g.ts.map(tName))} from ${who}`;
+      return counts ? `${g.ts.length} from ${who}` : `${joinNames(g.ts.map((t) => tName(t)))} from ${who}`;
     })
     .join(', ');
 }
@@ -358,7 +358,7 @@ export function buildReceipt(l: ReceiptLedger, state: GameState, reader: PlayerI
     const lost =
       lostT === 0 && lostC.length === 0
         ? 'You lost nothing'
-        : `You lost ${[lostT ? terrWord(lostT) : null, lostC.length ? joinNames(lostC.map(cName)) : null].filter(Boolean).join(' and ')}`;
+        : `You lost ${[lostT ? terrWord(lostT) : null, lostC.length ? joinNames(lostC.map((c) => cName(c))) : null].filter(Boolean).join(' and ')}`;
     summary = `${lost}${SEP}you hold ${territoryCount(state, reader)}`;
   }
   return { key, title, lines, summary };

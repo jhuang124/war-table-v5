@@ -134,11 +134,37 @@ export const UNCLAIMED_COLOR = '#8f8a7e';
  * restraint"), CONTINENT_IDS order: North America ochre, South America rust, Europe steel, Africa umber,
  * Asia green, Australia plum. The board mixes them 10 % into each continent's halo of sea and prints the
  * continent's name in them; the seat strip's held-continent ticks use them lifted toward the ivory.
+ * Classic's six, unchanged: any six-continent map reads them in this order.
  */
 export const CONTINENT_TINTS = ['#8a7443', '#8a4f43', '#56709a', '#7d6448', '#56785c', '#76597f'];
+
+/**
+ * v6 maps: the full palette of muted paper tints, at the same restraint (mid-dark, low chroma, so 10 % of one in
+ * the sea is a zone, never a glow). The first six are classic's; the rest extend it for maps with more
+ * continents: teal, rose, olive, sand, lavender, slate.
+ */
+export const CONTINENT_PALETTE = [...CONTINENT_TINTS, '#4c7a76', '#8a5a6a', '#6e7846', '#8f8060', '#6a6494', '#5c6a72'];
+
+/**
+ * Which palette tint a map's continent `i` of `n` wears (deterministic: the same map always gets the same
+ * colours). Six or more continents take the palette in order (classic's six keep their colours; past the
+ * palette's length it repeats). Fewer than six spread across classic's six (3 → ochre, steel, green), so
+ * neighbouring zones on a small map never share a warm pair.
+ */
+export function continentTintIndex(i: number, n = CONTINENT_TINTS.length): number {
+  const six = CONTINENT_TINTS.length;
+  if (n > 0 && n < six) return Math.floor((i * six) / n);
+  return ((i % CONTINENT_PALETTE.length) + CONTINENT_PALETTE.length) % CONTINENT_PALETTE.length;
+}
+
+/** Continent `i` of `n`'s paper tint (hex). */
+export function continentTint(i: number, n = CONTINENT_TINTS.length): string {
+  return CONTINENT_PALETTE[continentTintIndex(i, n)] ?? '#888888';
+}
+
 /** A continent tint lifted toward the ivory ink, so it reads as a mark or a word on the indigo paper. */
-export function continentInk(i: number, k = 0.38): string {
-  const h = CONTINENT_TINTS[i] ?? '#888888';
+export function continentInk(i: number, k = 0.38, n = CONTINENT_TINTS.length): string {
+  const h = i >= 0 ? continentTint(i, n) : '#888888';
   const c = [1, 3, 5].map((j) => parseInt(h.slice(j, j + 2), 16));
   const iv = [242, 237, 226];
   return `#${c.map((v, j) => Math.round(v + (iv[j] - v) * k).toString(16).padStart(2, '0')).join('')}`;

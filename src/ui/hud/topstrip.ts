@@ -29,7 +29,13 @@
 import type { SeatChipVM, UiIntent } from '../../game/viewModel';
 import type { PlayerId } from '../../engine/types';
 import { PLAYER_COLORS, continentInk } from '../../shared/palette';
-import { CONTINENT_IDS, CONTINENTS } from '../../engine/mapData';
+import { mapDefOf } from '../../engine/mapData';
+import { activeMapId } from '../../map/registry';
+
+/** v6 maps: the board's map (the game on screen is always on it; another map's game reloads the page). */
+const MAP = mapDefOf({ mapId: activeMapId() });
+const CONTINENT_IDS = MAP.continentIds;
+const CONTINENTS = MAP.continents;
 import { brushMark } from '../../shared/enso';
 import { drawIn, EASE_IN_QUAD, emblem, ensoEl, h, hashSeed, minus, motion, pop, setEmblem, setEnso, setStyle, setText, svg, toggle } from '../dom';
 
@@ -277,7 +283,7 @@ class Chip {
     this.voice.dataset.testid = `seat-voice-${vm.seat.id}`;
     this.grudges.el.dataset.seat = String(vm.seat.id);
     this.updateMarks(vm);
-    const held = (vm.continents ?? []).map((c) => CONTINENTS[c].name);
+    const held = (vm.continents ?? []).map((c) => CONTINENTS[c]?.name ?? c);
     const gt = vm.eliminated ? 0 : (vm.grudgeTicks ?? 0);
     const standing = !vm.eliminated && vm.standing ? `, ${STANDING_WORD[vm.standing]} toward you` : '';
     this.el.setAttribute(
@@ -353,8 +359,8 @@ class Chip {
       const i = CONTINENT_IDS.indexOf(c);
       const t = h('span', 'sc-tick');
       t.dataset.continent = c;
-      t.title = `Holds ${CONTINENTS[c].name}`;
-      t.style.color = continentInk(i, 0.4);
+      t.title = `Holds ${CONTINENTS[c]?.name ?? c}`;
+      t.style.color = continentInk(i, 0.4, CONTINENT_IDS.length);
       t.innerHTML = `<svg viewBox="0 0 6 12" aria-hidden="true"><path d="${brushMark([[3.3, 0.9], [2.7, 11.1]], { seed: 31 + i * 7, width: 3 })}" fill="currentColor"/></svg>`;
       this.marks.append(t);
     }

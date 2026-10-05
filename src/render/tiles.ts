@@ -4,7 +4,7 @@
 import * as THREE from 'three';
 import type { BoardGeometry, Vec2 } from '../map/types';
 import type { TerritoryId } from '../engine/types';
-import { TERRITORY_IDS } from '../engine/mapData';
+import { TERRITORY_IDS } from './activeMap';
 import { TILE_DEPTH, TILE_TOP, adjust, hexToRgb, IVORY, distToRing, toWorld, unclaimedRgb, type RGB } from './util';
 import { SIDE_FRAG, SIDE_VERT, TILE_FRAG, TILE_VERT, type SharedUniforms } from './inkGlsl';
 import type { InkLayer } from './ink';
