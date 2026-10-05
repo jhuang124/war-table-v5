@@ -278,7 +278,8 @@ export const recipe: MapRecipe = {
       decor: [40.5, 35.5],
     }),
     Lebanon: 'syria',
-    Israel: 'judaea',
+    // the Negev joins Sinai to Petra
+    Israel: cutBy([34.2, 29.4, 35.95, 33.4], [[[34.2, 31.15], [35.0, 31.1], [35.45, 31.05]]], { judaea: [35.0, 32.3], arabia_petraea: [34.9, 30.3] }),
     Palestine: 'judaea',
     // Peraea, across the Jordan, went with Judaea
     Jordan: cutBy([34.9, 29.1, 39.4, 33.5], [[[35.5, 31.2], [36.0, 31.3], [36.05, 32.0], [36.4, 32.45]]], { judaea: [35.75, 31.9], arabia_petraea: [36.5, 30.5] }),
@@ -335,15 +336,14 @@ export const recipe: MapRecipe = {
     gallia: [-5.0, 46.5],
     hispania: [-10.5, 40.0],
     italia: [11.5, 40.2],
-    illyricum: [15.2, 43.0],
-    graecia_asia: [34.0, 43.0],
+    illyricum: [30.6, 44.4],
+    graecia_asia: [35.5, 42.6],
     oriens: [31.5, 33.6],
-    africa: [2.0, 37.4],
+    africa: [6.0, 37.8],
   },
   oceanLabels: [
     { text: 'MARE NOSTRUM', hint: [18.5, 34.5], size: 1.1 },
     { text: 'OCEANUS', hint: [-9.5, 44.8], size: 0.9 },
-    { text: 'PONTUS EUXINUS', hint: [33.0, 42.3], size: 0.9 },
   ],
 
   tuning: { ...DEFAULT_TUNING, gap: 0.45, laneGap: 0.6 },
