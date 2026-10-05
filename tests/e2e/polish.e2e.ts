@@ -165,7 +165,7 @@ await page.evaluate(`(() => {
         if (hudA < boardA || hudD < boardD) { S.ahead++; if (!S.first) S.first = b.header + ' vs board ' + boardA + '/' + boardD; }
       }
       const nums = [...document.querySelectorAll('[data-testid="battle"]:not(.hidden) .bt-armies')].map((e) => +e.textContent);
-      if (nums.length === 2 && b.rolling) {
+      if (nums.length === 2) {
         S.dom++;
         S.ticks.add(nums.join('/'));
         if (nums[0] < armies.ural || nums[1] < armies.siberia) { S.domAhead++; if (!S.first) S.first = 'line ' + nums.join('/') + ' vs board ' + armies.ural + '/' + armies.siberia; }

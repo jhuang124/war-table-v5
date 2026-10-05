@@ -355,7 +355,8 @@ export interface BattleSideVM {
 }
 
 /**
- * The dice tray's header line, 'URAL 12  vs  SIBERIA 5'. The dice are drawn by the renderer. It lives
+ * The fight on screen, 'Ural 12 → Siberia 5' (fight text, 2026-10-05: its words are written in the one line
+ * via StripVM.fight, never on the dice ring; the dice are drawn by the renderer). It lives
  * while a fight is armed or rolling and ~1 s after it's decided (null at once on a new selection or a
  * phase change); on a conquest it reads `captured` ('Siberia captured') for that second.
  */
