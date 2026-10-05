@@ -35,14 +35,19 @@ const P15: LonLat = [15.0, 41.45]; // Molise / Campania / Puglia
 const P16: LonLat = [15.6, 40.95]; // Campania / Puglia / Basilicata
 const PS_JOIN: LonLat = [17.3, 40.0]; // Basilicata / Puglia / Salento, out in the Gulf of Taranto
 
+// cutBy's grid has one spare row (or column) along its shorter side's far edge, so a ray that runs north
+// here leaks around its end. Every north-running line ends instead on this cap line north of the Alps (a T),
+// and the cap runs west and east to edges that close.
+const CAP_N = 47.0;
 const mainland = cutBy(
   [
+    [[6.0, CAP_N], [12.0, CAP_N], [18.5, CAP_N]],
     // Aosta | Piedmont: Monte Rosa down the Dora to Pont-Saint-Martin, west under Gran Paradiso
-    [[7.87, 46.1], [7.87, 45.92], [7.9, 45.65], [7.75, 45.53], [7.45, 45.47], [7.15, 45.45], [6.9, 45.4]],
+    [[7.87, CAP_N], [7.87, 45.92], [7.9, 45.65], [7.75, 45.53], [7.45, 45.47], [7.15, 45.45], [6.9, 45.4]],
     // Liguria's Apennine watershed, Ventimiglia to the Magra (Piedmont, Lombardy, Emilia | Liguria; Liguria | Tuscany)
     [[7.4, 44.0], [7.72, 44.07], [8.0, 44.17], [8.2, 44.38], [8.5, 44.5], [8.8, 44.53], P1, P2, [9.5, 44.47], P3, [9.9, 44.25], [10.0, 44.1], [10.03, 44.0], [10.03, 43.8]],
     // Piedmont | Lombardy: the Ticino, Lake Maggiore, the Sesia, down to the Oltrepò
-    [[8.6, 46.6], [8.6, 46.1], [8.68, 45.85], [8.62, 45.55], [8.55, 45.3], [8.65, 45.05], [8.9, 44.85], P1],
+    [[8.6, CAP_N], [8.6, 46.1], [8.68, 45.85], [8.62, 45.55], [8.55, 45.3], [8.65, 45.05], [8.9, 44.85], P1],
     // Lombardy | Emilia: the Po
     [P2, [9.3, 44.85], [9.45, 45.08], [9.9, 45.1], [10.3, 44.97], [10.7, 44.98], [11.05, 44.98], [11.3, 44.95], P4],
     // Veneto | Emilia: the Po to its delta
@@ -50,11 +55,11 @@ const mainland = cutBy(
     // Lombardy | Veneto: the Mincio and Lake Garda
     [P4, [11.2, 45.15], [10.8, 45.35], [10.7, 45.6], P6],
     // Lombardy | Trentino: up to the Stelvio
-    [P6, [10.6, 45.9], [10.5, 46.15], [10.55, 46.35], [10.45, 46.55], [10.45, 46.8]],
+    [P6, [10.6, 45.9], [10.5, 46.15], [10.55, 46.35], [10.45, 46.55], [10.45, CAP_N]],
     // Trentino | Veneto: the Adige gorge, Asiago, the Dolomites
-    [P6, [11.0, 45.72], [11.4, 45.85], [11.7, 46.0], [11.85, 46.2], [12.05, 46.45], [12.2, 46.6], [12.3, 46.85]],
+    [P6, [11.0, 45.72], [11.4, 45.85], [11.7, 46.0], [11.85, 46.2], [12.05, 46.45], [12.2, 46.6], [12.3, CAP_N]],
     // Veneto | Friuli: the Livenza, out past the Tagliamento mouth (south-east, clear of Marche)
-    [[12.7, 46.9], [12.7, 46.65], [12.5, 46.4], [12.42, 46.1], [12.6, 45.9], [12.85, 45.82], [13.05, 45.7], [13.5, 45.3]],
+    [[12.7, CAP_N], [12.7, 46.65], [12.5, 46.4], [12.42, 46.1], [12.6, 45.9], [12.85, 45.82], [13.05, 45.7], [13.5, 45.3]],
     // Emilia | Romagna: the Reno, then the Sillaro up to the crest
     [[12.45, 44.62], [12.2, 44.6], [11.85, 44.58], [11.7, 44.45], [11.58, 44.3], P7],
     // Emilia, Romagna | Tuscany: the Apennine crest
@@ -122,7 +127,7 @@ const mainland = cutBy(
   },
 );
 const sardinia = pixelOf(cutBy([[[8.2, 40.2], [9.0, 40.15], [9.9, 40.05]]], { sardinia_north: [9.1, 40.8], sardinia_south: [9.0, 39.4] }));
-const sicily = pixelOf(cutBy([[[14.05, 38.3], [14.15, 37.7], [14.3, 37.3], [14.4, 36.9]]], { sicily_west: [13.3, 37.7], sicily_east: [14.9, 37.4] }));
+const sicily = pixelOf(cutBy([[[14.05, 38.3], [14.15, 37.7], [14.3, 37.3], [14.4, 36.9]]], { sicily_west: [13.8, 37.6], sicily_east: [14.6, 37.5] }));
 const mainlandPx = pixelOf(mainland);
 const isSardinia = (lon: number, lat: number) => lon < 10.5 && lat < 41.4;
 // Sicily (and the Aeolians) against Calabria across the Strait of Messina (Capo Peloro is at 15.65, 38.27).
@@ -145,9 +150,12 @@ const franceMain = pixelOf(
       // the Rhône: Provence | Languedoc
       [[4.6, 43.2], [4.65, 43.7], [4.7, 44.1], [4.65, 44.4]],
       // Provence's north edge (PACA), up the Durance to the Galibier and on into Italy
-      [[4.65, 44.4], [5.4, 44.45], [5.7, 44.65], [6.0, 44.85], FJ, [6.7, 45.1]],
+      [[4.65, 44.4], [5.4, 44.45], [5.7, 44.65], [6.0, 44.85], FJ, [7.8, 45.1]],
+      // a cap east of all French land, so the line above ends on a T (see CAP_N)
+      [[7.8, 42.5], [7.8, 45.1], [7.8, 47.0]],
+      [[3.5, 47.0], [5.95, 47.0], [7.8, 47.0]],
       // Savoy's west edge: Isère | Savoie, Lake Bourget, the Rhône to Geneva
-      [FJ, [6.0, 45.25], [5.8, 45.45], [5.75, 45.7], [5.8, 46.0], [5.95, 46.3]],
+      [FJ, [6.0, 45.25], [5.8, 45.45], [5.75, 45.7], [5.8, 46.0], [5.95, 46.3], [5.95, 47.0]],
     ],
     { provence: [6.0, 43.8], aosta_savoy: [6.5, 45.7], decor: [4.5, 45.5] },
   ),
@@ -162,7 +170,9 @@ const croatia = cutBy(
     // Istria | Dalmatia: between Krk and Rab, through the Velebit channel, up to the Kapela
     [[14.6, 44.5], [14.6, 44.72], [14.75, 44.9], [14.95, 45.0], CJ],
     // Istria | inland: Gorski kotar | Karlovac
-    [CJ, [15.3, 45.5], [15.35, 45.9]],
+    [CJ, [15.3, 45.5], [15.35, 46.7]],
+    // a cap north of Croatia (see CAP_N)
+    [[13.0, 46.7], [15.35, 46.7], [19.6, 46.7]],
     // Dalmatia | inland: Lika | Karlovac, then east along the Bosnian border
     [CJ, [15.5, 45.0], [15.85, 44.7], [16.4, 44.7]],
   ],
@@ -194,7 +204,7 @@ const greeceMain = pixelOf(
       // Sterea | Peloponnese: the Gulf of Patras, Rio, the Gulf of Corinth, the isthmus, the Saronic Gulf
       [[20.9, 38.33], [21.2, 38.33], [21.5, 38.28], [21.78, 38.31], [22.1, 38.22], [22.5, 38.12], [22.8, 38.0], [22.96, 37.93], [23.15, 37.85], [23.35, 37.65], [23.55, 37.45]],
     ],
-    { epirus: [20.7, 39.6], macedonia: [22.5, 40.6], thessaly: [22.2, 39.5], attica: [22.8, 38.6], peloponnese: [22.3, 37.5] },
+    { epirus: [20.7, 39.6], macedonia: [24.0, 40.95], thessaly: [22.2, 39.5], attica: [22.8, 38.6], peloponnese: [22.3, 37.5] },
   ),
 );
 const greece: Rule = {
@@ -212,7 +222,7 @@ export const recipe: MapRecipe = {
   source: 'countries-10m.json',
   // Provence to the Peloponnese.
   frame: { lonLat: [4, 35.8, 25, 47.6] },
-  projection: { preset: 'mercatorLike', width: 80 },
+  projection: { preset: 'mercatorLike', width: 90 },
   assign: {
     Italy: italy,
     'San Marino': 'romagna',
@@ -250,8 +260,8 @@ export const recipe: MapRecipe = {
   autoFatten: ['liguria', 'molise', 'salento', 'malta'],
 
   continentLabelHints: {
-    alpine_north: [9.5, 47.0],
-    po_riviera: [7.0, 43.2],
+    alpine_north: [13.0, 44.95],
+    po_riviera: [8.0, 43.4],
     centre: [10.6, 41.8],
     south: [17.0, 39.2],
     islands: [11.0, 39.5],
