@@ -109,6 +109,13 @@ export interface MapOptionVM {
   thumbnail: string | null;
   /** The table's seat count is outside the map's range. */
   disabled: boolean;
+  /**
+   * Additive (v6 maps): the map's territory count (listMaps().territories). The New game summary scales
+   * "first to N territories" by it; absent = the summary as sent.
+   */
+  territories?: number;
+  /** Additive (v6 maps): a pack that exists but is not offered (MapManifest.hidden). Never shown. */
+  hidden?: boolean;
 }
 
 /** Additive (v3): an AI personality as the seat picker offers it. */

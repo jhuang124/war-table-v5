@@ -90,6 +90,8 @@ export interface MapManifest {
   extends?: string;
   /** Generated preview image beside pack.json (build:map writes it), or absent. */
   thumbnail?: string;
+  /** Additive (v6 maps): registered and playable by id (e2e, ?map=), but never offered on New game. */
+  hidden?: boolean;
   presentation: MapPresentation;
 }
 
