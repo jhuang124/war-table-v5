@@ -2,11 +2,10 @@
 // mutates a *draft* (a private clone) and appends events; nothing here is exported publicly.
 
 import { decayGrudges, REBUFF_ROUNDS } from './diplomacy';
-import { ADJACENCY, TERRITORY_IDS } from './mapData';
 import { missionComplete, missionHeadline, missionText } from './missions';
 import { random, shuffleInPlace } from './rng';
 import { refreshStandings } from './standing';
-import { reinforcementsFor, territoryCount, totalArmies, turnLimitWinner } from './rules';
+import { mapOf, reinforcementsFor, territoryCount, totalArmies, turnLimitWinner } from './rules';
 import type { GameEvent, GameState, Phase, PlayerId, TerritoryId, TruceOffer } from './types';
 
 export interface Draft {
@@ -122,17 +121,18 @@ export function startSetupPlaceTurn(d: Draft, player: PlayerId): void {
 /** Engine placement: favors border territories (more enemy neighbors = more weight), some randomness. */
 export function autoPlace(d: Draft): void {
   const s = d.s;
+  const m = mapOf(s);
   const n = s.players.length;
   for (let k = 0; k < n; k++) {
     const pid = (s.firstPlayer + k) % n;
     const p = s.players[pid];
     let left = p.setupArmies;
     if (left <= 0) continue;
-    const owned = TERRITORY_IDS.filter((t) => s.territories[t].owner === pid);
+    const owned = m.territoryIds.filter((t) => s.territories[t].owner === pid);
     if (owned.length === 0) continue;
     const weights = owned.map((t) => {
       let enemies = 0;
-      for (const nb of ADJACENCY[t]) if (s.territories[nb].owner !== pid) enemies++;
+      for (const nb of m.adjacency[t]) if (s.territories[nb].owner !== pid) enemies++;
       return enemies === 0 ? 0.2 : 1 + enemies;
     });
     const totalW = weights.reduce((a, b) => a + b, 0);

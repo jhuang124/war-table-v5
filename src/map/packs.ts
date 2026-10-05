@@ -11,6 +11,9 @@ import classicManifest from '../../maps/classic/pack.json';
 import classicRules from '../../maps/classic/rules.json';
 import classicTopology from '../../maps/classic/topology.json';
 import trueWorldManifest from '../../maps/true-world/pack.json';
+import testTwelveManifest from '../../maps/test-twelve/pack.json';
+import testTwelveRules from '../../maps/test-twelve/rules.json';
+import testTwelveTopology from '../../maps/test-twelve/topology.json';
 
 /** The map a game without `config.mapId` is played on (every save from before map packs). */
 export const DEFAULT_MAP_ID = 'classic';
@@ -29,6 +32,13 @@ const PACK_FILES: PackFiles[] = [
     topology: classicTopology as unknown as MapTopology,
   },
   { manifest: trueWorldManifest as MapManifest },
+  // v6: the engine's synthetic test board (12 territories, 3 continents, seats 2-3). Hidden: never in the
+  // picker, never booted; the engine plays it so its rules-per-game path is proven before real maps exist.
+  {
+    manifest: testTwelveManifest as MapManifest,
+    rules: testTwelveRules as unknown as MapRules,
+    topology: testTwelveTopology as unknown as MapTopology,
+  },
 ];
 
 export interface PackData {
@@ -57,9 +67,19 @@ function resolvePack(id: string, seen: string[] = []): PackData {
 
 const PACKS = new Map<string, PackData>(PACK_FILES.map((p) => [p.manifest.id, resolvePack(p.manifest.id)]));
 
-/** Every registered pack id, in picker order. */
+/** Every visible pack id (manifest not `hidden`), in picker order. Each has a board.json. */
 export function packIds(): string[] {
+  return [...PACKS.values()].filter((p) => !p.manifest.hidden).map((p) => p.manifest.id);
+}
+
+/** Every registered pack id, hidden ones included (the engine may play any of them). */
+export function allPackIds(): string[] {
   return [...PACKS.keys()];
+}
+
+/** True for a registered pack the picker and boot never offer (`manifest.hidden`). */
+export function isHiddenMap(id: string | null | undefined): boolean {
+  return typeof id === 'string' && !!PACKS.get(id)?.manifest.hidden;
 }
 
 export function isKnownMap(id: string | null | undefined): id is string {

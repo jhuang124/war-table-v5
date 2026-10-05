@@ -1,15 +1,28 @@
-// Territory cards: the 44-card deck, set validation, and set values.
+// Territory cards: the deck (one card per territory of the game's map + 2 wilds), set validation, and set
+// values. Classic: 42 + 2 = 44 cards.
 
-import { CARD_SYMBOLS, TERRITORY_IDS } from './mapData';
+import { mapOf, type MapRef } from './rules';
 import type { Card, CardSymbol, GameConfig, GameState, PlayerId, TerritoryId } from './types';
 
-export const WILD_CARD_IDS = [42, 43] as const;
+/** The two wild cards' ids on a map: right after its territory cards (size, size + 1). */
+export function wildCardIds(map?: MapRef): [number, number] {
+  const n = mapOf(map).size;
+  return [n, n + 1];
+}
 
-/** 42 territory cards (ids 0..41 in TERRITORY_IDS order) + 2 wilds (42, 43). Unshuffled. */
-export function buildDeck(): Card[] {
-  const deck: Card[] = TERRITORY_IDS.map((t, i) => ({ id: i, territory: t, symbol: CARD_SYMBOLS[t] }));
-  deck.push({ id: 42, territory: null, symbol: 'wild' });
-  deck.push({ id: 43, territory: null, symbol: 'wild' });
+/** Classic's wild card ids (42, 43). A game on another map: `wildCardIds(state)`. */
+export const WILD_CARD_IDS = wildCardIds() as readonly [number, number];
+
+/**
+ * One card per territory (ids 0..size-1 in the map's canonical territory order, symbols from the pack's
+ * cycle) + 2 wilds (size, size + 1). Unshuffled. Absent map = the default (classic).
+ */
+export function buildDeck(map?: MapRef): Card[] {
+  const m = mapOf(map);
+  const deck: Card[] = m.territoryIds.map((t, i) => ({ id: i, territory: t, symbol: m.cardSymbols[t] }));
+  const [w1, w2] = wildCardIds(m);
+  deck.push({ id: w1, territory: null, symbol: 'wild' });
+  deck.push({ id: w2, territory: null, symbol: 'wild' });
   return deck;
 }
 

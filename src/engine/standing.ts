@@ -5,8 +5,7 @@
 // (a wary AI weighing a peace request) uses state.rng in the reducer.
 
 import { brokenPeace, ensureDiplomacy, grudgeOf, isPeace, truceBetween } from './diplomacy';
-import { ADJACENCY, TERRITORY_IDS } from './mapData';
-import { territoryName } from './rules';
+import { mapOf, territoryName } from './rules';
 import type { AiPersonality, GameEvent, GameState, PlayerId, Truce } from './types';
 
 /** How an AI seat feels about another seat. Hardens from ally → even → wary → hostile. */
@@ -98,7 +97,7 @@ function inPlay(s: GameState, p: PlayerId): boolean {
 export function tableLeader(s: GameState): PlayerId {
   const n = s.players.length;
   const count = new Array<number>(n).fill(0);
-  for (const t of TERRITORY_IDS) {
+  for (const t of mapOf(s).territoryIds) {
     const o = s.territories[t].owner;
     if (o >= 0) count[o]++;
   }
@@ -163,11 +162,12 @@ function read(s: GameState, ai: PlayerId, toward: PlayerId): Reading {
   let neighbour = false;
   let theirs = 0;
   let mine = 0;
-  for (const t of TERRITORY_IDS) {
+  const m = mapOf(s);
+  for (const t of m.territoryIds) {
     const x = s.territories[t];
     if (x.owner !== ai && x.owner !== toward) continue;
     const other = x.owner === ai ? toward : ai;
-    if (!ADJACENCY[t].some((n) => s.territories[n].owner === other)) continue;
+    if (!m.adjacency[t].some((n) => s.territories[n].owner === other)) continue;
     neighbour = true;
     if (x.owner === ai) mine += x.armies;
     else theirs += x.armies;
@@ -298,7 +298,7 @@ function grudgePhrases(s: GameState, ai: PlayerId, toward: PlayerId): string[] {
   const v = voiceFor(s, toward);
   const lost = s.players[ai]?.lastTakenBy?.[toward];
   if (lost) {
-    const took = v.verb(`took ${territoryName(lost.territory)}`, `took ${territoryName(lost.territory)}`);
+    const took = v.verb(`took ${territoryName(lost.territory, s)}`, `took ${territoryName(lost.territory, s)}`);
     return [`${took} ${whenTaken(s, lost.round)}`, took];
   }
   if ((s.players[toward]?.truceBreaks ?? 0) > 0) return [v.verb('broke a truce', 'broke a truce')];

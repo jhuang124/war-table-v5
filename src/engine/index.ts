@@ -10,6 +10,8 @@ export {
   missionGoal,
   missionById,
   missionDeckFor,
+  missionsFor,
+  missionTerritories,
   MISSION_TERRITORIES,
   MISSION_TERRITORIES_HELD,
   type Mission,
@@ -42,6 +44,11 @@ export {
   turnLimitWinner,
   isTerritoryId,
   territoryName,
+  continentName,
+  mapOf,
+  targetTerritories,
+  minStartingArmies,
+  type MapRef,
   isBorder,
   enemyNeighborArmies,
   alivePlayers,
@@ -57,6 +64,7 @@ export {
   bonusTerritoryFor,
   upcomingSetValues,
   WILD_CARD_IDS,
+  wildCardIds,
 } from './cards';
 export {
   winProbability,
@@ -91,7 +99,7 @@ export {
   TRUCE_MIN_ROUNDS,
   TRUCE_MAX_ROUNDS,
 } from './diplomacy';
-export { NEUTRAL_SETUP } from './setup';
+export { NEUTRAL_SETUP, neutralTerritories } from './setup';
 export {
   standingOf,
   standingReason,

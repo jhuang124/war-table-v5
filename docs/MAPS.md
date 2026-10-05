@@ -108,22 +108,61 @@ whose land is taller for its width than classic's frames by height, and its armi
   borders), starting armies fit the seat counts, and a few `npm run sim` games finish.
 - **The wrap** (if any) looks like one strait continuing off the edge, not two random lines.
 
-## A new board (the small 2–3 player map)
+## A new board
 
-The format already allows it: nothing assumes 42 territories or 6 continents (ids and counts come from
-`rules.json`; raster labels are bytes, so up to ~250 territories). `seats` can be `{ "min": 2, "max": 3 }`.
-What the rest of the game still needs before an original 20–24-territory map is playable:
+**The engine reads rules per game (v6).** Everything under `src/engine` (rules, setup, cards, flow, reducer,
+summary, missions, standing, diplomacy and the AI) takes the board from the game itself:
+`mapDefOf(state.config)` (or `mapOf(state)` in `src/engine/rules.ts`), i.e. the pack named by
+`config.mapId`. Nothing in the engine assumes 42 territories or six continents any more, and
+`tests/engine/no-classic-constants.test.ts` fails if an engine file names the classic constants
+(`TERRITORY_IDS`, `CONTINENTS`, `ADJACENCY`, …). Those constants stay exported from `mapData.ts` for code
+outside the engine until it migrates.
 
-1. **Engine reads rules per game.** `src/engine` (rules, reducer, flow, setup, cards, summary) and
-   `src/engine/ai/**` use the classic constants from `mapData.ts`. They need to take them from
-   `mapRulesOf(state.config)` instead (the hook exists). `TerritoryId` / `ContinentId` are closed unions
-   in `src/engine/types.ts`; a new board needs them widened to `string` (a contract change for the lead).
-2. **Renderer + controller read territories from the board**, not from `TERRITORY_IDS` / `ADJACENCY` /
-   `CONTINENTS` (src/render imports them in tiles, tokens, ink, overlay, continents, index).
-3. **Presets**: `src/game/presets.ts` rounds-to-threshold tables are measured on 42 territories; rerun
-   `npm run sim` per map. The controller's setup-batch sum uses 42 literally.
-4. **The picker** offers only maps whose `seats` include the table's player count.
-5. Geometry: an original map has no Natural Earth source; hand-draw `board.json` (or add a recipe that
+What a pack must provide for the engine (its own `rules.json` + `topology.json`; `extends` packs inherit them):
+
+- **`seats`** {min, max} within 2..4. `createGame` rejects a table outside them ("Test Twelve is for 2 to 3
+  players.").
+- **`startingArmies`**: one entry per supported seat count, each at least ceil(territories / seats).
+  `createGame` rejects a seat count without one (unless the config sets `startingArmies`).
+- **`cardSymbols`**: the cycle dealt to territories in canonical order. The deck is one card per territory
+  plus two wilds (ids `size` and `size + 1`; `wildCardIds(state)`).
+- **`continents`** with plain-English names and bonuses; reinforcement, continent events, the AI's continent
+  plans, mission cards and the standing lines ("they share a border in Centre") all use them.
+- **`territories`** grouped by continent in continent order: the canonical order. AI iteration, card ids,
+  `legalActionsSummary` arrays and the setup deal follow it.
+- **`borders`** and **`seaLanes`** (a lane is also a border). Adjacency is the borders; the lanes are in
+  `MapDef.seaLanes` for "visible water = adjacency".
+
+What scales with the board by itself:
+
+- **Win thresholds**: `dominationPercent` is a share of the board. `targetTerritories(def, percent)` in
+  `src/engine/rules.ts` turns a percent into territories (70 % = 30 of classic's 42, 9 of a 12-territory
+  board); `territoriesNeeded(state)` uses it.
+- **The neutral seat** (2 players) gets a third of the board, rounded (`neutralTerritories(def)`; 14 on classic).
+- **Missions**: packs that play classic's rules deal the boxed six continent cards. Any other board builds its
+  continent cards from its own continents: every pair whose territories add up to 25–45 % of the board (at
+  most six, nearest 35 % first). The two count cards are 57 % and 43 % (with 2 armies on each) of the board,
+  which is 24 and 18 on classic; the colour cards are unchanged (`missionsFor(state)`, `missionTerritories`).
+
+**Proving a board before it is drawn.** `maps/test-twelve/` is a synthetic engine-only pack (12 territories,
+three continents with bonuses 2 / 3 / 4, two sea lanes, seats 2–3). Its `pack.json` sets `"hidden": true`:
+a hidden pack is registered for the engine (`allPackIds()`, `isKnownMap`) but `listMaps()` / `packIds()`
+skip it, the page never boots on it (`?map=` and saves fall back to classic), and it needs no `board.json`.
+`tests/engine/maps.test.ts` plays it end to end, and `npm run sim [games] -- --map <id>` runs the AI soak on
+any pack (tables the pack's seats don't allow are skipped; classic's tuning bands print as NOTEs there).
+Do the same for a new board's rules before drawing it: write `rules.json` + `topology.json`, register them
+hidden, and run `npm run sim 50 -- --map <id>` until the games finish and the bonuses feel right.
+
+Still outside the engine before an original 20–24-territory map is playable:
+
+1. **Renderer + controller read territories from the board** (`getBoard(id)`, `mapDefOf(config)`), not from
+   `TERRITORY_IDS` / `ADJACENCY` / `CONTINENTS` / `TERRITORIES` / `STARTING_ARMIES` (src/render tiles, tokens,
+   ink, overlay, continents, index; src/game controller and presets).
+2. **Presets**: `src/game/presets.ts` rounds-to-threshold tables are measured on 42 territories and its
+   setup batch and `territoriesToWin` use 42 literally; rerun `npm run sim -- --map <id>` per map and use
+   `targetTerritories`.
+3. **The picker** offers only maps whose `seats` include the table's player count.
+4. Geometry: an original map has no Natural Earth source; hand-draw `board.json` (or add a recipe that
    reads an SVG). Anchors, label spots and lanes must then be placed by hand or by a small helper.
 
 ## True World: what it is

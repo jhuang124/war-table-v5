@@ -1,4 +1,9 @@
-// AI-vs-AI soak: `npm run sim [games]` (default 200). Exits non-zero on any failure.
+// AI-vs-AI soak: `npm run sim [games] [-- --map <id>]` (default 200 games on classic). Exits non-zero on any failure.
+//
+// v6 maps: `--map <id>` plays every table on that pack's rules and topology (a hidden pack such as test-twelve
+// too). Tables whose seat count the pack does not support are skipped and say so. The tuning bands below
+// (truces proposed, understandings formed, missions' share of endings) were set on classic; on another map
+// they print as NOTE lines instead of failing. Every game must still finish legally on any map.
 //
 // Every game must end in gameOver, with every AI action legal on the first try (no fallback),
 // under 500 rounds, with the invariants below holding after every action.
@@ -17,7 +22,8 @@ import {
   missionGoal,
   missionHeadline,
   standingOf,
-  TERRITORY_IDS,
+  mapDefOf,
+  targetTerritories,
   UNCLAIMED,
   validateAction,
   type AiDifficulty,
@@ -29,9 +35,26 @@ import {
   type Standing,
 } from '../src/engine';
 import { decide } from '../src/engine/ai/brain';
+import { isKnownMap } from '../src/map/packs';
 import { hashInts, random, type RngHolder } from '../src/engine/rng';
 
 const COLORS = ['crimson', 'cobalt', 'emerald', 'amber'] as const;
+
+// --- Arguments: [games] [--map <id>] -------------------------------------------------------------------
+const argv = process.argv.slice(2);
+const mapAt = argv.indexOf('--map');
+const MAP_ID = mapAt >= 0 ? argv[mapAt + 1] : 'classic';
+if (!MAP_ID || !isKnownMap(MAP_ID)) {
+  console.error(`--map ${MAP_ID ?? ''}: no such map pack`);
+  process.exit(2);
+}
+const MAP = mapDefOf({ mapId: MAP_ID });
+const CLASSIC = MAP_ID === 'classic';
+const SEATS = MAP.rules.seats;
+const positional = argv.filter((a, i) => !a.startsWith('--') && !(mapAt >= 0 && i === mapAt + 1));
+/** Seat counts the map plays. */
+const seatOk = (n: number) => n >= SEATS.min && n <= SEATS.max;
+const skipped = new Set<string>();
 const DIFFS: AiDifficulty[] = ['easy', 'normal', 'hard'];
 const MAX_ROUNDS = 500;
 const MAX_ACTIONS = 200_000;
@@ -97,17 +120,20 @@ function sampleStandings(s: GameState): void {
   }
 }
 const failures: string[] = [];
+const notes: string[] = [];
+/** A tuning band measured on classic: a failure there, a NOTE on any other map. */
+const band = (msg: string) => (CLASSIC ? failures : notes).push(msg);
 
 function check(s: GameState, label: string): void {
   const cards = s.deck.length + s.discard.length + s.players.reduce((a, p) => a + p.cards.length, 0);
-  if (cards !== 44) throw new Error(`${label}: card count ${cards} != 44`);
+  if (cards !== MAP.size + 2) throw new Error(`${label}: card count ${cards} != ${MAP.size + 2}`);
   const ids = new Set<number>();
   for (const c of [...s.deck, ...s.discard, ...s.players.flatMap((p) => p.cards)]) {
     if (ids.has(c.id)) throw new Error(`${label}: duplicate card ${c.id}`);
     ids.add(c.id);
   }
   if (!s.phase.kind.startsWith('setup')) {
-    for (const t of TERRITORY_IDS) {
+    for (const t of MAP.territoryIds) {
       const x = s.territories[t];
       if (x.owner === UNCLAIMED) throw new Error(`${label}: ${t} unclaimed in main play`);
       if (x.armies < 1 && s.phase.kind !== 'occupy') throw new Error(`${label}: ${t} has ${x.armies} armies`);
@@ -126,9 +152,9 @@ function playGame(config: GameConfig, label: string): GameResult {
   const track = () => {
     if (state.round === 0) return;
     const counts = new Array<number>(state.players.length).fill(0);
-    for (const t of TERRITORY_IDS) counts[state.territories[t].owner]++;
+    for (const t of MAP.territoryIds) counts[state.territories[t].owner]++;
     const top = Math.max(...counts.filter((_, i) => !state.players[i].neutral));
-    for (const pct of THRESHOLDS) if (reach[pct] === undefined && top >= Math.ceil((42 * pct) / 100)) reach[pct] = state.round;
+    for (const pct of THRESHOLDS) if (reach[pct] === undefined && top >= targetTerritories(MAP, pct)) reach[pct] = state.round;
   };
   const dip: Partial<Record<GameEventType, number>> = {};
   const seatStats = state.players.map(emptySeat);
@@ -225,6 +251,7 @@ function makeConfig(i: number, players: PlayerConfig[], overrides: Partial<GameC
     dominationPercent: i % 10 === 7 ? 70 : 100,
     turnLimit: i % 10 === 9 ? 25 : null,
     seed: hashInts(0xc0ffee, i),
+    ...(CLASSIC ? {} : { mapId: MAP_ID }),
     ...overrides,
   };
 }
@@ -250,6 +277,11 @@ function run(label: string, n: number, mk: (i: number) => GameConfig): GameResul
   const out: GameResult[] = [];
   for (let i = 0; i < n; i++) {
     const cfg = mk(i);
+    if (!seatOk(cfg.players.length)) {
+      if (!skipped.has(label)) console.log(`  (${label}: skipped, ${MAP_ID} seats ${SEATS.min}–${SEATS.max})`);
+      skipped.add(label);
+      return out;
+    }
     try {
       out.push(playGame(cfg, `${label} #${i} (seed ${cfg.seed})`));
     } catch (e) {
@@ -260,12 +292,13 @@ function run(label: string, n: number, mk: (i: number) => GameConfig): GameResul
 }
 
 const t0 = performance.now();
-const N = Math.max(1, Number(process.argv[2] ?? 200) || 200);
+const N = Math.max(1, Number(positional[0] ?? 200) || 200);
+console.log(`map: ${MAP_ID} (${MAP.size} territories, ${MAP.continentIds.length} continents, seats ${SEATS.min}–${SEATS.max})`);
 
 // --- Main soak: every rule variant, 2/3/4 players, mixed difficulties -------------------------
 const rng: RngHolder = { rng: 12345 };
 const soak = run('soak', N, (i) => {
-  const n = 2 + (i % 3);
+  const n = SEATS.min + (i % (SEATS.max - SEATS.min + 1));
   const diffs = Array.from({ length: n }, () => DIFFS[Math.floor(random(rng) * 3)]);
   return makeConfig(Math.floor(i / 3) + i, seats(diffs));
 });
@@ -312,7 +345,7 @@ turnBucket = 'classic 4p';
 const four = run('4p-normal', M, (i) => makeConfig(i, seats(['normal', 'normal', 'normal', 'normal']), { turnLimit: null, dominationPercent: 100 }));
 turnBucket = 'soak';
 const r4 = four.map((g) => g.rounds);
-console.log(
+if (four.length) console.log(
   `  4p normal×4 (domination): avg rounds ${(r4.reduce((a, b) => a + b, 0) / Math.max(1, r4.length)).toFixed(1)}, median ${median(r4)}, range ${Math.min(...r4)}–${Math.max(...r4)}, in 15–60: ${r4.filter((r) => r >= 15 && r <= 60).length}/${r4.length}`,
 );
 const mixed = run('4p-hard+3normal', M, (i) => {
@@ -321,7 +354,7 @@ const mixed = run('4p-hard+3normal', M, (i) => {
   return makeConfig(i, seats(d), { turnLimit: null, dominationPercent: 100 });
 });
 const hw = mixed.filter((g) => g.players[g.winner].difficulty === 'hard').length;
-console.log(`  4p 1 hard + 3 normal: hard wins ${hw}/${mixed.length} (${pct(hw, mixed.length)}; fair share 25%)`);
+if (mixed.length) console.log(`  4p 1 hard + 3 normal: hard wins ${hw}/${mixed.length} (${pct(hw, mixed.length)}; fair share 25%)`);
 
 // --- Game length by win condition (SPEC §11.1; normal AIs, full-conquest games) ----------------
 // The New game length estimates (src/game/presets.ts ROUNDS) are these numbers × measured seconds per
@@ -336,6 +369,7 @@ for (const n of [2, 3, 4]) {
       setupMode: 'random',
     }),
   );
+  if (!res.length) continue;
   const cells = THRESHOLDS.map((pct) => {
     const xs = res.map((g) => g.reach[pct]).filter((x): x is number => x !== undefined).sort((a, b) => a - b);
     const mean = xs.reduce((a, b) => a + b, 0) / Math.max(1, xs.length);
@@ -381,6 +415,7 @@ for (let a = 0; a < KINDS.length; a++) {
     const X = KINDS[a];
     const Y = KINDS[b];
     const res = run(`${X}-v-${Y}`, P, (i) => makeConfig(i, pSeats(i % 2 === 0 ? [X, Y, X, Y] : [Y, X, Y, X]), full));
+    if (!res.length) continue;
     if (X !== 'default' || Y !== 'default') addDip(res);
     const xw = res.filter((g) => kindOf(g.players[g.winner]) === X).length;
     const rounds = res.reduce((s2, g) => s2 + g.rounds, 0) / Math.max(1, res.length);
@@ -394,16 +429,16 @@ const ffa = run('ffa', P, (i) => {
   return makeConfig(i, pSeats(order), full);
 });
 addDip(ffa);
-for (const k of KINDS) {
+for (const k of ffa.length ? KINDS : []) {
   const w = ffa.filter((g) => kindOf(g.players[g.winner]) === k).length;
   console.log(`  ${k.padEnd(11)} wins ${String(w).padStart(3)}/${ffa.length} (${pct(w, ffa.length)})`);
 }
-console.log(
+if (ffa.length) console.log(
   `  avg rounds ${(ffa.reduce((a, g) => a + g.rounds, 0) / Math.max(1, ffa.length)).toFixed(1)} (4p normal×4 classic above: ${(r4.reduce((a, b) => a + b, 0) / Math.max(1, r4.length)).toFixed(1)})`,
 );
 
 console.log(`\n=== How each plays (free-for-all above, per seat; rounds 1–${OPENING_ROUNDS} except eliminations and breaks, which are whole-game) ===`);
-for (const k of KINDS) {
+for (const k of ffa.length ? KINDS : []) {
   const agg = emptySeat();
   let seatsN = 0;
   for (const g of ffa) {
@@ -424,7 +459,7 @@ console.log(`\n=== Diplomacy, per game with personalities (${dipGames} games; v5
 console.log(
   `  proposed ${perGame('truceProposed')}  accepted ${perGame('truceAccepted')}  declined ${perGame('truceDeclined')}  broken ${perGame('truceBroken')}  expired ${perGame('truceExpired')}  standing changes ${perGame('standingChanged')}`,
 );
-if ((allDip.truceProposed ?? 0) === 0) failures.push('no truce was ever proposed in personality games');
+if ((allDip.truceProposed ?? 0) === 0) band('no truce was ever proposed in personality games');
 
 // --- Standing (v5.1): rounds per table, understandings, bands ------------------------------------------
 // Full-conquest games, normal AIs, every seat a personality (the v5.1 New game randomises them): how long the
@@ -443,6 +478,7 @@ let formedAll = 0;
 for (const t of sTables) {
   const turned0 = standingTurned;
   const res = run(`standing-${t.label}`, P, (i) => makeConfig(i, t.seats(i), t.over));
+  if (!res.length) continue;
   const r = res.map((g) => g.rounds);
   const sum = (k: GameEventType) => res.reduce((a, g) => a + (g.dip[k] ?? 0), 0);
   const per = (n: number) => (n / Math.max(1, res.length)).toFixed(2);
@@ -456,7 +492,7 @@ for (const t of sTables) {
 sampleBands = false;
 const bandTotal = Object.values(bandCount).reduce((a, b) => a + b, 0);
 console.log(`  bands at turn start (every AI toward every seat): ${(['ally', 'even', 'wary', 'hostile'] as Standing[]).map((b) => `${b} ${pct(bandCount[b], bandTotal)}`).join('  ')}`);
-if (formedAll === 0) failures.push('no AI-AI understanding ever formed in the standing tables');
+if (formedAll === 0) band('no AI-AI understanding ever formed in the standing tables');
 
 // --- 2 players: first-mover win rate, with and without the neutral seat ---------------------------
 turnBucket = '2p classic';
@@ -500,6 +536,7 @@ let mByMission = 0;
 for (const t of tables) {
   const on = run(`missions-${t.label}`, MS, (i) => makeConfig(i, t.seats(i), { ...t.over, missions: true }));
   const off = run(`nomissions-${t.label}`, MS, (i) => makeConfig(i, t.seats(i), t.over));
+  if (!on.length) continue;
   const byM = on.filter((g) => g.by === 'mission');
   mAll += on.length;
   mByMission += byM.length;
@@ -512,7 +549,7 @@ for (const t of tables) {
   );
   if (t.label === '4p' && byM[0]) console.log(`    e.g. "${byM[0].headline}"`);
 }
-if (mByMission * 3 < mAll) failures.push(`missions ended only ${pct(mByMission, mAll)} of Evening games (target ≥ 33%)`);
+if (mByMission * 3 < mAll) band(`missions ended only ${pct(mByMission, mAll)} of Evening games (target ≥ 33%)`);
 console.log(`  all tables together: ${pct(mByMission, mAll)} end by mission (target ≥ 33%)`);
 
 // --- Timing ---------------------------------------------------------------------------------------
@@ -532,6 +569,7 @@ for (const [k, xs] of Object.entries(turnTimes)) {
 }
 console.log(`total ${((performance.now() - t0) / 1000).toFixed(1)} s`);
 
+for (const n of notes) console.log(`NOTE (${MAP_ID}; classic band): ${n}`);
 if (q(0.99) > 5) failures.push(`AI p99 decision time ${q(0.99).toFixed(2)} ms exceeds 5 ms`);
 if (failures.length) {
   console.error(`\nFAILED (${failures.length}):`);

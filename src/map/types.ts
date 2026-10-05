@@ -90,6 +90,12 @@ export interface MapManifest {
   extends?: string;
   /** Generated preview image beside pack.json (build:map writes it), or absent. */
   thumbnail?: string;
+  /**
+   * Optional (additive, v6): registered for the engine and tests but never offered in the New-game picker
+   * (listMaps skips it) and never booted by `?map=` or a save. A hidden pack may ship no board.json
+   * (maps/test-twelve, the engine's synthetic test board, ships none).
+   */
+  hidden?: boolean;
   presentation: MapPresentation;
 }
 

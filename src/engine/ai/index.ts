@@ -1,7 +1,7 @@
 // Public AI entry. Always returns a legal action for the current player.
 
 import { validSets } from '../cards';
-import { TERRITORY_IDS } from '../mapData';
+import { mapOf } from '../rules';
 import { validateAction } from '../reducer';
 import { UNCLAIMED, type Action, type GameState, type PlayerId } from '../types';
 import { decide } from './brain';
@@ -36,10 +36,11 @@ export function fallbackAction(state: GameState, player: PlayerId): Action {
   };
   if (!pl || player !== state.currentPlayer) return noop;
   const ph = state.phase;
-  const firstOwned = TERRITORY_IDS.find((t) => state.territories[t].owner === player)!;
+  const ids = mapOf(state).territoryIds;
+  const firstOwned = ids.find((t) => state.territories[t].owner === player)!;
   switch (ph.kind) {
     case 'setup-claim':
-      return { type: 'claim', player, territory: TERRITORY_IDS.find((t) => state.territories[t].owner === UNCLAIMED)! };
+      return { type: 'claim', player, territory: ids.find((t) => state.territories[t].owner === UNCLAIMED)! };
     case 'setup-place':
       return { type: 'placeSetup', player, territory: firstOwned, count: ph.toPlace };
     case 'reinforce': {
