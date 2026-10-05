@@ -1,0 +1,11 @@
+{
+  "format": 1,
+  "id": "italian-conquest",
+  "name": "Italian Conquest",
+  "description": "TODO: one plain line in John's voice saying what is different about this board.",
+  "thumbnail": "thumb.png",
+  "hidden": true,
+  "presentation": {
+    "anchorClearance": 1.3
+  }
+}

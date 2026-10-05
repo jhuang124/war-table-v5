@@ -1,0 +1,36 @@
+{
+  "format": 1,
+  "borders": [
+    ["aosta_savoy", "piedmont"], ["aosta_savoy", "provence"], ["piedmont", "provence"], ["piedmont", "lombardy"],
+    ["piedmont", "liguria"], ["lombardy", "liguria"], ["lombardy", "emilia"], ["lombardy", "trentino"], ["lombardy", "veneto"],
+    ["trentino", "veneto"], ["veneto", "friuli"], ["veneto", "emilia"], ["friuli", "slovenia"],
+    ["provence", "liguria"], ["liguria", "emilia"], ["liguria", "tuscany"], ["emilia", "romagna"], ["emilia", "tuscany"],
+    ["romagna", "tuscany"], ["romagna", "marche"],
+    ["tuscany", "marche"], ["tuscany", "umbria"], ["tuscany", "lazio"], ["umbria", "marche"], ["umbria", "lazio"],
+    ["marche", "lazio"], ["marche", "abruzzo"], ["lazio", "abruzzo"], ["lazio", "molise"], ["lazio", "campania"],
+    ["abruzzo", "molise"], ["molise", "campania"], ["molise", "puglia"], ["campania", "puglia"], ["campania", "basilicata"],
+    ["puglia", "basilicata"], ["puglia", "salento"], ["basilicata", "calabria"],
+    ["corsica_north", "corsica_south"], ["sardinia_north", "sardinia_south"], ["sicily_west", "sicily_east"],
+    ["slovenia", "istria"], ["istria", "dalmatia"], ["dalmatia", "bosnia"], ["dalmatia", "herzegovina"], ["dalmatia", "montenegro"],
+    ["bosnia", "herzegovina"], ["bosnia", "montenegro"], ["herzegovina", "montenegro"], ["montenegro", "albania"],
+    ["albania", "epirus"], ["albania", "macedonia"],
+    ["epirus", "macedonia"], ["epirus", "thessaly"], ["epirus", "attica"], ["macedonia", "thessaly"], ["thessaly", "attica"],
+    ["attica", "peloponnese"],
+    ["tuscany", "corsica_north"], ["liguria", "corsica_north"], ["corsica_south", "sardinia_north"], ["lazio", "sardinia_north"],
+    ["sardinia_south", "sicily_west"], ["calabria", "sicily_east"], ["sicily_east", "malta"], ["salento", "albania"],
+    ["salento", "epirus"], ["veneto", "istria"], ["marche", "dalmatia"]
+  ],
+  "seaLanes": [
+    { "a": "tuscany", "b": "corsica_north" },
+    { "a": "liguria", "b": "corsica_north" },
+    { "a": "corsica_south", "b": "sardinia_north" },
+    { "a": "lazio", "b": "sardinia_north" },
+    { "a": "sardinia_south", "b": "sicily_west" },
+    { "a": "calabria", "b": "sicily_east" },
+    { "a": "sicily_east", "b": "malta" },
+    { "a": "salento", "b": "albania" },
+    { "a": "salento", "b": "epirus" },
+    { "a": "veneto", "b": "istria" },
+    { "a": "marche", "b": "dalmatia" }
+  ]
+}
