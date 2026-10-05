@@ -1,0 +1,70 @@
+{
+  "format": 1,
+  "seats": { "min": 2, "max": 4 },
+  "startingArmies": { "2": 43, "3": 37, "4": 32 },
+  "cardSymbols": ["infantry", "cavalry", "artillery"],
+  "continents": [
+    { "id": "britannia", "name": "Britannia", "bonus": 1 },
+    { "id": "gallia", "name": "Gallia", "bonus": 4 },
+    { "id": "hispania", "name": "Hispania", "bonus": 2 },
+    { "id": "italia", "name": "Italia", "bonus": 5 },
+    { "id": "illyricum", "name": "Illyricum", "bonus": 4 },
+    { "id": "graecia_asia", "name": "Graecia & Asia", "bonus": 5 },
+    { "id": "oriens", "name": "Oriens", "bonus": 3 },
+    { "id": "africa", "name": "Africa", "bonus": 2 }
+  ],
+  "territories": [
+    { "id": "valentia", "name": "Valentia", "continent": "britannia" },
+    { "id": "britannia_inferior", "name": "Britannia Inferior", "continent": "britannia" },
+    { "id": "britannia_superior", "name": "Britannia Superior", "continent": "britannia" },
+
+    { "id": "belgica", "name": "Belgica", "continent": "gallia" },
+    { "id": "germania_inferior", "name": "Germania Inferior", "continent": "gallia" },
+    { "id": "germania_superior", "name": "Germania Superior", "continent": "gallia" },
+    { "id": "lugdunensis", "name": "Lugdunensis", "continent": "gallia" },
+    { "id": "aquitania", "name": "Aquitania", "continent": "gallia" },
+    { "id": "narbonensis", "name": "Narbonensis", "continent": "gallia" },
+
+    { "id": "tarraconensis", "name": "Tarraconensis", "continent": "hispania" },
+    { "id": "lusitania", "name": "Lusitania", "continent": "hispania" },
+    { "id": "baetica", "name": "Baetica", "continent": "hispania" },
+    { "id": "balearica", "name": "Balearica", "continent": "hispania" },
+
+    { "id": "liguria", "name": "Liguria", "continent": "italia" },
+    { "id": "venetia", "name": "Venetia", "continent": "italia" },
+    { "id": "etruria", "name": "Etruria", "continent": "italia" },
+    { "id": "latium", "name": "Latium", "continent": "italia" },
+    { "id": "campania", "name": "Campania", "continent": "italia" },
+    { "id": "apulia", "name": "Apulia", "continent": "italia" },
+    { "id": "sicilia", "name": "Sicilia", "continent": "italia" },
+    { "id": "sardinia_et_corsica", "name": "Sardinia et Corsica", "continent": "italia" },
+
+    { "id": "raetia", "name": "Raetia", "continent": "illyricum" },
+    { "id": "noricum", "name": "Noricum", "continent": "illyricum" },
+    { "id": "pannonia", "name": "Pannonia", "continent": "illyricum" },
+    { "id": "dalmatia", "name": "Dalmatia", "continent": "illyricum" },
+    { "id": "moesia", "name": "Moesia", "continent": "illyricum" },
+    { "id": "dacia", "name": "Dacia", "continent": "illyricum" },
+
+    { "id": "thracia", "name": "Thracia", "continent": "graecia_asia" },
+    { "id": "macedonia", "name": "Macedonia", "continent": "graecia_asia" },
+    { "id": "achaea", "name": "Achaea", "continent": "graecia_asia" },
+    { "id": "creta", "name": "Creta", "continent": "graecia_asia" },
+    { "id": "bithynia", "name": "Bithynia", "continent": "graecia_asia" },
+    { "id": "asia", "name": "Asia", "continent": "graecia_asia" },
+    { "id": "galatia", "name": "Galatia", "continent": "graecia_asia" },
+    { "id": "cappadocia", "name": "Cappadocia", "continent": "graecia_asia" },
+
+    { "id": "cilicia", "name": "Cilicia", "continent": "oriens" },
+    { "id": "syria", "name": "Syria", "continent": "oriens" },
+    { "id": "judaea", "name": "Judaea", "continent": "oriens" },
+    { "id": "arabia_petraea", "name": "Arabia Petraea", "continent": "oriens" },
+    { "id": "aegyptus", "name": "Aegyptus", "continent": "oriens" },
+    { "id": "cyrenaica", "name": "Cyrenaica", "continent": "oriens" },
+
+    { "id": "africa_proconsularis", "name": "Africa Proconsularis", "continent": "africa" },
+    { "id": "numidia", "name": "Numidia", "continent": "africa" },
+    { "id": "caesariensis", "name": "Caesariensis", "continent": "africa" },
+    { "id": "tingitana", "name": "Tingitana", "continent": "africa" }
+  ]
+}
