@@ -83,3 +83,11 @@ The Charles is a border, not a lane (Allston–Brighton touch Back Bay across it
 - e2e: surfaces/setup/smoke flows learn the Where row and the new ids; a `maps.e2e.ts` boots each pack with
   `?map=<id>` and plays a turn.
 - A "Maps" line in the README listing the packs and pointing to MAP-AUTHORING.md.
+
+## Status (2026-10-05)
+Built and merged on `v5`: engine, game, renderer and pipeline generic; Where row; Roman Empire (45/8), Italian
+Conquest (40/7), Modern Boston (25/6). Builders' documented departures from this spec live in each pack's
+README.md. Open: phone portrait frames regional boards partially (the existing rotate prompt); decor land reads a
+shade heavy on Italy; the "Back Bay & Fenway" label sits in the Brookline gap; `RISK_QUERY` smoke runs break on the
+reload handoff (use `maps.e2e`); a per-territory "grow into neighbours" option would spare city maps the lens
+tuning.

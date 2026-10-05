@@ -125,7 +125,15 @@ hidden keys speed things up:
 | Space | Blitz, or confirm a move / placement (never changes phase) |
 | Esc | Back out one step, then the menu |
 
-## House rules (New game → House rules)
+## Maps (New game → the Where row)
+
+Five boards, all drawn by the same pipeline in the same ink: **Classic** (the board you know), **True World** (the
+same 42 on a truer world), **Roman Empire** (45 provinces in 8 regions, from Britannia to the Nile), **Italian
+Conquest** (40 territories around Italy and every shore that touches it) and **Modern Boston** (25 neighbourhoods;
+the harbour is the only border that matters). Each pack is a folder under `maps/<id>/`; dropping a new folder in
+registers it. To add one, follow `docs/MAP-AUTHORING.md` (about an hour for an agent).
+
+## House rules (New game → More)
 
 - **Draft territories**: take turns claiming territories instead of a random deal (adds ~10 min).
 - **Card sets**: Growing (4, 6, 8, 10, 12, 15, then +5; the default) or Fixed (4 / 6 / 8 / 10).
