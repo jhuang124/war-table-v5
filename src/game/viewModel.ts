@@ -212,7 +212,7 @@ export interface SeatChipVM {
   armies?: number;
   /** Additive (v3): cards in hand (a count only; the hand stays private). */
   cards?: number;
-  /** Additive (v3): the continents this seat holds whole, CONTINENT_IDS order. */
+  /** Additive (v3): the continents this seat holds whole, the map's continent order. */
   continents?: ContinentId[];
   /**
    * Additive (v3 AI): the 2-player neutral seat. Its ring keeps its territory count; no name underline,

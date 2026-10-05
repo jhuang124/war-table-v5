@@ -8,7 +8,7 @@
 // the seat's deep ink, at full height (the board is flat: nothing squashes them onto a tilted face any more).
 import * as THREE from 'three';
 import type { TerritoryId } from '../engine/types';
-import { TERRITORY_IDS, TERRITORIES } from './activeMap';
+import { MAP } from './activeMap';
 import { PLAYER_COLORS, type PlayerPalette } from '../shared/palette';
 import type { BoardGeometry } from '../map/types';
 import type { TileSet } from './tiles';
@@ -147,11 +147,11 @@ export class Overlay {
   minPlaque = 22;
   /** Phones: nudge overlapping count plaques apart (relaxPlaques). */
   relax = false;
-  private pos = new Float64Array(TERRITORY_IDS.length * 6);
-  private off = new Float64Array(TERRITORY_IDS.length * 2);
+  private pos = new Float64Array(MAP.territoryIds.length * 6);
+  private off = new Float64Array(MAP.territoryIds.length * 2);
   /** Per piece this frame: the numeral's font px, and the piece's box (stone + figure), container px. */
-  private fsz = new Float64Array(TERRITORY_IDS.length);
-  private ext = new Float64Array(TERRITORY_IDS.length * 4);
+  private fsz = new Float64Array(MAP.territoryIds.length);
+  private ext = new Float64Array(MAP.territoryIds.length * 4);
   private labelsDirty = true;
   /** Names need a re-layout (the board's render-on-demand loop asks). */
   get dirty(): boolean {
@@ -196,7 +196,7 @@ export class Overlay {
     this.root.appendChild(this.cut);
     container.appendChild(this.root);
 
-    for (const id of TERRITORY_IDS) {
+    for (const id of MAP.territoryIds) {
       const el = document.createElement('div');
       el.className = 'rb-badge';
       el.dataset.t = id;
@@ -247,7 +247,7 @@ export class Overlay {
 
       const lab = document.createElement('div');
       lab.className = 'rb-label';
-      lab.textContent = splitName(TERRITORIES[id].name);
+      lab.textContent = splitName(MAP.territories[id].name);
       labelLayer.appendChild(lab);
       this.labels.push({ id, el: lab, lastT: '', w: 0, h: 0, on: false, focus: false });
     }

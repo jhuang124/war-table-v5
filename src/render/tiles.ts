@@ -4,7 +4,7 @@
 import * as THREE from 'three';
 import type { BoardGeometry, Vec2 } from '../map/types';
 import type { TerritoryId } from '../engine/types';
-import { TERRITORY_IDS } from './activeMap';
+import { MAP } from './activeMap';
 import { TILE_DEPTH, TILE_TOP, adjust, hexToRgb, IVORY, distToRing, toWorld, unclaimedRgb, type RGB } from './util';
 import { SIDE_FRAG, SIDE_VERT, TILE_FRAG, TILE_VERT, type SharedUniforms } from './inkGlsl';
 import type { InkLayer } from './ink';
@@ -92,7 +92,7 @@ export class TileSet {
 
   constructor(g: BoardGeometry, ink: InkLayer, shared: SharedUniforms) {
     const un = unclaimedRgb();
-    for (const id of TERRITORY_IDS) {
+    for (const id of MAP.territoryIds) {
       const tg = g.territories[id];
       const index = ink.index(id);
       const anchorW = toWorld(tg.anchor[0], tg.anchor[1], TILE_TOP);
@@ -223,13 +223,13 @@ export class TileSet {
   private buildEntryPoints(g: BoardGeometry): void {
     const key = (p: Vec2) => `${p[0].toFixed(3)},${p[1].toFixed(3)}`;
     const vertsOf = new Map<TerritoryId, Set<string>>();
-    for (const id of TERRITORY_IDS) {
+    for (const id of MAP.territoryIds) {
       const s = new Set<string>();
       for (const p of g.territories[id].polygons) for (const v of p.outer) s.add(key(v));
       vertsOf.set(id, s);
     }
-    for (const a of TERRITORY_IDS) {
-      for (const b of TERRITORY_IDS) {
+    for (const a of MAP.territoryIds) {
+      for (const b of MAP.territoryIds) {
         if (a === b) continue;
         const sa = vertsOf.get(a)!;
         const shared: Vec2[] = [];

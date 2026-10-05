@@ -39,7 +39,7 @@ function pointInRing(x: number, y: number, ring: Vec2[]): boolean {
 export function createStubBoard(opts: StubBoardOptions): BoardView {
   const { container, geometry } = opts;
   // v6: the board's own territories (any map), in its file order.
-  const TERRITORY_IDS = Object.keys(geometry.territories) as TerritoryId[];
+  const ids = Object.keys(geometry.territories) as TerritoryId[];
   const canvas = document.createElement('canvas');
   canvas.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;display:block;cursor:default';
   canvas.dataset.stub = '1';
@@ -90,7 +90,7 @@ export function createStubBoard(opts: StubBoardOptions): BoardView {
   const hit = (clientX: number, clientY: number): TerritoryId | null => {
     const r = canvas.getBoundingClientRect();
     const [bx, by] = toBoard(clientX - r.left, clientY - r.top);
-    for (const t of TERRITORY_IDS) {
+    for (const t of ids) {
       const g = geometry.territories[t];
       const [x0, y0, x1, y1] = g.bbox;
       if (bx < x0 || bx > x1 || by < y0 || by > y1) continue;
@@ -145,7 +145,7 @@ export function createStubBoard(opts: StubBoardOptions): BoardView {
     const targets = new Set(hl.targets ?? []);
     const dim = !!hl.dimOthers;
     const now = performance.now();
-    for (const t of TERRITORY_IDS) {
+    for (const t of ids) {
       const g = geometry.territories[t];
       const ts = disp?.territories[t];
       const owner = ts && ts.owner >= 0 ? disp!.players[ts.owner] : null;
@@ -221,7 +221,7 @@ export function createStubBoard(opts: StubBoardOptions): BoardView {
     ctx.font = `700 ${fs}px Inter, system-ui, sans-serif`;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    for (const t of TERRITORY_IDS) {
+    for (const t of ids) {
       const g = geometry.territories[t];
       const ts = disp?.territories[t];
       if (!ts) continue;

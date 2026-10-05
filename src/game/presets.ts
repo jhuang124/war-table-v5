@@ -2,8 +2,8 @@
 // presets with honest time estimates, the summary line, and the problems that block Start.
 
 import { PLAYER_COLORS, PLAYER_COLOR_IDS, DEFAULT_SEAT_COLORS } from '../shared/palette';
-import { isPersonality, mapDefOf, PERSONALITY_IDS, type AiPersonality, type MapDef, type GameConfig, type PlayerColorId } from '../engine';
-import { DEFAULT_MAP_ID, mapIdOf, packData } from '../map/packs';
+import { isPersonality, mapDefOf, minStartingArmies, PERSONALITY_IDS, targetTerritories, type AiPersonality, type GameConfig, type PlayerColorId } from '../engine';
+import { DEFAULT_MAP_ID, isHiddenMap, mapIdOf, packData } from '../map/packs';
 import { SEP } from './copy';
 import type { HouseRulesDraft, LengthPreset, NewGameVM, SeatDraft, SetupPreset } from './viewModel';
 
@@ -128,7 +128,7 @@ export function sanitizeDraft(x: unknown): NewGameDraft {
     : d.seats;
   return {
     seats: fillPersonalities(seats.length >= 2 ? seats : d.seats),
-    mapId: mapIdOf(typeof o.mapId === 'string' ? o.mapId : null),
+    mapId: typeof o.mapId === 'string' && !isHiddenMap(o.mapId) ? mapIdOf(o.mapId) : DEFAULT_MAP_ID,
     length: o.length === 'quick' || o.length === 'full' ? o.length : 'evening',
     setup: o.setup === 'placeOwn' ? 'placeOwn' : 'quickDeal',
     v51: true,
@@ -175,28 +175,20 @@ export function lengthRules(
  */
 export function autoSetupBatch(players: number, startingArmies?: number, size?: number): number {
   const def = mapDefOf(null);
-  const armies = startingArmies ?? def.startingArmies[players] ?? 30;
+  const armies = startingArmies ?? def.startingArmies[players] ?? minStartingArmies(def, players);
   return Math.max(1, Math.ceil((armies - Math.floor((size ?? def.size) / players)) / 2));
 }
 
 /** autoSetupBatch on a map (its starting armies and size). */
 function autoSetupBatchFor(n: number, mapId?: string): number {
   const def = mapDefOf({ mapId: mapIdOf(mapId ?? null) });
-  return autoSetupBatch(n, def.startingArmies[n], def.size);
-}
-
-/**
- * The territory count a share of the map means (`dominationPercent` 70 → 30 of classic's 42). Rounds up,
- * exactly as the engine's `territoriesNeeded` does, so the New game line and the game agree.
- * (v6: the engine's `targetTerritories(def, share)` was not in this build; this is the local equivalent.)
- */
-export function targetTerritories(def: Pick<MapDef, 'size'>, share: number): number {
-  return Math.ceil(def.size * share - 1e-9);
+  return autoSetupBatch(n, def.startingArmies[n] ?? minStartingArmies(def, n), def.size);
 }
 
 /** Territories to win at `percent` of the map (`config.mapId`, absent = classic). */
 export function territoriesToWin(percent: number, config?: { mapId?: string } | null): number {
-  return targetTerritories(mapDefOf(config), percent / 100);
+  // the engine's helper: ceil(size × percent / 100), exactly what territoriesNeeded uses in the game
+  return targetTerritories(mapDefOf(config), percent);
 }
 
 /** "of the world" on a world map (classic rules), "of the map" on any other board. */
@@ -266,12 +258,25 @@ function fmtRange(loMin: number, hiMin: number): string {
   return a === b ? `~${fmt(a)} h` : `~${fmt(a)}–${fmt(b)} h`;
 }
 
-export function lengthEstimate(length: LengthPreset, seats: SeatDraft[], neutral = false): string {
+/**
+ * v6: the sim tables above were measured on classic's 42 territories. Until `npm run sim -- --map <id>` is
+ * rerun per visible map, another board scales the rounds by its size against classic's (fewer territories,
+ * fewer rounds to the same share). Classic and True World (42) are unchanged.
+ */
+function sizeScale(mapId?: string): number {
+  const size = mapDefOf({ mapId: mapIdOf(mapId ?? null) }).size;
+  const classic = mapDefOf(null).size;
+  return size === classic ? 1 : Math.max(0.3, size / classic);
+}
+
+export function lengthEstimate(length: LengthPreset, seats: SeatDraft[], neutral = false, mapId?: string): string {
   const n = Math.min(4, Math.max(2, seats.length));
   const withNeutral = neutral && n === 2;
   const { dominationPercent, turnLimit } = lengthRules(length, n, withNeutral);
   const table = withNeutral ? ROUNDS_2P_NEUTRAL : ROUNDS[n];
-  const row = table[dominationPercent] ?? table[70];
+  const k = sizeScale(mapId);
+  const raw = table[dominationPercent] ?? table[70];
+  const row: [number, number] = [raw[0] * k, raw[1] * k];
   const humans = seats.filter((s) => s.kind === 'human').length;
   const perRound = humans * HUMAN_TURN_S + (n - humans) * AI_TURN_S;
   const cap = (r: number) => (turnLimit ? Math.min(turnLimit, r) : r);
@@ -295,6 +300,12 @@ export function draftProblems(d: NewGameDraft): string[] {
     if (n > 1) out.push(`Two seats are called ${d.seats.find((s) => s.name.trim().toLowerCase() === k)!.name.trim()}`);
   }
   if (d.seats.length < 2) out.push('At least 2 seats');
+  // v6: a map plays only its seat range (createGame refuses the rest).
+  const p = packData(mapIdOf(d.mapId ?? null));
+  const { min, max } = p.rules.seats;
+  if (d.seats.length >= 2 && (d.seats.length < min || d.seats.length > max)) {
+    out.push(`${p.manifest.name} is for ${min === max ? min : `${min}–${max}`} players`);
+  }
   return out;
 }
 
@@ -327,9 +338,9 @@ export function buildNewGameVM(d: NewGameDraft): NewGameVM {
     setup: d.setup,
     house: d.house,
     lengthOptions: [
-      { id: 'quick', label: 'Quick', detail: `${q.dominationPercent}% or ${q.turnLimit} rounds`, estimate: lengthEstimate('quick', d.seats, neutral) },
-      { id: 'evening', label: 'Evening', detail: `${e.dominationPercent}% ${ofWhere(d.mapId)}`, estimate: lengthEstimate('evening', d.seats, neutral) },
-      { id: 'full', label: 'Full conquest', detail: 'every territory', estimate: lengthEstimate('full', d.seats, neutral) },
+      { id: 'quick', label: 'Quick', detail: `${q.dominationPercent}% or ${q.turnLimit} rounds`, estimate: lengthEstimate('quick', d.seats, neutral, d.mapId) },
+      { id: 'evening', label: 'Evening', detail: `${e.dominationPercent}% ${ofWhere(d.mapId)}`, estimate: lengthEstimate('evening', d.seats, neutral, d.mapId) },
+      { id: 'full', label: 'Full conquest', detail: 'every territory', estimate: lengthEstimate('full', d.seats, neutral, d.mapId) },
     ],
     setupOptions: [
       { id: 'quickDeal', label: 'Quick deal', detail: 'armies placed for you' },

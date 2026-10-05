@@ -2,7 +2,7 @@
 // style full/brief and seq; on-page controls drive speed, skip, highlights, camera, insets, etc.
 import { BOARD } from '../map';
 import { createBoardView } from './index';
-import { ADJACENCY, CONTINENTS, MAP, TERRITORY_IDS } from './activeMap';
+import { MAP } from './activeMap';
 import type { BoardView, PlayEventOptions, ViewportInsets } from './BoardView';
 import {
   applyAction,
@@ -263,7 +263,7 @@ async function playEvents(events: GameEvent[], after: GameState): Promise<void> 
   // Drift check: before the drain-time sync, the board must already show the engine state.
   const dbg = (view as unknown as { __debug?: { owners: Record<string, number>; armies: Record<string, number> } }).__debug;
   if (dbg) {
-    for (const t of TERRITORY_IDS) {
+    for (const t of MAP.territoryIds) {
       if (dbg.owners[t] !== after.territories[t].owner || dbg.armies[t] !== after.territories[t].armies) {
         drift.count++;
         if (drift.samples.length < 8) drift.samples.push(`${t}: shown ${dbg.owners[t]}/${dbg.armies[t]} vs ${after.territories[t].owner}/${after.territories[t].armies} after ${events.map((x) => x.type).join(',')}`);
@@ -344,7 +344,7 @@ async function toAttack(): Promise<void> {
 function bestPair(minFrom = 2): { from: TerritoryId; to: TerritoryId } | null {
   const me = state.currentPlayer;
   let best: { from: TerritoryId; to: TerritoryId; s: number } | null = null;
-  for (const t of TERRITORY_IDS) {
+  for (const t of MAP.territoryIds) {
     if (state.territories[t].owner !== me || state.territories[t].armies < minFrom) continue;
     for (const to of attackTargets(state, t)) {
       const s = state.territories[t].armies - state.territories[to].armies;
@@ -395,7 +395,7 @@ async function demoRoll(kind: 'single' | 'blitz' | 'conquest' | 'brief', pair?: 
 
 function demoHighlights(kind: string): void {
   const me = state.currentPlayer;
-  const mine = TERRITORY_IDS.filter((t) => state.territories[t].owner === me);
+  const mine = MAP.territoryIds.filter((t) => state.territories[t].owner === me);
   const src = bestPair()?.from ?? mine[0];
   const targets = attackTargets(state, src);
   switch (kind) {
@@ -434,13 +434,13 @@ function demoHighlights(kind: string): void {
 
 async function demoContinent(): Promise<void> {
   // Player 0 takes South America; player 1 is one short of Australia (classic-rules maps only).
-  if (!CONTINENTS.south_america || !CONTINENTS.australia) return;
+  if (!MAP.continents.south_america || !MAP.continents.australia) return;
   busy = true;
   state = structuredClone(state);
-  for (const t of CONTINENTS.south_america.territories) state.territories[t].owner = 0;
-  const au = CONTINENTS.australia.territories;
+  for (const t of MAP.continents.south_america.territories) state.territories[t].owner = 0;
+  const au = MAP.continents.australia.territories;
   au.forEach((t, i) => (state.territories[t].owner = i === 0 ? 2 : 1));
-  for (const t of TERRITORY_IDS) if (state.territories[t].armies < 1) state.territories[t].armies = 1;
+  for (const t of MAP.territoryIds) if (state.territories[t].armies < 1) state.territories[t].armies = 1;
   const lastSA = 'brazil';
   const prev = structuredClone(state);
   prev.territories[lastSA].owner = 3;
@@ -468,7 +468,7 @@ async function demoElimination(): Promise<void> {
 /** Every denomination on the board at once: infantry 1–4, cavalry 5–9, artillery 10+ by region. */
 function demoDenoms(): void {
   state = structuredClone(state);
-  TERRITORY_IDS.forEach((t, i) => {
+  MAP.territoryIds.forEach((t, i) => {
     const x = BOARD.territories[t].anchor[0];
     state.territories[t].armies = x < 36 ? 1 + (i % 4) : x < 62 ? 5 + (i % 5) : 10 + ((i * 7) % 90);
   });
@@ -477,7 +477,7 @@ function demoDenoms(): void {
 
 async function demoPlace(n = 10): Promise<void> {
   const me = state.currentPlayer;
-  const mine = TERRITORY_IDS.filter((t) => state.territories[t].owner === me);
+  const mine = MAP.territoryIds.filter((t) => state.territories[t].owner === me);
   const t = mine[0];
   for (let i = 0; i < n; i++) {
     state = structuredClone(state);
@@ -549,8 +549,8 @@ function render(): void {
     ...['none', 'selectable', 'selected', 'arrow', 'pending', 'fortify'].map((k) => b(k, () => demoHighlights(k))),
     h('Camera'),
     b('Home', () => view.resetCamera()),
-    b('Europe', () => view.focusTerritories(CONTINENTS.europe?.territories ?? TERRITORY_IDS)),
-    b('Random', () => view.focusTerritories([TERRITORY_IDS[Math.floor(Math.random() * TERRITORY_IDS.length)]])),
+    b('Europe', () => view.focusTerritories(MAP.continents.europe?.territories ?? MAP.territoryIds)),
+    b('Random', () => view.focusTerritories([MAP.territoryIds[Math.floor(Math.random() * MAP.territoryIds.length)]])),
     b('Attract', () => {
       attract = !attract;
       view.setAttractMode(attract);
@@ -701,7 +701,7 @@ async function boot(): Promise<void> {
       return busy;
     },
     PLAYER_COLORS,
-    ADJACENCY,
+    adjacency: MAP.adjacency,
   };
   (window as unknown as { __sbReady: boolean }).__sbReady = true;
 }
