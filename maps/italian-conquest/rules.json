@@ -4,7 +4,7 @@
   "startingArmies": { "2": 38, "3": 33, "4": 28 },
   "cardSymbols": ["infantry", "cavalry", "artillery"],
   "continents": [
-    { "id": "alpine_north", "name": "Alpine North", "bonus": 5 },
+    { "id": "north", "name": "North", "bonus": 5 },
     { "id": "po_riviera", "name": "Po & Riviera", "bonus": 3 },
     { "id": "centre", "name": "Centre", "bonus": 4 },
     { "id": "south", "name": "South", "bonus": 4 },
@@ -13,12 +13,12 @@
     { "id": "hellas", "name": "Hellas", "bonus": 3 }
   ],
   "territories": [
-    { "id": "aosta_savoy", "name": "Aosta & Savoy", "continent": "alpine_north" },
-    { "id": "piedmont", "name": "Piedmont", "continent": "alpine_north" },
-    { "id": "lombardy", "name": "Lombardy", "continent": "alpine_north" },
-    { "id": "trentino", "name": "Trentino", "continent": "alpine_north" },
-    { "id": "veneto", "name": "Veneto", "continent": "alpine_north" },
-    { "id": "friuli", "name": "Friuli", "continent": "alpine_north" },
+    { "id": "aosta_savoy", "name": "Aosta & Savoy", "continent": "north" },
+    { "id": "piedmont", "name": "Piedmont", "continent": "north" },
+    { "id": "lombardy", "name": "Lombardy", "continent": "north" },
+    { "id": "trentino", "name": "Trentino", "continent": "north" },
+    { "id": "veneto", "name": "Veneto", "continent": "north" },
+    { "id": "friuli", "name": "Friuli", "continent": "north" },
     { "id": "provence", "name": "Provence", "continent": "po_riviera" },
     { "id": "liguria", "name": "Liguria", "continent": "po_riviera" },
     { "id": "emilia", "name": "Emilia", "continent": "po_riviera" },

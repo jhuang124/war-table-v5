@@ -155,7 +155,7 @@ const franceMain = pixelOf(
       [[7.8, 42.5], [7.8, 45.1], [7.8, 47.0]],
       [[3.5, 47.0], [5.95, 47.0], [7.8, 47.0]],
       // Savoy's west edge: Isère | Savoie, Lake Bourget, the Rhône to Geneva
-      [FJ, [6.0, 45.25], [5.8, 45.45], [5.75, 45.7], [5.8, 46.0], [5.95, 46.3], [5.95, 47.0]],
+      [FJ, [6.0, 45.25], [5.8, 45.45], [5.75, 45.7], [5.8, 46.0], [5.95, 46.3], [6.6, 46.42], [7.8, 46.42]],
     ],
     { provence: [6.0, 43.8], aosta_savoy: [6.5, 45.7], decor: [4.5, 45.5] },
   ),
@@ -260,7 +260,7 @@ export const recipe: MapRecipe = {
   autoFatten: ['liguria', 'molise', 'salento', 'malta'],
 
   continentLabelHints: {
-    alpine_north: [13.0, 44.95],
+    north: [12.9, 45.15],
     po_riviera: [8.0, 43.4],
     centre: [10.6, 41.8],
     south: [17.0, 39.2],
