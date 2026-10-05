@@ -45,8 +45,14 @@ function islandsThenCut(poly: (c: PolyInfo) => string | undefined, cut: Rule): R
 
 export const recipe: MapRecipe = {
   source: 'countries-10m.json',
-  frame: { lonLat: [-12, 24, 42, 57] },
-  projection: { preset: 'mercatorLike', width: 96 },
+  // The empire spans about 12°W–42°E, 24°N–57°N; the frame runs well past it so the faint world around it
+  // (Hibernia, Germania Magna, Persia, Arabia, the Sahara) reaches the screen's edges instead of stopping
+  // at a visible board rectangle. The camera frames the provinces, not the frame. Width is scaled with the
+  // frame (96 units per 54° of longitude) so a province is the same size as Classic's.
+  frame: { lonLat: [-26, 12, 60, 64] },
+  // yScale 0.9: Miller stretches the north, and the empire runs from the Antonine Wall to the Nile; a
+  // slightly squat board frames by width like Classic, so armies come out nearer Classic's size on screen.
+  projection: { preset: 'mercatorLike', width: 148, yScale: 0.9 },
 
   assign: {
     // ---- Britannia: Hadrian's Wall, and the Mersey–Wash line between the two provinces
@@ -302,9 +308,9 @@ export const recipe: MapRecipe = {
     [-12, 33.5], [-7, 33.6], [-5, 33.8], [-2, 34.4], [1, 34.6], [4, 34.5], [6.5, 34.2], [8, 33.3], [9.5, 32.0],
     [11, 31.6], [13, 31.5], [15, 31.0], [17, 30.6], [19.5, 30.0], [20.5, 30.8], [22, 31.6], [23.5, 31.4],
     [25, 31.0], [27, 30.8], [29, 30.5], [30.4, 30.2],
-    // the Nile, west bank up, east bank down
-    [30.55, 29.3], [30.45, 28.3], [30.8, 27.3], [31.4, 26.6], [32.4, 26.0], [32.4, 25.3], [32.6, 24.0],
-    [33.2, 24.0], [33.0, 25.3], [33.0, 26.2], [32.0, 26.9], [31.5, 27.5], [31.1, 28.4], [31.4, 29.5],
+    // the Nile, up the west bank to Lycopolis (Asyut) and back down the east: a ribbon that reads as the
+    // river without stretching the board south to Aswan
+    [30.55, 29.3], [30.45, 28.3], [30.75, 27.4], [30.95, 27.0], [31.45, 27.0], [31.5, 27.5], [31.1, 28.4], [31.4, 29.5],
     // Sinai and Arabia Petraea
     [32.4, 29.9], [32.6, 29.5], [33.5, 28.0], [34.4, 27.6], [35.0, 29.4], [36.5, 29.0], [37.5, 30.5],
     [38.0, 32.0], [38.6, 33.3], [39.0, 34.5], [42.5, 34.5],
@@ -313,7 +319,9 @@ export const recipe: MapRecipe = {
     [-1, 56.2], [-2.6, 56.1], [-3.6, 56.05], [-4.4, 55.95], [-4.9, 55.9], [-5.0, 55.4], [-5.35, 54.8],
     [-5.4, 54.0], [-5.3, 53.4], [-5.5, 52.0], [-6.0, 50.5], [-8, 48.5], [-12, 44],
   ],
-  clipDrop: 2.5,
+  // No drop band: every piece of land in the frame outside the empire is faint decor, so its edge is a real
+  // coast or the board edge, never an invented curve through the desert.
+  clipDrop: 40,
 
   laneHints: {
     'britannia_superior|belgica': { ha: [1.3, 51.1], hb: [1.7, 50.9] },

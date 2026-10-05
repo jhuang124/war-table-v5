@@ -4,7 +4,7 @@
   "name": "Roman Empire",
   "description": "The Mediterranean as Rome held it: provinces, straits and the Nile.",
   "thumbnail": "thumb.png",
-  "hidden": true,
+  "order": 2,
   "presentation": {
     "anchorClearance": 1.3,
     "anchorOverhang": {
