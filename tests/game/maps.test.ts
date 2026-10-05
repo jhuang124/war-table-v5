@@ -133,8 +133,11 @@ describe('copy, strip, helpers and story on another map', () => {
     const s = twelve({ north_1: [0, 5], north_2: [0, 1], north_3: [0, 1], south_3: [0, 4] });
     // taking north_4 completes Northmark for John (north_1 borders it)
     expect(attackStake(s, 'north_1', 'north_4')).toBe('takes Northmark');
-    // south held whole by Priya except one: John breaks it
-    expect(attackStake(s, 'south_3', 'south_4')).toBe("breaks Priya's Southreach");
+    // Priya holds all of Southreach; John attacks into it from the Midlands: he breaks it
+    const s2 = twelve({ middle_3: [0, 4] });
+    expect(attackStake(s2, 'middle_3', 'south_1')).toBe("breaks Priya's Southreach");
+    // attacking from inside a continent the defender does not hold whole is no stake
+    expect(attackStake(s, 'south_3', 'south_4')).toBeNull();
   });
 
   it('the target-first source walks the map adjacency', () => {
