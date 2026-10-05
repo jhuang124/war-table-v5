@@ -4525,7 +4525,10 @@ class Controller {
     const lingering = !!g && !!g.endedAt && !g.cleared && g.style === 'full' && g.turn === d.turn && inFight && now - g.endedAt < LINGER_MS;
     const preview = this.aiPreview;
     const previewIsEng = !!preview && !!g && g.from === preview.from && g.to === preview.to && g.turn === d.turn && (!!g.endedAt || g.conquered);
-    if (g && !g.endedAt && g.style === 'full' && g.turn === d.turn) {
+    // [fight text] an open engagement is the fight on screen while it plays or stays armed (or on an AI's turn);
+    // once the driver backs out or picks something else, the line is theirs again.
+    const engOn = !!g && (!interactive || this.fightPlaying() || (!!armed && armed.from === g.from && armed.to === g.to));
+    if (g && !g.endedAt && g.style === 'full' && g.turn === d.turn && engOn) {
       pair = g;
       useEng = true;
     } else if (armed && contested(armed)) {

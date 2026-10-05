@@ -46,6 +46,7 @@ export const FLOWS: Record<string, FlowSpec> = {
   polish: { lane: 'logic', realtime: true, why: 'the battle header never runs ahead of the board, sampled per frame over a real blitz (> 30 frames; 214 measured)' },
   chain: { lane: 'logic', realtime: true, why: '"Indonesia captured" held 600–1500 ms (measured ~850 ms) and the deal lines over 2.5 s need real animations' },
   flow: { lane: 'logic', realtime: true, quick: true, why: 'the blitz still animating at 350 ms, click-through < 700 ms (measured 5–50 ms); then resume by reload' },
+  'fight-text': { lane: 'logic', realtime: true, why: 'a ring really up and dice really rolling (slow motion) to check nothing is written over the ring, the fight in the line and the note in the margin' },
   // v5.1 A: the hand-off cover went; the flow now checks the same promise without it (John's sheet open at End turn).
   handoff: { lane: 'logic', realtime: true, why: 'zero frames of the next hand and no cover element, sampled per mutation and frame across the real end-turn transition; the turn line names the next seat' },
 

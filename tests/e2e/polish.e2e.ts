@@ -146,12 +146,13 @@ check(ring === 'none' || /no focus-visible/.test(ring), `no focus ring after a m
 await idle(page);
 await audit('rolled');
 
-// #8 no spoilers: during a blitz the battle header's numbers never run ahead of the board's badges,
-// and the defender's roster armies never drop before the board shows the loss (sampled every frame).
+// #8 no spoilers: during a blitz the fight's numbers never run ahead of the board's badges, in the VM and in
+// the one line's words (fight text: the counts live in the line now), sampled every frame; and they do tick
+// down while it rolls (the per-pair path), not only at its end.
 await loadScenario(page, scenario({ ural: [0, 25] }, { kind: 'attack' }, { mutate: (s) => void (s.territories.siberia.armies = 12) }));
 await clickT(page, 'siberia');
 await page.evaluate(`(() => {
-  const S = (window.__spoil = { frames: 0, ahead: 0, first: null, stop: false });
+  const S = (window.__spoil = { frames: 0, ahead: 0, first: null, stop: false, dom: 0, domAhead: 0, ticks: new Set() });
   const armies = window.__board.__debug.armies;
   const f = () => {
     const b = window.__risk.ui().battle;
@@ -163,6 +164,12 @@ await page.evaluate(`(() => {
         const boardA = armies.ural, boardD = armies.siberia;
         if (hudA < boardA || hudD < boardD) { S.ahead++; if (!S.first) S.first = b.header + ' vs board ' + boardA + '/' + boardD; }
       }
+      const nums = [...document.querySelectorAll('[data-testid="battle"]:not(.hidden) .bt-armies')].map((e) => +e.textContent);
+      if (nums.length === 2 && b.rolling) {
+        S.dom++;
+        S.ticks.add(nums.join('/'));
+        if (nums[0] < armies.ural || nums[1] < armies.siberia) { S.domAhead++; if (!S.first) S.first = 'line ' + nums.join('/') + ' vs board ' + armies.ural + '/' + armies.siberia; }
+      }
     }
     if (!S.stop) requestAnimationFrame(f);
   };
@@ -171,8 +178,9 @@ await page.evaluate(`(() => {
 await clickBtn(page, 'btn-blitz');
 await idle(page);
 await page.evaluate('window.__spoil.stop = true');
-const spoil = (await page.evaluate('window.__spoil')) as { frames: number; ahead: number; first: string | null };
-check(spoil.frames > 30 && spoil.ahead === 0, `battle header never ahead of the board during a blitz (${spoil.frames} frames, ${spoil.ahead} ahead${spoil.first ? ': ' + spoil.first : ''})`, results);
+const spoil = (await page.evaluate('({ ...window.__spoil, ticks: window.__spoil.ticks.size })')) as { frames: number; ahead: number; first: string | null; dom: number; domAhead: number; ticks: number };
+check(spoil.frames > 30 && spoil.ahead === 0, `the fight's counts never ahead of the board during a blitz (${spoil.frames} frames, ${spoil.ahead} ahead${spoil.first ? ': ' + spoil.first : ''})`, results);
+check(spoil.dom > 10 && spoil.domAhead === 0 && spoil.ticks > 2, `the one line's counts tick down while it rolls, never ahead (${spoil.dom} frames, ${spoil.ticks} distinct counts, ${spoil.domAhead} ahead)`, results);
 
 // #23 instant speed: the tray still shows the dice.
 await page.evaluate(() => window.__risk.setSpeed(0));

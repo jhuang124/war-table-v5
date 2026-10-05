@@ -498,6 +498,8 @@
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .st-fight.hidden, .st-fight .hidden { display: none; }
+/* The strip's own sentence dries while the fight owns the slot (it comes back, already current, as the fight dries). */
+.st-say.has-fight .st-line { opacity: 0; transition: opacity 160ms cubic-bezier(0.11, 0, 0.5, 0); }
 .has-say .st-fight { opacity: 0; transition: opacity 160ms cubic-bezier(0.11, 0, 0.5, 0); }
 .bt-side { color: var(--seat-light); }
 .bt-armies { color: var(--ivory); display: inline-block; min-width: 1ch; font-variant-numeric: lining-nums tabular-nums; }

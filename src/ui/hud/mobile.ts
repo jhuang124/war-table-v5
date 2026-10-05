@@ -220,7 +220,11 @@ export class NameCard {
     }
     this.el.dataset.testid = 'name-card';
     setText(this.title, vm.territory);
-    const hist = vm.history ? minus(vm.history) : '';
+    // The stone's history without the name and count the note already carries ('Ural · 19 · held since round 3 ·
+    // taken from Sage' → 'Held since round 3 · taken from Sage').
+    let hist = vm.history ? minus(vm.history) : '';
+    if (hist.startsWith(`${vm.territory} · `)) hist = hist.slice(vm.territory.length + 3).replace(/^[\d\u2212-]+ · /, '');
+    if (hist) hist = hist[0].toUpperCase() + hist.slice(1);
     toggle(this.hist, 'hidden', !hist);
     if (hist !== this.hist.textContent) setText(this.hist, hist);
     setText(this.cont, `${vm.continent} +${vm.bonus}`);

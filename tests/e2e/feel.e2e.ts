@@ -1,6 +1,7 @@
 // Feel and layout checks on the real board + HUD (SPEC §10, docs/SIMPLIFY.md):
-//   - the renderer's dice tray sits inside the UI's tray band, just above the bottom strip, with the
-//     header line above the tray, at 1280×800, 1440×900, 1920×1080 and TV text on 1920×1080
+//   - the renderer's dice tray sits beside the fight, clear of both strips; the fight's words are in the one
+//     line above the rule and no HUD word floats on the ring (fight text, 2026-10-05), at 1280×800,
+//     1440×900, 1920×1080 and TV text on 1920×1080
 //   - the only chrome is the two strips (and the tray during a fight); the board spans the window
 //   - ≤ 27 words on screen in an armed Attack state (v3: 25 + the round)
 //   - dice ≥ 34 px; army tokens ≥ 22 px tall at home on 1280×800
@@ -35,23 +36,45 @@ async function trayAndBand(page: Page) {
       tray: { top: dbg.cy - dbg.trayH / 2, bottom: dbg.cy + dbg.trayH / 2, left: dbg.cx - dbg.trayW / 2, right: dbg.cx + dbg.trayW / 2, die: dbg.size },
       // The tray band the HUD reports (the header is only the line above the tray now).
       band: r('.band-probe'),
+      // fight text: the fight's names and counts, in the one line
       headerText: (() => {
-        const els = [...document.querySelectorAll('.bt-head .bt-side')];
+        const els = [...document.querySelectorAll('[data-testid="battle"] .bt-side')].filter((e) => (e as HTMLElement).offsetParent !== null);
         if (!els.length) return null;
         const rs = els.map((e) => e.getBoundingClientRect());
         return { top: Math.min(...rs.map((x) => x.top)), bottom: Math.max(...rs.map((x) => x.bottom)) };
+      })(),
+      // HUD words over the ring's box (the ring carries dice only)
+      onRing: (() => {
+        if (!dbg.cx) return [] as string[];
+        const ring = [dbg.cx - dbg.trayW * 0.53, dbg.cy - dbg.trayH / 2, dbg.cx + dbg.trayW * 0.53, dbg.cy + dbg.trayH / 2];
+        const out: string[] = [];
+        const walk = document.createTreeWalker(document.getElementById('ui')!, NodeFilter.SHOW_TEXT);
+        for (let n = walk.nextNode(); n; n = walk.nextNode()) {
+          const el = n.parentElement;
+          const s = n.textContent?.trim();
+          if (!s || !el || !(el.checkVisibility?.({ visibilityProperty: true, opacityProperty: true }) ?? true) || el.closest('.sr-only')) continue;
+          const b = el.getBoundingClientRect();
+          if (b.width > 0 && b.left < ring[2] && b.right > ring[0] && b.top < ring[3] && b.bottom > ring[1]) out.push(s.slice(0, 24));
+        }
+        return out;
       })(),
       bar: r('[data-testid="strip"]'),
       // The chrome starts at the gold rule: the one line above it sits on the paper, with no panel (INK B5).
       rule: r('.strip .st-rule'),
       top: r('[data-testid="topstrip"]'),
-      words: ['.topstrip', '.strip', '.battle:not(.hidden)']
+      words: ['.topstrip', '.strip']
         .map((q) => document.querySelector(q) as HTMLElement | null)
         .filter((e): e is HTMLElement => !!e && e.offsetParent !== null)
         .map((e) => e.innerText)
         .join(' ')
         .split(/\s+/)
         .filter((w) => /[A-Za-z0-9]/.test(w)).length -
+        // (fight text: while the fight owns the line slot the strip's own sentence has dried: not on screen)
+        [...document.querySelectorAll<HTMLElement>('.st-say.has-fight .st-line')]
+          .map((e) => e.innerText)
+          .join(' ')
+          .split(/\s+/)
+          .filter((w) => /[A-Za-z0-9]/.test(w)).length -
         // (v3: the ledger's faint event lines above the dock are the table's record, not chrome to read)
         [...document.querySelectorAll<HTMLElement>('.st-events')]
           .map((e) => e.innerText)
@@ -86,11 +109,15 @@ for (const vp of [
   const g = await trayAndBand(page);
   await page.screenshot({ path: `${ART}/feel-tray-${tag}.png` });
   const tol = 1.5;
-  // v4: on desktop the ring sits beside the fight (not in a southern band); the header rides on its rim, above or below
+  // v4: on desktop the ring sits beside the fight (not in a southern band). Fight text (2026-10-05): the fight's
+  // words are the one line above the rule; nothing rides on the ring's rim.
   check(!!g.top && g.tray.top >= g.top.bottom - tol, `${tag}: tray ${Math.round(g.tray.top)}–${Math.round(g.tray.bottom)} clears the seat strip (${Math.round(g.top!.bottom)})`, results);
-  const hAbove = !!g.headerText && g.headerText.bottom <= g.tray.top + tol && g.headerText.bottom >= g.tray.top - 24;
-  const hBelow = !!g.headerText && g.headerText.top >= g.tray.bottom - tol && g.headerText.top <= g.tray.bottom + 24;
-  check((hAbove || hBelow) && !!g.top && g.headerText!.top >= g.top.bottom, `${tag}: header line ${Math.round(g.headerText!.top)}–${Math.round(g.headerText!.bottom)} rides on the ring (${Math.round(g.tray.top)}–${Math.round(g.tray.bottom)})`, results);
+  check(
+    !!g.headerText && !!g.rule && g.headerText.bottom <= g.rule.top + tol && g.headerText.top >= g.rule.top - 80,
+    `${tag}: the fight's words ${Math.round(g.headerText?.top ?? -1)}–${Math.round(g.headerText?.bottom ?? -1)} sit on the line above the rule (${Math.round(g.rule?.top ?? -1)})`,
+    results,
+  );
+  check(g.onRing.length === 0, `${tag}: no HUD word on the ring (${g.onRing.join(' | ') || 'none'})`, results);
   check(!!g.bar && g.tray.bottom <= g.bar.top + tol, `${tag}: the tray clears the bottom strip (${Math.round(g.tray.bottom)} ≤ ${Math.round(g.bar!.top)})`, results);
   // Bottom chrome = the rule and the pill row under it (the moodboard's is ~14% of the height); TV text is larger.
   const bottomMax = vp.text === 'tv' ? 0.16 : 0.14;
@@ -117,7 +144,7 @@ for (const vp of [
         if (fs < 19.5) small.push(`${t.slice(0, 24)} (${fs}px ${el.className})`);
       }
       const box = (s: string) => document.querySelector(s)?.getBoundingClientRect();
-      const panels = ['.topstrip', '.battle', '[data-testid="strip"]'].map((s) => [s, box(s)] as const).filter(([, b]) => b && b.width > 0);
+      const panels = ['.topstrip', '[data-testid="strip"]'].map((s) => [s, box(s)] as const).filter(([, b]) => b && b.width > 0);
       const overlaps: string[] = [];
       for (let i = 0; i < panels.length; i++)
         for (let j = i + 1; j < panels.length; j++) {
