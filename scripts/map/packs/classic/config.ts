@@ -36,7 +36,7 @@ export const LENSES: LensSpec[] = [
  * (`along` the island's long axis at `angle` degrees from east, `across` it). Thin islands get fat
  * without turning into potatoes. Afterwards AUTO_FATTEN may grow them a little around the badge spot.
  */
-export const ISLAND_XFORM: Partial<Record<TerritoryId, { along: number; across: number; angle: number }>> = {
+export const ISLAND_XFORM: Record<string, { along: number; across: number; angle: number }> = {
   iceland: { along: 1.5, across: 2.3, angle: 0 },
   great_britain: { along: 1.3, across: 1.75, angle: 80 },
   japan: { along: 1.05, across: 3.4, angle: 42 },

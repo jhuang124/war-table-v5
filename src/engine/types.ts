@@ -6,63 +6,11 @@
 // Ids
 // ---------------------------------------------------------------------------
 
-export type ContinentId =
-  | 'north_america'
-  | 'south_america'
-  | 'europe'
-  | 'africa'
-  | 'asia'
-  | 'australia';
+/** v6 maps: any pack's continent id (docs/MAPS.md). Classic: north_america, south_america, europe, africa, asia, australia. */
+export type ContinentId = string;
 
-export type TerritoryId =
-  // North America (9)
-  | 'alaska'
-  | 'northwest_territory'
-  | 'greenland'
-  | 'alberta'
-  | 'ontario'
-  | 'quebec'
-  | 'western_us'
-  | 'eastern_us'
-  | 'central_america'
-  // South America (4)
-  | 'venezuela'
-  | 'peru'
-  | 'brazil'
-  | 'argentina'
-  // Europe (7)
-  | 'iceland'
-  | 'scandinavia'
-  | 'great_britain'
-  | 'northern_europe'
-  | 'western_europe'
-  | 'southern_europe'
-  | 'ukraine'
-  // Africa (6)
-  | 'north_africa'
-  | 'egypt'
-  | 'east_africa'
-  | 'congo'
-  | 'south_africa'
-  | 'madagascar'
-  // Asia (12)
-  | 'ural'
-  | 'siberia'
-  | 'yakutsk'
-  | 'kamchatka'
-  | 'irkutsk'
-  | 'mongolia'
-  | 'japan'
-  | 'afghanistan'
-  | 'china'
-  | 'middle_east'
-  | 'india'
-  | 'siam'
-  // Australia (4)
-  | 'indonesia'
-  | 'new_guinea'
-  | 'western_australia'
-  | 'eastern_australia';
+/** v6 maps: any pack's territory id (maps/<id>/rules.json). Classic's 42 are in maps/classic/rules.json. */
+export type TerritoryId = string
 
 /** Seat index, 0..players.length-1. */
 export type PlayerId = number;
