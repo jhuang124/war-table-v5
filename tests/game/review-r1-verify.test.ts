@@ -150,7 +150,7 @@ describe('occupy: one count control and Move N, nothing else', () => {
     const { c } = await resume(s);
     const strip = c.getViewModel().game!.strip;
     expect(strip.line).toBe('Move into Ontario');
-    expect(strip.count).toEqual({ control: 'slider', value: 9, min: 3, max: 9 });
+    expect(strip.count).toEqual({ control: 'slider', value: 9, min: 3, max: 9, collapsed: true });
     expect(strip.buttons).toEqual([{ id: 'move', label: 'Move 9', primary: true }]);
     // Mandatory: the track is visibly disabled and explains itself.
     expect(strip.track.disabled).toBe(true);

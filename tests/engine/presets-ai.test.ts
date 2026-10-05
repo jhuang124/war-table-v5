@@ -17,7 +17,8 @@ describe('presets: neutral seat and personalities', () => {
     expect('neutral' in c).toBe(false);
     expect('diplomacy' in c).toBe(false);
     expect(c.mapId).toBe('classic');
-    expect(c.players.some((p) => 'personality' in p)).toBe(false);
+    // v5.1 D: AI seats draw a personality at Start (random from the seed); humans never carry one.
+    expect(c.players.filter((p) => p.kind === 'human').some((p) => 'personality' in p)).toBe(false);
     expect(lengthRules('evening', 2)).toEqual({ dominationPercent: 80, turnLimit: null });
   });
 
@@ -44,6 +45,7 @@ describe('presets: neutral seat and personalities', () => {
     const c = draftToConfig(d, 7);
     expect(c.players[1].personality).toBe('warlord');
     expect(c.players[0].personality).toBeUndefined();
-    expect(c.players[2].personality).toBeUndefined();
+    // an invalid one is dropped and drawn at random instead (v5.1 D)
+    expect(['turtle', 'opportunist', 'warlord']).toContain(c.players[2].personality);
   });
 });

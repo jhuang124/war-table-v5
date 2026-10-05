@@ -326,18 +326,14 @@ describe('human input', () => {
     c.intent({ type: 'track', seg: 'attack' });
     expect(c.hooks.ui().line).toBe(`Place your ${remaining} armies first`);
     c.intent({ type: 'button', id: 'place' });
-    await vi.advanceTimersByTimeAsync(400);
+    await vi.advanceTimersByTimeAsync(120);
     expect(c.hooks.getState()!.territories[b].armies).toBe(before.b + remaining);
     u = c.hooks.ui();
+    // A beat on 'All placed' (Undo still there), then v5.1 E1: the marker moves to Attack by itself.
     expect(u.line).toMatch(/^All placed · (Attack is next|end your turn)$/);
     expect(u.buttons).toEqual(['Undo']);
-    expect(u.brass).toEqual([u.recommended === 'attack' ? 'Attack' : 'End turn']);
-    // Board clicks don't leave Place; the track does.
-    fb.click(a);
-    await vi.advanceTimersByTimeAsync(20);
     expect(c.hooks.getState()!.phase.kind).toBe('reinforce');
-    c.intent({ type: 'track', seg: 'attack' });
-    await vi.advanceTimersByTimeAsync(400);
+    await vi.advanceTimersByTimeAsync(300);
     expect(c.hooks.getState()!.phase.kind).toBe('attack');
     expect(c.hooks.ui().track).toEqual(['done:place', 'current:attack', 'eligible:fortify', 'eligible:endTurn']);
     // Past segments are inert.
@@ -447,7 +443,7 @@ describe('resume', () => {
     const strip = c.getViewModel().game!.strip;
     expect(strip.mode).toBe('occupy');
     expect(strip.line).toBe('Move into Siberia');
-    expect(strip.count).toEqual({ control: 'stepper', value: 7, min: 3, max: 7 });
+    expect(strip.count).toEqual({ control: 'stepper', value: 7, min: 3, max: 7, collapsed: true });
     expect(strip.buttons.map((b) => b.label)).toEqual(['Move 7']);
     expect(strip.track.disabled).toBe(true);
     expect(fb.highlights.arrow).toEqual({ from: 'ural', to: 'siberia', kind: 'attack' });

@@ -19,27 +19,57 @@ export interface NewGameDraft {
   house: HouseRulesDraft;
   /** v3: the map pack (docs/MAPS.md); absent = classic. */
   mapId?: string;
+  /**
+   * v5.1 D: the draft was written by a v5.1+ build (personalities absent = random, house rules off by default).
+   * A remembered draft without it keeps its table (seats, length, map) and drops the old auto-filled
+   * personalities and house-rule defaults.
+   */
+  v51?: true;
 }
 
 /**
- * v3: every AI seat plays with a personality. A seat without a (valid) one takes the least used at the
- * table, Turtle → Opportunist → Warlord on ties, so a fresh table has three different AIs. A human seat
- * keeps whatever it had (it comes back if the seat flips to AI).
+ * v5.1 D: a seat keeps a personality only when one was chosen (under "More"); absent = random at Start
+ * (`draftToConfig` draws it from the seed). Invalid values are dropped.
  */
 export function fillPersonalities(seats: SeatDraft[]): SeatDraft[] {
-  const out = seats.map((s) => {
+  return seats.map((s) => {
     const { personality, ...rest } = s;
     return isPersonality(personality) ? { ...rest, personality } : rest;
   }) as SeatDraft[];
-  const used = new Map<AiPersonality, number>(PERSONALITY_IDS.map((id) => [id, 0]));
-  for (const s of out) if (s.kind === 'ai' && s.personality) used.set(s.personality, used.get(s.personality)! + 1);
-  for (const s of out) {
-    if (s.kind !== 'ai' || s.personality) continue;
-    const pick = [...PERSONALITY_IDS].sort((a, b) => used.get(a)! - used.get(b)! || PERSONALITY_IDS.indexOf(a) - PERSONALITY_IDS.indexOf(b))[0];
-    s.personality = pick;
-    used.set(pick, used.get(pick)! + 1);
-  }
-  return out;
+}
+
+/** A small seeded generator (mulberry32) for the Start-time draws; never Math.random. */
+function seeded(seed: number): () => number {
+  let a = seed >>> 0;
+  return () => {
+    a = (a + 0x6d2b79f5) >>> 0;
+    let t = a;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+/**
+ * v5.1 D "just randomize": every AI seat without a chosen personality gets one at random from the seed
+ * (Turtle · Opportunist · Warlord). A table of up to three random AIs is dealt without repeats when it can be,
+ * so a fresh table still meets different opponents; with more AIs than personalities the rest repeat at random.
+ */
+export function randomPersonalities(seats: SeatDraft[], seed: number): (AiPersonality | undefined)[] {
+  const rnd = seeded(seed ^ 0x51a7e);
+  const bag: AiPersonality[] = [];
+  const draw = (): AiPersonality => {
+    if (!bag.length) {
+      const fresh = [...PERSONALITY_IDS];
+      for (let i = fresh.length - 1; i > 0; i--) {
+        const j = Math.floor(rnd() * (i + 1));
+        [fresh[i], fresh[j]] = [fresh[j], fresh[i]];
+      }
+      bag.push(...fresh);
+    }
+    return bag.shift()!;
+  };
+  return seats.map((s) => (s.kind !== 'ai' ? undefined : isPersonality(s.personality) ? s.personality : draw()));
 }
 
 /** v5 G Missions apply: a third seat at the table (3–4 players, or 2 with the neutral seat). */
@@ -47,23 +77,28 @@ export function missionsApply(d: NewGameDraft): boolean {
   return d.seats.length >= 3 || usesNeutral(d);
 }
 
-/** v3 Truces apply: at least one human and one AI with a personality at the table. */
+/**
+ * v3 Truces apply (v5.1: standing): at least one human and one AI at the table. Every AI seat plays with a
+ * personality since v5.1 (random when not chosen), so any AI counts.
+ */
 export function trucesApply(seats: { kind: SeatDraft['kind']; personality?: AiPersonality }[]): boolean {
-  return seats.some((s) => s.kind === 'human') && seats.some((s) => s.kind === 'ai' && isPersonality(s.personality));
+  return seats.some((s) => s.kind === 'human') && seats.some((s) => s.kind === 'ai');
 }
 
 export function defaultDraft(): NewGameDraft {
   return {
     seats: [
       { name: PLAYER_COLORS[DEFAULT_SEAT_COLORS[0]].name, color: DEFAULT_SEAT_COLORS[0], kind: 'human', difficulty: 'normal' },
-      { name: PLAYER_COLORS[DEFAULT_SEAT_COLORS[1]].name, color: DEFAULT_SEAT_COLORS[1], kind: 'ai', difficulty: 'normal', personality: 'turtle' },
-      { name: PLAYER_COLORS[DEFAULT_SEAT_COLORS[2]].name, color: DEFAULT_SEAT_COLORS[2], kind: 'ai', difficulty: 'normal', personality: 'opportunist' },
-      { name: PLAYER_COLORS[DEFAULT_SEAT_COLORS[3]].name, color: DEFAULT_SEAT_COLORS[3], kind: 'ai', difficulty: 'normal', personality: 'warlord' },
+      { name: PLAYER_COLORS[DEFAULT_SEAT_COLORS[1]].name, color: DEFAULT_SEAT_COLORS[1], kind: 'ai', difficulty: 'normal' },
+      { name: PLAYER_COLORS[DEFAULT_SEAT_COLORS[2]].name, color: DEFAULT_SEAT_COLORS[2], kind: 'ai', difficulty: 'normal' },
+      { name: PLAYER_COLORS[DEFAULT_SEAT_COLORS[3]].name, color: DEFAULT_SEAT_COLORS[3], kind: 'ai', difficulty: 'normal' },
     ],
     length: 'evening',
     setup: 'quickDeal',
-    house: { draft: false, cardBonus: 'progressive', fortifyRule: 'connected', setupBatch: 'auto', seed: null, neutral: true, truces: true, missions: false },
+    // v5.1 D: house rules off (neutral seat, missions); standing (`truces`, config.diplomacy) is the game, not a rule.
+    house: { draft: false, cardBonus: 'progressive', fortifyRule: 'connected', setupBatch: 'auto', seed: null, neutral: false, truces: true, missions: false },
     mapId: DEFAULT_MAP_ID,
+    v51: true,
   };
 }
 
@@ -72,6 +107,8 @@ export function sanitizeDraft(x: unknown): NewGameDraft {
   const d = defaultDraft();
   if (!x || typeof x !== 'object') return d;
   const o = x as Partial<NewGameDraft>;
+  // A pre-v5.1 draft: its personalities were auto-filled and its house rules were the old defaults, not choices.
+  const fresh = o.v51 === true;
   const seats = Array.isArray(o.seats)
     ? o.seats
         .filter((s) => s && typeof s === 'object' && PLAYER_COLOR_IDS.includes(s.color))
@@ -86,7 +123,7 @@ export function sanitizeDraft(x: unknown): NewGameDraft {
           color: s.color,
           kind: s.kind === 'ai' ? ('ai' as const) : ('human' as const),
           difficulty: s.difficulty === 'easy' || s.difficulty === 'hard' ? s.difficulty : ('normal' as const),
-          ...(isPersonality(s.personality) ? { personality: s.personality } : {}),
+          ...(fresh && isPersonality(s.personality) ? { personality: s.personality } : {}),
         }))
     : d.seats;
   return {
@@ -94,6 +131,7 @@ export function sanitizeDraft(x: unknown): NewGameDraft {
     mapId: mapIdOf(typeof o.mapId === 'string' ? o.mapId : null),
     length: o.length === 'quick' || o.length === 'full' ? o.length : 'evening',
     setup: o.setup === 'placeOwn' ? 'placeOwn' : 'quickDeal',
+    v51: true,
     house: {
       draft: !!o.house?.draft,
       cardBonus: o.house?.cardBonus === 'fixed' ? 'fixed' : 'progressive',
@@ -101,11 +139,11 @@ export function sanitizeDraft(x: unknown): NewGameDraft {
       setupBatch:
         typeof o.house?.setupBatch === 'number' && o.house.setupBatch >= 1 ? Math.floor(o.house.setupBatch) : 'auto',
       seed: typeof o.house?.seed === 'number' && Number.isFinite(o.house.seed) ? o.house.seed >>> 0 : null,
-      // v3 house rules, on unless switched off
-      neutral: o.house?.neutral !== false,
+      // v5.1 D: the neutral seat is off unless switched on (a pre-v5.1 draft's `true` was the old default)
+      neutral: fresh && o.house?.neutral === true,
       truces: o.house?.truces !== false,
       // v5 G: off unless switched on
-      missions: o.house?.missions === true,
+      missions: fresh && o.house?.missions === true,
     },
   };
 }
@@ -144,12 +182,14 @@ export function draftToConfig(d: NewGameDraft, seed: number): GameConfig {
   const n = d.seats.length;
   const neutral = usesNeutral(d);
   const { dominationPercent, turnLimit } = lengthRules(d.length, n, neutral);
-  const players = d.seats.map((s) => ({
+  // v5.1 D: an AI seat without a chosen personality gets one at random from the seed.
+  const drawn = randomPersonalities(d.seats, d.house.seed ?? seed);
+  const players = d.seats.map((s, i) => ({
     name: s.name.trim() || PLAYER_COLORS[s.color].name,
     color: s.color,
     kind: s.kind,
     ...(s.kind === 'ai' ? { difficulty: s.difficulty } : {}),
-    ...(s.kind === 'ai' && isPersonality(s.personality) ? { personality: s.personality } : {}),
+    ...(s.kind === 'ai' && drawn[i] ? { personality: drawn[i] } : {}),
   }));
   const diplomacy = d.house.truces !== false && trucesApply(players);
   return {

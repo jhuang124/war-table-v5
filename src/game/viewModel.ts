@@ -29,7 +29,8 @@ export interface Settings {
   textSize: TextSize; // root font scale 1.0 / 1.25 / 1.5
   /** Territory names on every tile (off by default: the hovered and picked tiles show theirs). */
   showLabels: boolean;
-  hideCardsBetweenTurns: boolean; // the pass-the-cup cover: default on everywhere since settings v5 (_claude/v3/PLAN.md §2)
+  /** v5.1: retired with the hand-off cover; always false, kept so older settings files and HUDs still type-check. */
+  hideCardsBetweenTurns: boolean;
   sfxVolume: number; // 0..1
   muted: boolean;
   /** The soft ambient score (docs/INK.md A4). Default on since settings v4. */
@@ -70,8 +71,8 @@ export interface SeatDraft {
   kind: PlayerKind;
   difficulty: AiDifficulty;
   /**
-   * Additive (v3): how an AI seat plays (src/engine/ai/personality.ts). The controller fills it for every
-   * AI seat, rotating Turtle → Opportunist → Warlord so a fresh table has three different AIs.
+   * Additive (v3): how an AI seat plays (src/engine/ai/personality.ts). v5.1 D: absent = random, drawn at Start
+   * from the game's seed (and hidden in play until the seat first speaks); set only when chosen under "More".
    */
   personality?: AiPersonality;
 }
@@ -143,10 +144,24 @@ export interface NewGameVM {
   /** Additive (v5 G): the Missions rule applies (3–4 seats, or 2 with Neutral armies on). */
   missionsApply?: boolean;
   /**
-   * Additive (v5.1 D, HUD builder): the 'More' fold on New game is open (map, difficulty, personalities, setup,
-   * house rules). Absent = the UI keeps its own fold state (closed on entry).
+   * Additive (v5.1 D "three decisions"): the "More" fold (map, difficulty, personalities, setup, house rules) is
+   * open. The HUD toggles it with UiIntent `{ type: 'more', open }` so the fold survives re-renders. Default closed.
    */
   advancedOpen?: boolean;
+}
+
+/** Additive (v5.1 E3): a Settings key the sheet shows. */
+export type SettingKey = keyof Settings;
+
+/**
+ * Additive (v5.1 E3): how the Settings sheet folds. `primary` shows (Sound, Score, AI speed, Text size); `more`
+ * folds under one "More" word. Keys in display order; 'Hide cards between turns' is in neither (it went in v5.1).
+ */
+export interface SettingsGroupsVM {
+  primary: SettingKey[];
+  more: SettingKey[];
+  /** The fold is open (UiIntent `{ type: 'more', open, scope: 'settings' }`). */
+  moreOpen: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -586,6 +601,8 @@ export interface ViewModel {
   rulesNotes: string[];
   /** Additive (mobile pass): the board's WebGL context is lost and rebuilding (a quiet `Reloading the board…`). */
   boardLost?: boolean;
+  /** Additive (v5.1 E3): the Settings sheet's fold (four things up front, the rest under "More"). */
+  settingsGroups?: SettingsGroupsVM;
 }
 
 export type UiIntent =
@@ -602,8 +619,6 @@ export type UiIntent =
   | { type: 'house'; patch: Partial<HouseRulesDraft> }
   /** Additive (v3): pick a map pack. */
   | { type: 'map'; id: string }
-  /** Additive (v5.1 D, HUD builder): the 'More' word on New game folds the rest open / shut. */
-  | { type: 'more'; open: boolean }
   | { type: 'start' }
   // in game
   | { type: 'button'; id: ButtonId }
@@ -641,6 +656,11 @@ export type UiIntent =
   /** v5.1 standing: hover / long-press a seat ring for its reason (null on leave); tap → 'Ask X for peace' offered; confirm. */
   | { type: 'seatStanding'; player: PlayerId | null }
   | { type: 'askPeace'; to: PlayerId }
+  /**
+   * Additive (v5.1 D / E3): open or close a "More" fold. scope 'newGame' (default) = NewGameVM.advancedOpen;
+   * 'settings' = ViewModel.settingsGroups.moreOpen.
+   */
+  | { type: 'more'; open: boolean; scope?: 'newGame' | 'settings' }
   /**
    * Additive (v5 G): long-press of a seat mark. For the seat whose turn it is (a live human turn, no cover), its
    * secret mission writes on the line for a moment; for anyone else nothing (missions are secret). null = released.

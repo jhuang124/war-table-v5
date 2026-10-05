@@ -84,7 +84,8 @@ export const DEFAULT_SETTINGS: Settings = {
   aiSpeed: 'watch',
   textSize: 'laptop',
   showLabels: false,
-  hideCardsBetweenTurns: true,
+  // v5.1: the hand-off cover went (a line, not a window); the key stays so older files and HUDs still read.
+  hideCardsBetweenTurns: false,
   sfxVolume: 0.8,
   muted: false,
   music: true,
@@ -103,7 +104,12 @@ export const DEFAULT_SETTINGS: Settings = {
  */
 export const SETTINGS_VERSION = 5;
 
-/** Defaults (the same on every device since v5: the cover is on; it only ever shows with 2+ humans). */
+/** v5.1 E3: the Settings sheet shows these four up front (Sound, Score, AI speed, Text size)… */
+export const SETTINGS_PRIMARY: (keyof Settings)[] = ['muted', 'sfxVolume', 'music', 'musicVolume', 'aiSpeed', 'textSize'];
+/** …and folds the rest under "More". 'hideCardsBetweenTurns' is in neither (retired). */
+export const SETTINGS_MORE: (keyof Settings)[] = ['animationSpeed', 'showWinChance', 'showLabels', 'autoCamera', 'ambient', 'reduceMotion'];
+
+/** Defaults (the same on every device). */
 export function defaultSettings(_touch = false): Settings {
   return { ...DEFAULT_SETTINGS };
 }
@@ -116,14 +122,13 @@ export function sanitizeSettings(x: unknown, touch = false): Settings {
   if (o.animationSpeed === 0 || o.animationSpeed === 1 || o.animationSpeed === 2) s.animationSpeed = o.animationSpeed;
   if (o.aiSpeed === 'watch' || o.aiSpeed === 'fast' || o.aiSpeed === 'instant') s.aiSpeed = o.aiSpeed;
   if (o.textSize === 'laptop' || o.textSize === 'couch' || o.textSize === 'tv') s.textSize = o.textSize;
-  for (const k of ['hideCardsBetweenTurns', 'muted', 'music', 'ambient', 'reduceMotion', 'showWinChance', 'autoCamera'] as const) {
+  for (const k of ['muted', 'music', 'ambient', 'reduceMotion', 'showWinChance', 'autoCamera'] as const) {
     if (typeof o[k] === 'boolean') s[k] = o[k] as boolean;
   }
   // Before v4 the music bed defaulted off, so a saved `false` was the old default, not a choice: the
   // ambient score comes on (docs/INK.md A4). A v4 file's value counts.
   if (v < 4) s.music = true;
-  // Before v5 the cover defaulted off (on desktop), so a saved `false` was the old default, not a choice.
-  if (v < 5 && o.hideCardsBetweenTurns === false) s.hideCardsBetweenTurns = true;
+  // v5.1: 'Hide cards between turns' is retired (the cover went); a saved value is tolerated and ignored.
   // Territory names went off by default in the simplify pass (settings v2): a v1 file's `true` was the
   // old default, not a choice, so only a v2 file's value counts.
   if (v >= 2 && typeof o.showLabels === 'boolean') s.showLabels = o.showLabels;

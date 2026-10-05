@@ -20,9 +20,9 @@ describe('Missions on the New game screen', () => {
   });
 
   it('needs a third seat: two players apply it only with neutral armies', () => {
-    let d: NewGameDraft = { ...defaultDraft(), house: { ...defaultDraft().house, missions: true } };
+    let d: NewGameDraft = { ...defaultDraft(), house: { ...defaultDraft().house, missions: true, neutral: true } };
     d = removeSeat(removeSeat(d, 3), 2);
-    expect(buildNewGameVM(d).missionsApply).toBe(true); // neutral armies on by default
+    expect(buildNewGameVM(d).missionsApply).toBe(true); // neutral armies switched on (off by default since v5.1)
     expect(draftToConfig(d, 1).missions).toBe(true);
     const bare = { ...d, house: { ...d.house, neutral: false } };
     expect(buildNewGameVM(bare).missionsApply).toBe(false);

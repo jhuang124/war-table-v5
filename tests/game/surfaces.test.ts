@@ -1,12 +1,12 @@
 // v3 surfaces in the controller: the New game draft's extras (map, personalities, Neutral armies, Truces),
-// a game on another map starting through a reload, diplomacy in the dock (an offer's Accept / Decline, the
-// driver's own Truce), the seat strip's personality / grudge / neutral marks.
+// a game on another map starting through a reload, v5.1 standing in place of the truce protocol, the seat
+// strip's personality (hidden until spoken) / grudge / neutral marks.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AudioEngine } from '../../src/audio/types';
 import type { BoardView } from '../../src/render/BoardView';
 import { createController } from '../../src/game/controller';
 import { addSeat, defaultDraft, draftToConfig, patchSeat, removeSeat, sanitizeDraft } from '../../src/game/presets';
-import { memoryKV, SAVE_KEY, SETTINGS_KEY } from '../../src/game/storage';
+import { memoryKV, SAVE_KEY, SETTINGS_KEY, UI_KEY } from '../../src/game/storage';
 import type { GameState } from '../../src/engine';
 import { board as fixture } from './fixtures';
 
@@ -87,64 +87,118 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
-describe('New game draft extras (v3, presets.ts)', () => {
-  it('a fresh table has three different AIs, Neutral armies and Truces on, classic', () => {
+describe('New game draft extras (v3, presets.ts; v5.1 D three decisions)', () => {
+  it('a fresh table is one human and three AIs, personalities random (unset), house rules off, standing on, classic', () => {
     const d = defaultDraft();
-    expect(d.seats.map((s) => s.personality)).toEqual([undefined, 'turtle', 'opportunist', 'warlord']);
-    expect(d.house.neutral).toBe(true);
+    expect(d.seats.map((s) => s.kind)).toEqual(['human', 'ai', 'ai', 'ai']);
+    expect(d.seats.map((s) => s.personality)).toEqual([undefined, undefined, undefined, undefined]);
+    expect(d.seats.every((s) => s.difficulty === 'normal')).toBe(true);
+    expect(d.house.neutral).toBe(false);
+    expect(d.house.missions).toBe(false);
     expect(d.house.truces).toBe(true);
+    expect(d.setup).toBe('quickDeal');
     expect(d.mapId).toBe('classic');
   });
 
-  it('sanitizeDraft keeps them (and fills a missing personality)', () => {
+  it('sanitizeDraft keeps a chosen personality and never fills a missing one', () => {
     const d = defaultDraft();
     d.seats[1].personality = 'warlord';
-    const raw = JSON.parse(JSON.stringify({ ...d, mapId: 'true-world', house: { ...d.house, neutral: false } }));
-    delete raw.seats[2].personality;
+    const raw = JSON.parse(JSON.stringify({ ...d, mapId: 'true-world', house: { ...d.house, neutral: true } }));
     delete raw.house.truces;
     const back = sanitizeDraft(raw);
-    // seat 2 lost its personality: it takes the least used (Turtle; Warlord is used twice)
-    expect(back.seats.map((s) => s.personality)).toEqual([undefined, 'warlord', 'turtle', 'warlord']);
+    expect(back.seats.map((s) => s.personality)).toEqual([undefined, 'warlord', undefined, undefined]);
     expect(back.mapId).toBe('true-world');
-    expect(back.house.neutral).toBe(false);
+    expect(back.house.neutral).toBe(true);
     expect(back.house.truces).toBe(true);
     expect(sanitizeDraft({ ...raw, mapId: 'atlantis' }).mapId).toBe('classic');
   });
 
-  it('a seat flipped to AI, or added, gets the least-used personality', () => {
-    const d = patchSeat(defaultDraft(), 0, { kind: 'ai' });
-    expect(d.seats[0].personality).toBe('turtle');
-    const e = addSeat(removeSeat(defaultDraft(), 3));
-    expect(e.seats[3].personality).toBe('warlord');
+  it("a pre-v5.1 draft keeps its table but drops the old auto-filled personalities and house-rule defaults", () => {
+    const old = {
+      seats: [
+        { name: 'John', color: 'crimson', kind: 'human', difficulty: 'normal' },
+        { name: 'Sam', color: 'cobalt', kind: 'human', difficulty: 'normal' },
+        { name: 'Ochre', color: 'amber', kind: 'ai', difficulty: 'hard', personality: 'turtle' },
+      ],
+      length: 'quick',
+      setup: 'quickDeal',
+      house: { draft: false, cardBonus: 'progressive', fortifyRule: 'connected', setupBatch: 'auto', seed: null, neutral: true, truces: true, missions: true },
+      mapId: 'classic',
+    };
+    const back = sanitizeDraft(old);
+    expect(back.seats.map((s) => [s.name, s.kind, s.personality])).toEqual([
+      ['John', 'human', undefined],
+      ['Sam', 'human', undefined],
+      ['Ochre', 'ai', undefined],
+    ]);
+    expect(back.seats[2].difficulty).toBe('hard');
+    expect(back.length).toBe('quick');
+    expect(back.house.neutral).toBe(false);
+    expect(back.house.missions).toBe(false);
+    expect(back.v51).toBe(true);
   });
 
-  it('the config carries the map, diplomacy only with a human and a personality AI, neutral for two', () => {
+  it('a seat flipped to AI, or added, stays random (no personality picked for it)', () => {
+    const d = patchSeat(defaultDraft(), 0, { kind: 'ai' });
+    expect(d.seats[0].personality).toBeUndefined();
+    const e = addSeat(removeSeat(defaultDraft(), 3));
+    expect(e.seats[3].personality).toBeUndefined();
+  });
+
+  it('Start draws each AI a personality from the seed (deterministic, no repeats up to three), keeps a chosen one', () => {
     const d = defaultDraft();
     const c = draftToConfig({ ...d, mapId: 'true-world' }, 5);
     expect(c.mapId).toBe('true-world');
     expect(c.diplomacy).toBe(true);
-    expect(c.players.filter((p) => p.kind === 'ai').map((p) => p.personality)).toEqual(['turtle', 'opportunist', 'warlord']);
+    const picks = c.players.filter((p) => p.kind === 'ai').map((p) => p.personality);
+    expect([...picks].sort()).toEqual(['opportunist', 'turtle', 'warlord']);
+    expect(draftToConfig(d, 5).players.map((p) => p.personality)).toEqual(c.players.map((p) => p.personality));
+    // different seeds deal different tables (some seed in a handful differs)
+    const tables = new Set([1, 2, 3, 4, 6, 7, 8, 9].map((seed) => draftToConfig(d, seed).players.map((p) => p.personality).join(',')));
+    expect(tables.size).toBeGreaterThan(1);
+    const chosen = patchSeat(d, 2, { personality: 'warlord' });
+    for (const seed of [1, 2, 3, 4]) expect(draftToConfig(chosen, seed).players[2].personality).toBe('warlord');
+    expect(draftToConfig(d, 5).players[0].personality).toBeUndefined();
     expect(draftToConfig({ ...d, house: { ...d.house, truces: false } }, 5).diplomacy).toBeUndefined();
     const allAi = { ...d, seats: d.seats.map((s) => ({ ...s, kind: 'ai' as const })) };
     expect(draftToConfig(allAi, 5).diplomacy).toBeUndefined();
     const two = removeSeat(removeSeat(d, 3), 2);
-    expect(draftToConfig(two, 5).neutral).toBe(true);
-    expect(draftToConfig({ ...two, house: { ...two.house, neutral: false } }, 5).neutral).toBeUndefined();
+    expect(draftToConfig(two, 5).neutral).toBeUndefined();
+    expect(draftToConfig({ ...two, house: { ...two.house, neutral: true } }, 5).neutral).toBe(true);
   });
 
-  it('the New game view offers both maps and the three personalities', () => {
+  it('the New game view offers both maps and the three personalities, and its More fold survives re-renders', () => {
     const { c } = make();
     const ng = c.getViewModel().newGame;
     expect(ng.maps?.map((m) => m.id)).toEqual(['classic', 'true-world']);
     expect(ng.maps?.[1].seats).toBe('2–4 players');
     expect(ng.mapId).toBe('classic');
     expect(ng.personalities?.map((p) => p.name)).toEqual(['Turtle', 'Opportunist', 'Warlord']);
+    expect(ng.advancedOpen).toBe(false);
+    c.intent({ type: 'more', open: true });
+    expect(c.getViewModel().newGame.advancedOpen).toBe(true);
     c.intent({ type: 'map', id: 'true-world' });
     expect(c.getViewModel().newGame.mapId).toBe('true-world');
+    expect(c.getViewModel().newGame.advancedOpen).toBe(true);
     c.intent({ type: 'seat', index: 0, patch: { kind: 'ai' } });
-    // a fourth AI takes the least-used personality (all three are used once: the first, Turtle)
-    expect(c.getViewModel().newGame.seats[0].personality).toBe('turtle');
+    expect(c.getViewModel().newGame.seats[0].personality).toBeUndefined();
+    c.intent({ type: 'more', open: false });
+    expect(c.getViewModel().newGame.advancedOpen).toBe(false);
     c.dispose();
+  });
+
+  it("the default New game is the last game's table", () => {
+    const kv = memoryKV();
+    const a = make(kv).c;
+    a.intent({ type: 'seat', index: 1, patch: { kind: 'human', name: 'Sam' } });
+    a.intent({ type: 'removeSeat', index: 3 });
+    a.intent({ type: 'length', value: 'quick' });
+    a.dispose();
+    const b = make(kv).c;
+    const ng = b.getViewModel().newGame;
+    expect(ng.seats.map((s) => `${s.name}:${s.kind}`)).toEqual(['Vermilion:human', 'Sam:human', `${ng.seats[2].name}:ai`]);
+    expect(ng.length).toBe('quick');
+    b.dispose();
   });
 });
 
@@ -181,64 +235,47 @@ describe('a game on another map (v3)', () => {
   });
 });
 
-describe('diplomacy in the dock (v3)', () => {
-  it("an AI's offer (v4 A5): a secondary line with its reason and Decline / Accept as small words; it never takes the line or the gold; Accept answers", async () => {
+describe('standing replaces the truce protocol (v5.1 C)', () => {
+  it('no offer line, no Accept / Decline, even with an old offer pending in the state', async () => {
     const s = diplomacyBoard((st) => {
       st.diplomacy = { truces: [], offers: [{ from: 2, to: 0, rounds: 3, kind: 'noAttack', turn: 8 }], proposedOn: { 2: 8 }, rebuffs: [] };
     });
     const { c } = await load(s);
     const u = c.hooks.ui();
-    expect(u.offer?.text).toMatch(/^Priya proposes a truce with John · 3 rounds · you share a border in [A-Z][a-z]+( [A-Z][a-z]+)?$/);
-    expect(u.offer?.buttons).toEqual(['Decline', 'Accept']);
-    expect(u.line).not.toMatch(/truce/);
+    expect(u.offer).toBeNull();
+    expect(c.getViewModel().game!.strip.offer ?? null).toBeNull();
     expect(u.buttons).not.toContain('Accept');
-    expect(u.gold).not.toBe('button:acceptTruce');
-    expect(u.brass).not.toContain('Accept');
+    expect(u.buttons).not.toContain('Decline');
     c.intent({ type: 'button', id: 'acceptTruce' });
     await settle();
-    const after = c.hooks.getState()!;
-    expect(after.diplomacy?.offers.length).toBe(0);
-    expect(after.diplomacy?.truces.map((t) => [t.from, t.to])).toEqual([[2, 0]]);
-    expect(c.hooks.ledger().some((l) => l.kind === 'truce' && /^John accepts Priya's truce · until round \d+$/.test(l.text))).toBe(true);
-    expect(c.hooks.ui().offer).toBeNull();
+    expect(c.hooks.getState()!.diplomacy?.truces.length ?? 0).toBe(0);
     c.dispose();
   });
 
-  it('Decline turns it down', async () => {
-    const s = diplomacyBoard((st) => {
-      st.diplomacy = { truces: [], offers: [{ from: 2, to: 0, rounds: 3, kind: 'noAttack', turn: 8 }], proposedOn: {}, rebuffs: [] };
-    });
-    const { c } = await load(s);
-    c.intent({ type: 'button', id: 'declineTruce' });
-    await settle();
-    expect(c.hooks.getState()!.diplomacy?.truces.length).toBe(0);
-    expect(c.hooks.ledger().some((l) => l.text === "John turns down Priya's truce")).toBe(true);
-    c.dispose();
-  });
-
-  it('Truce in Attack lights the seats that can take one; a lit ring proposes 3 rounds', async () => {
+  it('no Truce word in Attack; proposeTruce and the truce button do nothing', async () => {
     const { c } = await load(diplomacyBoard());
-    expect(c.hooks.ui().buttons).toEqual(['Truce']);
+    expect(c.hooks.ui().buttons).toEqual([]);
     expect(c.hooks.ui().gold).toBe('segment:attack');
     c.intent({ type: 'button', id: 'truce' });
-    await settle(50);
-    const seats = c.getViewModel().game!.seats;
-    expect(seats.filter((x) => x.truceTarget).map((x) => x.seat.name)).toEqual(['Sam', 'Priya']);
-    expect(c.hooks.ui().line).toBe('Offer a 3-round truce · click a seat');
     c.intent({ type: 'proposeTruce', to: 2 });
     await settle();
-    const log = c.hooks.ledger().filter((l) => l.kind === 'truce').map((l) => l.text);
-    expect(log[0]).toBe('John proposes a truce with Priya · 3 rounds');
-    expect(log.length).toBe(2); // Priya answers at once (accepts or turns it down)
+    expect(c.hooks.ledger().filter((l) => l.kind === 'truce')).toEqual([]);
     expect(c.getViewModel().game!.seats.some((x) => x.truceTarget)).toBe(false);
-    // one offer per turn: the word goes
-    expect(c.hooks.ui().buttons).not.toContain('Truce');
     c.dispose();
   });
 
-  it('no Truce word without diplomacy', async () => {
-    const { c } = await load(diplomacyBoard((st) => (st.config = { ...st.config, diplomacy: false })));
-    expect(c.hooks.ui().buttons).toEqual([]);
+  it('every AI seat carries its standing toward the driver; humans none', async () => {
+    const { c } = await load(diplomacyBoard());
+    const seats = c.getViewModel().game!.seats;
+    expect(['ally', 'even', 'wary', 'hostile']).toContain(seats[2].standing);
+    expect(typeof seats[2].canAskPeace).toBe('boolean');
+    expect(Array.isArray(seats[2].understandingWith)).toBe(true);
+    expect(seats[0].standing).toBeUndefined();
+    expect(seats[1].standing).toBeUndefined();
+    const hook = c.hooks.standing();
+    expect(hook.map((h) => h.kind)).toEqual(['human', 'human', 'ai']);
+    expect(hook[2].reader).toBe(0);
+    expect(hook[2].standing).toBe(seats[2].standing);
     c.dispose();
   });
 
@@ -254,17 +291,23 @@ describe('diplomacy in the dock (v3)', () => {
 });
 
 describe('the seat strip (v3)', () => {
-  it("an AI seat shows its personality and, at 2 or more, its strongest grudge", async () => {
-    const { c } = await load(
-      diplomacyBoard((st) => {
-        st.players[2].grudges = { 0: 1.2, 1: 2.5 };
-      }),
-    );
+  it("an AI seat hides its personality until it has spoken (v5.1 D); its strongest grudge at 2 or more", async () => {
+    const s = diplomacyBoard((st) => {
+      st.players[2].grudges = { 0: 1.2, 1: 2.5 };
+    });
+    const { c } = await load(s);
     const priya = c.getViewModel().game!.seats[2];
-    expect(priya.personality?.name).toBe('Turtle');
+    expect(priya.personality ?? null).toBeNull();
+    expect(c.hooks.standing()[2].personality).toBeNull();
     expect(priya.grudge?.name).toBe('Sam');
     expect(c.getViewModel().game!.seats[0].personality).toBeUndefined();
     c.dispose();
+    // A saved game in which Priya has spoken: the label shows.
+    const kv = memoryKV();
+    kv.set(UI_KEY, JSON.stringify({ v: 1, game: { id: s.id, revealed: [2], log: [], logId: 1 } }));
+    const r = await load(s, kv);
+    expect(r.c.getViewModel().game!.seats[2].personality?.name).toBe('Turtle');
+    r.c.dispose();
   });
 
   it('a grudge under 2 stays hidden', async () => {

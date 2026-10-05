@@ -37,9 +37,12 @@ import {
   grudgesOf,
   missionText,
   isPersonality,
-  truceOffersTo,
   truceSentence,
-  truceTargets,
+  trucePartners,
+  standingOf,
+  standingReason,
+  canAskPeace,
+  type Standing,
   type Action,
   type AiPersonality,
   type ActionResult,
@@ -53,11 +56,11 @@ import {
   type PlayerId,
   type TerritoryId,
 } from '../engine';
-import { truceReason } from '../engine/ai/diplomacy';
+import * as engineNs from '../engine';
 import { DEFAULT_MAP_ID, activeMapId, isKnownMap, listMaps } from '../map/registry';
 import type { AudioEngine, PlayOptions, SfxName, V4Cue, V5Cue } from '../audio/types';
 import type { BoardHighlights, BoardView, PlayEventOptions, TerritoryPointerInfo, ViewportInsets } from '../render/BoardView';
-import { attackLine, buildStrip, buildTrack, emptySel, placeLeft, placeValue, selectionTargets, stagedTotal, tookLine, trackLockReason, withOffer, type Placement, type Sel } from './strip';
+import { attackLine, buildStrip, buildTrack, emptySel, placeLeft, placeValue, selectionTargets, stagedTotal, tookLine, trackLockReason, type Placement, type Sel } from './strip';
 import {
   buildReplay,
   emptyStory,
@@ -78,7 +81,7 @@ import { eventTier } from './timingModel';
 import { createHaptics, type Haptics } from './haptics';
 import { applyEventToDisplay, isBlocking } from './display';
 import { explainTerritory, type ClickPlan, type ExplainUi, type Explanation } from './explain';
-import { autoChain, bestSet, noSetStatus, occupyDefault } from './helpers';
+import { autoChain, bestSet, noSetStatus } from './helpers';
 import {
   addSeat,
   buildNewGameVM,
@@ -110,6 +113,8 @@ import {
 } from './recap';
 import {
   DEFAULT_SETTINGS,
+  SETTINGS_MORE,
+  SETTINGS_PRIMARY,
   SAVE_KEY,
   SETTINGS_KEY,
   TEXT_SCALE,
@@ -264,7 +269,7 @@ export interface UiSnapshot {
   gold: string | null;
   /** The banner's serif line ('John · 3 armies', 'Sam · taken by John · round 9'), or null. */
   bannerLine: string | null;
-  /** Additive (v4 A5): a truce offer's secondary line and its small words, or null. */
+  /** v5.1: always null (the human truce protocol went); kept so older flows still read. */
   offer: { text: string; buttons: string[] } | null;
   /** Additive (v4 A3): the receipt's title and lines, or null. */
   receipt: { title: string; lines: string[]; summary: string | null } | null;
@@ -300,6 +305,24 @@ export interface RiskHooks {
   holding(): GameVM['holding'] | null;
   /** Additive (v5 D): every AI voice line said this game, oldest first. */
   voiceLines(): VoiceEntry[];
+  /** Additive (v5.1 C): each seat's standing as the seat marks show it (toward the current / next human). */
+  standing(): StandingHook[];
+}
+
+/** One seat's standing toward the reader (the `__risk.standing()` hook). */
+export interface StandingHook {
+  seat: PlayerId;
+  name: string;
+  kind: PlayerKind;
+  /** null for humans and the neutral seat. */
+  standing: Standing | null;
+  reason: string | null;
+  canAskPeace: boolean;
+  understandingWith: PlayerId[];
+  /** The personality label the seat mark shows (null until the seat has spoken). */
+  personality: string | null;
+  /** The reader these were computed for. */
+  reader: PlayerId | null;
 }
 
 export interface GameController extends ControllerApi {
@@ -375,10 +398,8 @@ interface AiTurnCtx {
   beats: number;
   /** 1 = full beats; < 1 = every beat shortened by this factor (≥ AI_MIN_SCALE). */
   scale: number;
-  /** v5 D5: the dry run found an attack this turn (the opening think gives the rattle its time). */
+  /** v5 D5: the dry run found an attack this turn. */
   attacks?: boolean;
-  /** v5 D5: the cup has rattled this turn. */
-  rattled?: boolean;
 }
 
 interface GameMeta {
@@ -405,6 +426,8 @@ interface GameMeta {
    * replay, the grudge ticks and a stone's history all read it.
    */
   story?: StoryLedger;
+  /** v5.1 D: AI seats whose personality is known (it has said its first line). */
+  revealed?: PlayerId[];
 }
 
 interface UiFile {
@@ -449,11 +472,9 @@ const REJECT_MS = 2000;
 /** A decided fight's tray header ('Siberia captured') stays this long, then fades (docs/ROUND2.md §E). */
 const LINGER_MS = 1000;
 const LOG_CAP = 300;
-/** v5 D5: the cup rattles this long before an AI's first attack of a turn (taken from the turn's opening think). */
-const RATTLE_MS = 300;
 /** v5 D4: an AI's voice line holds the one line this long against its own placement narration. */
 const VOICE_HOLD_MS = 1200;
-/** v5 F: a clickable's line (a continent, the cup, the ensō, a lane, a stone) holds this long. */
+/** v5 F: a clickable's line (a continent, the ensō, a lane, a stone) holds this long. */
 const FLASH_MS = 1400;
 /** v5 F4: a second tap on the ensō this soon opens the Ledger. */
 const ENSO_DOUBLE_MS = 2000;
@@ -503,6 +524,7 @@ function restoreMeta(id: string, saved: Partial<GameMeta> | undefined): GameMeta
   }
   m.firstMoved = !!saved.firstMoved;
   m.story = restoreStory(saved.story);
+  if (Array.isArray(saved.revealed)) m.revealed = saved.revealed.filter((x) => typeof x === 'number');
   return m;
 }
 
@@ -529,6 +551,12 @@ function restoreSel(x: unknown): Sel {
 /** Optional renderer extension: the resulting totals drawn on the pieces while a count is chosen. */
 type PreviewBoard = BoardView & { setCountPreview?: (totals: Partial<Record<TerritoryId, number>> | null) => void };
 
+/** 'three rounds' (the peace answer's words; numerals past ten). */
+function roundsWord(n: number): string {
+  const w = ['no', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten'][n] ?? String(n);
+  return `${w} ${n === 1 ? 'round' : 'rounds'}`;
+}
+
 /** v5 E6: the pour follows the armies: 85 ms a stone, 0.25–0.6 s. */
 function pourSeconds(armies: number): number {
   return Math.min(0.6, Math.max(0.25, 0.085 * armies));
@@ -547,10 +575,38 @@ const BOOT_KEY = 'risk3d.boot.v1';
 type BootFile = { v: 1; start?: GameConfig; resume?: boolean };
 
 /** Diplomacy events: HUD only (display.ts lists them non-blocking; the board is never asked to play them). */
-const TRUCE_EVENTS: ReadonlySet<GameEvent['type']> = new Set(['truceProposed', 'truceAccepted', 'truceDeclined', 'truceBroken', 'truceExpired']);
+const TRUCE_EVENTS: ReadonlySet<GameEvent['type']> = new Set([
+  'truceProposed',
+  'truceAccepted',
+  'truceDeclined',
+  'truceBroken',
+  'truceExpired',
+  'peaceAnswered',
+  'peaceBroken',
+  'standingChanged',
+]);
 
-/** A truce the dock offers: 3 rounds, no attacks (the one kind the engine knows). */
-const TRUCE_ROUNDS = 3;
+type FlashKind = 'tap' | 'stone' | 'mission' | 'standing' | 'peace';
+
+/**
+ * v5.1 C: the engine's 'why you cannot ask now' line ('You asked Sage in round 5 · ask again in round 8'), read
+ * through the namespace so this builds against the stub too (it lacks `peaceAskBlock`).
+ */
+function peaceAskBlockOf(s: GameState, human: PlayerId, ai: PlayerId): string | null {
+  const fn = (engineNs as unknown as { peaceAskBlock?: (s: GameState, h: PlayerId, a: PlayerId) => string | null }).peaceAskBlock;
+  try {
+    return fn ? fn(s, human, ai) : null;
+  } catch {
+    return null;
+  }
+}
+
+/** v5.1 E1: Place → Attack advances by itself this long after the last army is placed. */
+const AUTO_ATTACK_MS = 250;
+/** v5.1 C: a standing reason holds the line this long on a long-press / tap (hover holds until it leaves). */
+const STANDING_MS = 2400;
+/** v5.1 C: a peace answer / a broken peace holds the line this long. */
+const PEACE_MS = 2600;
 
 /** Reload this page onto whatever the save says (a `?map=` override is dropped: the save decides). */
 function reloadPage(): void {
@@ -609,8 +665,12 @@ class Controller {
   private overlayReturn: Overlay = null;
   private settings: Settings = { ...DEFAULT_SETTINGS };
   private draft: NewGameDraft = defaultDraft();
-  /** v3 diplomacy: the driver tapped `Truce` and is choosing a seat (the eligible rings are lit). */
-  private truceMode = false;
+  /** v5.1 D: the New game screen's "More" fold is open. */
+  private newGameMore = false;
+  /** v5.1 E3: the Settings sheet's "More" fold is open. */
+  private settingsMore = false;
+  /** v5.1 E1: the pending Place → Attack advance (a timer handle), or null. */
+  private autoAttackTimer: unknown = null;
   /** v3: a new build took over (service worker controllerchange) while a game is on. */
   private updateReady = false;
   private reloadFn: (() => void) | null;
@@ -652,7 +712,6 @@ class Controller {
   private boardStale = false;
   private pendingInputs: { fn: () => void; at: number }[] = [];
   private sleepers = new Set<() => void>();
-  private handoff: { player: PlayerId } | null = null;
   private rolling = false;
   /** A draw-to-attack stroke is being drawn (the board's gold stroke is the one gold). */
   private strokeLive = false;
@@ -705,8 +764,11 @@ class Controller {
   private voiceHoldUntil = 0;
   /** The current human turn's armies as they arrived (turnStarted's breakdown) plus card trades since. */
   private turnArmies: { turn: number; player: PlayerId; b: import('../engine').ReinforcementBreakdown; cards: number } | null = null;
-  /** A clickable's line on the strip for a moment (a continent, the cup, the ensō, a lane, a stone). */
-  private flash: { text: string; until: number; kind: 'tap' | 'stone' | 'mission' } | null = null;
+  /**
+   * A clickable's line on the strip for a moment (a continent, the ensō, a lane, a stone); v5.1 a seat's
+   * standing reason, a peace answer. `seat` sets it in that AI's light tint (StripVM.voice).
+   */
+  private flash: { text: string; until: number; kind: FlashKind; seat?: PlayerId } | null = null;
   /** The enemy tile under the pointer while a source is picked (the hover odds line, desktop). */
   private hoverTile: TerritoryId | null = null;
   /** The seat ring under the pointer (its territories lift, the rest rest). */
@@ -1022,7 +1084,7 @@ class Controller {
   /** The driver may act on the board now. */
   private interactive(): boolean {
     const s = this.state;
-    if (!s || this.screen !== 'game' || this.handoff) return false;
+    if (!s || this.screen !== 'game') return false;
     if (s.phase.kind === 'game-over') return false;
     return !this.isAiDriven(s.currentPlayer);
   }
@@ -1099,7 +1161,7 @@ class Controller {
     this.bannerQueue = [];
     this.turnBanner = null;
     this.rejection = null;
-    this.handoff = null;
+    this.cancelAutoAttack();
     this.aiCtx = null;
     this.aiHighlights = null;
     this.aiPreview = null;
@@ -1114,7 +1176,6 @@ class Controller {
     this.sessionAiSpeed = null;
     this.curTurn = null;
     this.lastBoardSpeed = -1;
-    this.truceMode = false;
     this.narrBegun = null;
     this.receipt = null;
     this.pulse = [];
@@ -1150,7 +1211,7 @@ class Controller {
     this.sel = this.meta.sel;
     this.validateSel();
     if (s.phase.kind === 'occupy' && this.sel.occupyCount === null) {
-      this.sel.occupyCount = occupyDefault(s, s.phase.from, s.phase.to, s.phase.min, s.phase.max);
+      this.sel.occupyCount = s.phase.max;
     }
     this.board.skipAnimations();
     this.board.setAttractMode(false);
@@ -1362,19 +1423,7 @@ class Controller {
     this.pumping = true;
     try {
       while (this.queue.length) {
-        const next = this.queue[0];
-        if (next.ev.type === 'turnStarted' && this.needsHandoff(next.ev.player) && !this.handoff) {
-          this.handoff = { player: next.ev.player };
-          // v4 A3: the cover reads the receipt before 'start turn' resolves (2+ humans).
-          this.openReceipt(next.ev.player, next.ev.turn);
-          this.invalidate();
-        }
-        if (this.handoff) {
-          await new Promise<void>((resolve) => {
-            const check = () => (this.handoff ? this.timer(check, 50) : resolve());
-            check();
-          });
-        }
+        // v5.1 A: no hand-off cover: the turn passes with the one line (the turn banner) and the seat ring.
         const e = this.queue.shift()!;
         const epoch = this.epoch;
         try {
@@ -1552,14 +1601,6 @@ class Controller {
     this.wakeAll();
   }
 
-  private needsHandoff(player: PlayerId): boolean {
-    const s = this.disp;
-    if (!s || !this.settings.hideCardsBetweenTurns || this.autoplayOn) return false;
-    if (s.players[player]?.kind !== 'human') return false;
-    // v3: the cup passes whenever 2+ humans share the device, cards or not (one tap dismisses it).
-    return this.humanCount(s, true) >= 2;
-  }
-
   // =========================================================================
   // Event handlers (HUD reacts to each event as the board plays it)
   // =========================================================================
@@ -1584,8 +1625,10 @@ class Controller {
         this.openTurnMetric(ev.player);
         this.sel = emptySel();
         this.frozenSel = null;
+        // v5.1 A: cards are only shown on demand; the sheet closes as the turn passes (private with 2+ humans).
+        if (this.cardsOpen) this.sheet(false);
         this.cardsOpen = false;
-        this.truceMode = false;
+        this.cancelAutoAttack();
         this.autoMoved = null;
         this.narration = aiTurn ? `${pName(d, ev.player)} gets ${armies(ev.reinforcements.total)}` : null;
         this.narrBegun = null;
@@ -1628,16 +1671,15 @@ class Controller {
           else show();
         }
         this.log('turn', ev.player, `${poss(pName(d, ev.player))} turn${SEP}${ev.reinforcements.total} to place`, ev.round);
-        // v4 A2 / B3: the cup slides and is set down at every seat; the score turns with it. A human's
-        // turn adds the turnStart (bright after AI turns) and the swell.
+        // v5.1 B: the cup went (no objects as UI); the sound of the turn passing stays: one wood set-down
+        // ('cupSet') and the score's chord turning. A human's turn adds the turnStart (bright after AI turns).
         if (!this.autoplayOn) {
-          this.cue('cupSlide');
           try {
             this.audio.turnPassed?.(human);
           } catch {
             /* audio is best-effort */
           }
-          this.cue('cupSet', { delay: 0.3 });
+          this.cue('cupSet');
           // §7.9: a new round re-inks the round numeral, with a paper tick.
           if (ev.round > d.round && d.round > 0) this.cue('tick', { delay: 0.45 });
         }
@@ -1768,14 +1810,25 @@ class Controller {
       case 'truceDeclined':
       case 'truceBroken':
       case 'truceExpired': {
-        // Diplomacy (v3): one plain sentence in the event line and the ledger, as it lands; no wait. v4 A5:
-        // an AI's offer states its reason.
-        const text = ev.type === 'truceProposed' ? this.offerSentence(e.after, ev) : truceSentence(e.after, ev);
+        // v5.1 C: truces live between AI seats (understandings). The Ledger keeps every AI-to-AI sentence; the one
+        // line says only when an understanding forms or breaks, once. Nothing here ever asks a human anything.
+        const a = ev.type === 'truceBroken' ? ev.by : ev.from;
+        const b = ev.type === 'truceBroken' ? ev.against : ev.to;
+        const aiPair = d.players[a]?.kind === 'ai' && d.players[b]?.kind === 'ai';
+        const text = truceSentence(e.after, ev);
         const actor =
           ev.type === 'truceBroken' ? ev.by : ev.type === 'truceAccepted' || (ev.type === 'truceDeclined' && ev.reason === 'declined') ? ev.to : ev.from;
-        if (text) {
-          this.log('truce', actor, text);
-          if (e.ai) this.narration = text;
+        if (text && (aiPair || ev.type === 'truceBroken')) this.log('truce', actor, text);
+        // An understanding ends by standing (v5.1 engine: truceExpired reason 'standing') or by an attack.
+        const turned = ev.type === 'truceExpired' && (ev as { reason?: string }).reason === 'standing';
+        if (aiPair && (ev.type === 'truceAccepted' || ev.type === 'truceBroken' || turned)) {
+          const line =
+            ev.type === 'truceAccepted'
+              ? `${pName(d, ev.from)} and ${pName(d, ev.to)} have an understanding`
+              : ev.type === 'truceBroken'
+                ? `${pName(d, ev.by)} turned on ${pName(d, ev.against)}`
+                : `${pName(d, a)} turned on ${pName(d, b)}`;
+          this.understandingLine(line);
         }
         // v5 D4: a truce broken against an AI seat: it says so as its next turn begins.
         if (ev.type === 'truceBroken' && d.players[ev.against]?.kind === 'ai') this.voices.aggrieve(ev.against, ev.by, 'truceBroken');
@@ -1784,6 +1837,33 @@ class Controller {
           this.lostKeys[ev.against] = (this.lostKeys[ev.against] ?? 0) + 1;
           this.play('continent', { variant: 'somber' });
           this.haptics.play('conquest');
+        }
+        break;
+      }
+      case 'peaceAnswered':
+        this.onPeaceAnswered(ev, d);
+        break;
+      case 'peaceBroken':
+        this.onPeaceBroken(ev, d, skip);
+        break;
+      case 'standingChanged': {
+        // The seat mark changes on its own (SeatChipVM.standing reads the board). The one line speaks only when it
+        // is about the reader and the band is wary / hostile (or turns ally); the Ledger only when it hardens to
+        // hostile toward a human.
+        const toHuman = this.isHumanSeat(ev.toward) && d.players[ev.ai]?.kind === 'ai';
+        if (ev.standing === 'hostile' && toHuman) this.log('truce', ev.ai, this.hostileLine(e.after, ev.ai, ev.toward));
+        if (toHuman && !this.autoplayOn && !skip && ev.standing !== 'even' && ev.toward === this.standingReader(d)) {
+          let why = '';
+          try {
+            why = standingReason(e.after, ev.ai, ev.toward) || '';
+          } catch {
+            why = '';
+          }
+          // Never over a peace answer or a broken peace said a moment ago (they already carry the news).
+          if (why && this.flash?.kind !== 'peace') {
+            if (this.isAiDriven(d.currentPlayer)) this.narration = why;
+            else this.flashLine(why, 'standing', STANDING_MS, ev.ai);
+          }
         }
         break;
       }
@@ -1866,10 +1946,10 @@ class Controller {
           this.clearLinger();
         }
         if (ev.phase !== 'reinforce') this.cardsOpen = false;
-        if (ev.phase !== 'attack') this.truceMode = false;
         if (ev.phase === 'occupy' && this.state?.phase.kind === 'occupy' && this.sel.occupyCount === null) {
-          const ph = this.state.phase;
-          this.sel.occupyCount = occupyDefault(this.state, ph.from, ph.to, ph.min, ph.max);
+          // v5.1 E2: all but one moves in by default.
+          this.sel.occupyCount = this.state.phase.max;
+          this.sel.countTouched = false;
         }
         break;
       case 'controllerChanged':
@@ -2129,8 +2209,9 @@ class Controller {
       id: this.idSeq++,
       kind: 'turn',
       title: `${upper(poss(name))} TURN`,
-      // The turn banner (PLAN §3): "Sam's turn · round 6 · 7 to place", drawn in as the cup arrives.
-      line: armiesIn === null ? `${poss(name)} turn${SEP}round ${round}` : `${poss(name)} turn${SEP}round ${round}${SEP}${armiesIn} to place`,
+      // v5.1 A: the turn passes with this one line in the seat's pigment, ~1.5 s: "Sam's turn · 7 armies" (no cover,
+      // no cup). The round lives in the dock; a resumed mid-turn says whose turn only.
+      line: armiesIn === null ? `${poss(name)} turn` : `${poss(name)} turn${SEP}${armies(armiesIn)}`,
       sub: armiesIn === null ? '' : `+${armiesIn} ${armiesIn === 1 ? 'army' : 'armies'}`,
       recap,
       seat: seatRef(s, player),
@@ -2270,6 +2351,8 @@ class Controller {
   private say(seat: PlayerId, kind: VoiceKind, vars: VoiceVars, turn: number, d: GameState): void {
     const e = this.voices.say(d, seat, kind, vars, turn);
     if (!e) return;
+    // v5.1 D: a personality is hidden until the seat first speaks; its first line reveals it.
+    if (this.meta && !(this.meta.revealed ?? []).includes(seat)) this.meta.revealed = [...(this.meta.revealed ?? []), seat];
     if (this.isAiDriven(d.currentPlayer)) {
       this.narration = e.text;
       this.voiceNow = { text: e.text, seat };
@@ -2378,8 +2461,8 @@ class Controller {
   }
 
   /** A clickable's line holds the strip a moment (v5 F). */
-  private flashLine(text: string, kind: 'tap' | 'stone' | 'mission' = 'tap', ms = FLASH_MS): void {
-    this.flash = { text, until: this.now() + ms, kind };
+  private flashLine(text: string, kind: FlashKind = 'tap', ms = FLASH_MS, seat?: PlayerId): void {
+    this.flash = { text, until: this.now() + ms, kind, ...(seat !== undefined ? { seat } : {}) };
     this.lineKey++;
     const until = this.flash.until;
     this.timer(() => {
@@ -2406,7 +2489,7 @@ class Controller {
   /** v5 E6: the holding dab: the current human's armies still to place this turn, and where they came from. */
   private buildHolding(d: GameState): GameVM['holding'] {
     const s = this.state;
-    if (!s || this.handoff || this.screen !== 'game' || this.autoplayOn) return null;
+    if (!s || this.screen !== 'game' || this.autoplayOn) return null;
     const ph = d.phase;
     const me_ = d.currentPlayer;
     if (ph.kind !== 'reinforce' || ph.remaining <= 0 || !this.isHumanSeat(me_) || this.isAiDriven(me_) || d.currentPlayer !== s.currentPlayer) return null;
@@ -2471,12 +2554,6 @@ class Controller {
     this.invalidate();
   }
 
-  /** An offer's sentence; an AI's states its reason (A5): '… · 3 rounds · you share a border in Asia'. */
-  private offerSentence(s: GameState, o: { from: PlayerId; to: PlayerId; rounds: number; kind: Extract<GameEvent, { type: 'truceProposed' }>['kind'] }): string {
-    const base = truceSentence(s, { type: 'truceProposed', from: o.from, to: o.to, rounds: o.rounds, kind: o.kind }) ?? '';
-    const why = s.players[o.from]?.kind === 'ai' ? truceReason(s, o.from, o.to) : null;
-    return why ? `${base}${SEP}${why}` : base;
-  }
 
   // =========================================================================
   // Board input
@@ -2508,7 +2585,7 @@ class Controller {
   /** Long-press on touch (docs/MOBILE.md §3): the name card above the finger; release hides it. Never selects. */
   private onLongPress(info: TerritoryPointerInfo | null | undefined): void {
     const d = this.disp;
-    if (!info || !d || this.screen !== 'game' || this.overlay || this.confirm || this.handoff) {
+    if (!info || !d || this.screen !== 'game' || this.overlay || this.confirm) {
       this.hideNameCard();
       return;
     }
@@ -2688,8 +2765,6 @@ class Controller {
   private handleClick(info: TerritoryPointerInfo): void {
     const s = this.state;
     if (!s || !this.interactive()) return;
-    // A board tap while choosing a truce partner goes back to the board (the rings go out).
-    this.truceMode = false;
     const t = info.territory;
     const ex = explainTerritory(s, this.explainUi(), t);
     if (!ex.ok || !ex.plan) {
@@ -2782,6 +2857,42 @@ class Controller {
     sel.placements.push({ t, n });
     sel.placeCount = null;
     if (n >= left) sel.selected = null;
+    if (n >= left && s.phase.kind === 'reinforce') this.scheduleAutoAttack();
+  }
+
+  /**
+   * v5.1 E1: the last army is placed: the marker moves to Attack by itself after a short beat (End turn stays
+   * explicit). Not over a forced trade, not while the Cards sheet is open, and an Undo in the beat cancels it.
+   */
+  private scheduleAutoAttack(): void {
+    this.cancelAutoAttack();
+    const s0 = this.state;
+    if (!s0) return;
+    const turn = s0.turn;
+    const epoch = this.epoch;
+    const fire = () => {
+      this.autoAttackTimer = null;
+      const s = this.state;
+      if (epoch !== this.epoch || !s || s.turn !== turn || this.screen !== 'game' || !this.interactive()) return;
+      const ph = s.phase;
+      if (ph.kind !== 'reinforce' || ph.remaining > 0 || ph.mustTrade || this.cardsOpen || this.overlay || this.confirm) return;
+      // Still landing on the board: wait for it (a click-through would skip the drop's animation).
+      if (this.busyBlocking() || this.pumping) {
+        this.autoAttackTimer = this.timer(fire, 60);
+        return;
+      }
+      this.goTo('attack');
+      this.saveMeta();
+      this.invalidate();
+    };
+    this.autoAttackTimer = this.timer(fire, AUTO_ATTACK_MS);
+  }
+
+  private cancelAutoAttack(): void {
+    if (this.autoAttackTimer) {
+      this.clock.clearTimeout(this.autoAttackTimer);
+      this.autoAttackTimer = null;
+    }
   }
 
   /** Undo takes back the last placement, whole. */
@@ -2810,6 +2921,7 @@ class Controller {
         if (t) last = { t, n: ph.placed[t]! };
       }
       if (!last) return;
+      this.cancelAutoAttack();
       this.act({ type: 'unreinforce', player: me, territory: last.t, count: Math.min(last.n, ph.placed[last.t] ?? 0) });
     }
     sel.placeCount = null;
@@ -2827,8 +2939,8 @@ class Controller {
     if (!r.ok) return;
     const after = this.state!;
     if (after.phase.kind === 'occupy') {
-      const ph = after.phase;
-      this.sel.occupyCount = occupyDefault(after, ph.from, ph.to, ph.min, ph.max);
+      // v5.1 E2: all but one moves in by default; the stepper unfolds only if the count is touched.
+      this.sel.occupyCount = after.phase.max;
       this.sel.countTouched = false;
       return;
     }
@@ -2906,11 +3018,9 @@ class Controller {
       return;
     }
     const strip = this.currentStrip();
-    // The Cards sheet's own Trade button works whenever the sheet offers it; a truce offer's small words
-    // (v4: the offer's own line) whenever it shows.
+    // The Cards sheet's own Trade button works whenever the sheet offers it.
     const fromSheet = id === 'trade' && !!this.getViewModel().game?.cards?.trade;
-    const fromOffer = !!strip?.offer?.buttons.some((b) => b.id === id);
-    if (!strip?.buttons.some((b) => b.id === id) && !fromSheet && !fromOffer) return;
+    if (!strip?.buttons.some((b) => b.id === id) && !fromSheet) return;
     this.clearRejection();
     this.runButton(id);
     this.saveMeta();
@@ -2956,66 +3066,169 @@ class Controller {
           this.act({ type: 'fortify', player: me, from: sel.selected, to: sel.target, count });
         }
         break;
+      // v5.1 C: the human truce protocol went (standing replaces it); these ids are never shown.
       case 'truce':
-        // The seats a truce can be offered to light up in the strip; a second tap puts them out.
-        this.truceMode = !this.truceMode && this.truceSeats().length > 0;
-        break;
       case 'acceptTruce':
-      case 'declineTruce': {
-        const o = this.pendingOffer();
-        if (o) this.act({ type: 'answerTruce', player: me, from: o.from, accept: id === 'acceptTruce' });
-        break;
-      }
+      case 'declineTruce':
       case 'watchAis':
       case 'callGame':
         break;
     }
   }
 
-  // --- Diplomacy (v3): offers to the driver, and the driver's own offers -------------------------------
+  // --- Standing (v5.1 C): how each AI seat feels about the reader, and the one gesture -----------------
 
-  /** Diplomacy is on for the driver: a human seat, their own live turn, config.diplomacy. */
-  private diplomacyLive(): boolean {
-    const s = this.state;
-    const d = this.disp;
-    if (!s || !d || !s.config.diplomacy || !this.interactive() || d.currentPlayer !== s.currentPlayer) return false;
-    return s.players[s.currentPlayer]?.kind === 'human';
+  /** The human the seat marks are read for: the driver on a human turn, else the next human to play. */
+  private standingReader(d: GameState): PlayerId | null {
+    return this.grudgeReader(d);
   }
 
-  /**
-   * The offer waiting for the driver's answer (oldest first), or null. Offers are answered on your own turn
-   * (pass and play: an offer to John waits for John's turn; it lapses when that turn ends), and never
-   * over a move that must finish first (an occupy, a forced trade).
-   */
-  private pendingOffer(): ReturnType<typeof truceOffersTo>[number] | null {
-    const s = this.state;
-    if (!s || !this.diplomacyLive()) return null;
-    const ph = s.phase;
-    if (ph.kind === 'occupy' || (ph.kind === 'reinforce' && ph.mustTrade)) return null;
-    if (ph.kind !== 'reinforce' && ph.kind !== 'attack' && ph.kind !== 'fortify') return null;
-    return truceOffersTo(s, s.currentPlayer).find((o) => !!s.players[o.from] && !s.players[o.from].eliminated) ?? null;
+  /** One AI seat's standing fields toward `reader` (tolerates the engine stub: 'even' / '' / false). */
+  private standingFields(d: GameState, ai: PlayerId, reader: PlayerId | null): Pick<SeatChipVM, 'standing' | 'standingReason' | 'canAskPeace' | 'understandingWith'> {
+    const p = d.players[ai];
+    if (!p || p.kind !== 'ai' || p.neutral || p.eliminated) return {};
+    const out: Pick<SeatChipVM, 'standing' | 'standingReason' | 'canAskPeace' | 'understandingWith'> = {};
+    try {
+      // AI-to-AI understandings only; a human's peace is the standing mark ('ally'), not a tie.
+      out.understandingWith = trucePartners(d, ai).filter((x) => d.players[x]?.kind === 'ai' && !d.players[x].eliminated);
+      if (reader === null || !d.players[reader] || d.players[reader].eliminated) return out;
+      out.standing = standingOf(d, ai, reader);
+      out.standingReason = standingReason(d, ai, reader) || null;
+      // Asking is live only on the reader's own turn, on the engine's true state (the board may still be landing).
+      const s = this.state;
+      out.canAskPeace = !!s && this.interactive() && s.currentPlayer === reader && d.currentPlayer === reader && canAskPeace(s, reader, ai);
+    } catch (err) {
+      console.error('[risk] standing failed', err);
+    }
+    return out;
   }
 
-  /** Seats the driver may offer a 3-round truce to now: Attack only, no offer of theirs pending. */
-  private truceSeats(): PlayerId[] {
-    const s = this.state;
-    if (!s || !this.diplomacyLive() || s.phase.kind !== 'attack' || this.pendingOffer()) return [];
-    return truceTargets(s, s.currentPlayer, TRUCE_ROUNDS);
-  }
-
-  /** A lit seat ring was tapped: offer that seat a 3-round no-attack truce. */
-  private proposeTruce(to: PlayerId): void {
-    const s = this.state;
-    if (!s || !this.truceMode || this.now() < this.holdUntil) return;
-    if (!this.truceSeats().includes(to)) return;
-    if (this.busyBlocking()) {
-      this.clickThrough(() => this.proposeTruce(to));
+  /** A seat ring hovered / long-pressed: its reason writes in the one line (null = released). */
+  private showStanding(player: PlayerId | null, hold: boolean): void {
+    if (player === null) {
+      if (this.flash?.kind === 'standing') {
+        this.flash = null;
+        this.lineKey++;
+      }
       return;
     }
-    this.truceMode = false;
+    const d = this.disp;
+    if (!d || this.screen !== 'game' || !d.players[player] || d.players[player].kind !== 'ai') return;
+    const f = this.standingFields(d, player, this.standingReader(d));
+    const text = f.standingReason || (f.standing ? this.plainStanding(d, player, f.standing) : null);
+    if (!text) return;
+    // Hover holds the line until the pointer leaves (a long safety net); a long-press holds a moment.
+    this.flashLine(text, 'standing', hold ? 60_000 : STANDING_MS, player);
+  }
+
+  /** The fallback reason when the engine has none: 'Sage is wary of you'. */
+  private plainStanding(d: GameState, ai: PlayerId, st: Standing): string {
+    const name = pName(d, ai);
+    switch (st) {
+      case 'ally':
+        return `${name} is at peace with you`;
+      case 'even':
+        return `${name} is even with you`;
+      case 'wary':
+        return `${name} is wary of you`;
+      case 'hostile':
+        return `${name} is hostile to you`;
+    }
+  }
+
+  /** 'Ask Sage for peace', confirmed: the engine answers at once (peaceAnswered). One gesture, no protocol. */
+  private askPeace(to: PlayerId): void {
+    const s = this.state;
+    if (!s || !this.interactive() || this.now() < this.holdUntil) return;
+    const me = s.currentPlayer;
+    if (s.players[me]?.kind !== 'human' || !s.players[to] || s.players[to].kind !== 'ai' || s.players[to].eliminated) return;
+    if (this.busyBlocking()) {
+      this.clickThrough(() => this.askPeace(to));
+      return;
+    }
     this.clearRejection();
-    this.act({ type: 'proposeTruce', player: s.currentPlayer, to, rounds: TRUCE_ROUNDS, kind: 'noAttack' });
+    // Not now (asked recently, peace broken, not your main turn): the engine's own line, nothing applied.
+    let can = true;
+    try {
+      can = canAskPeace(s, me, to);
+    } catch {
+      can = true;
+    }
+    const block = can ? null : peaceAskBlockOf(s, me, to);
+    if (block) {
+      this.reject('peace_blocked', block.replace(/\.$/, ''));
+      this.invalidate();
+      return;
+    }
+    const r = this.act({ type: 'askPeace', player: me, to });
+    if (!r.ok) this.reject('peace_refused', r.error && r.error.length <= 60 ? r.error.replace(/\.$/, '') : `You cannot ask ${pName(s, to)} now`);
     this.invalidate();
+  }
+
+  /** The AI's answer, at once, in its light tint: 'Sage agrees · three rounds' / 'Sage refuses · you took Ural'. */
+  private onPeaceAnswered(ev: Extract<GameEvent, { type: 'peaceAnswered' }>, d: GameState): void {
+    const ai = d.players[ev.from]?.kind === 'ai' ? ev.from : ev.to;
+    const human = ai === ev.from ? ev.to : ev.from;
+    const name = pName(d, ai);
+    const said = (truceSentence(d, ev) ?? ev.reason ?? '').trim();
+    const text = said
+      ? said
+      : ev.accepted
+        ? `${name} agrees${SEP}${roundsWord(ev.rounds)}`
+        : `${name} refuses`;
+    this.log('truce', ai, ev.accepted ? `${text}${SEP}peace with ${pName(d, human)}` : `${text}${SEP}asked by ${pName(d, human)}`);
+    this.flashLine(text, 'peace', PEACE_MS, ai);
+  }
+
+  /** Peace broken: by a human ('You broke the peace with Sage'), or by an AI against a human (the room goes cold). */
+  private onPeaceBroken(ev: Extract<GameEvent, { type: 'peaceBroken' }>, d: GameState, skip: boolean): void {
+    const by = d.players[ev.by];
+    const against = d.players[ev.against];
+    if (!by || !against) return;
+    if (by.kind === 'human') {
+      // The somber conquer variant plays with the attack itself; this is the line and the record.
+      const line = `You broke the peace with ${pName(d, ev.against)}`;
+      this.log('truce', ev.by, truceSentence(d, ev) || `${pName(d, ev.by)} broke the peace with ${pName(d, ev.against)}`);
+      if (!this.autoplayOn) this.flashLine(line, 'peace', PEACE_MS);
+      if (against.kind === 'ai') this.voices.aggrieve(ev.against, ev.by, 'truceBroken');
+    } else if (against.kind === 'human') {
+      const line = `${pName(d, ev.by)} broke the peace${SEP}it is hostile now`;
+      this.log('truce', ev.by, truceSentence(d, ev) || `${pName(d, ev.by)} broke the peace with ${pName(d, ev.against)}`);
+      if (!this.autoplayOn) {
+        if (this.isAiDriven(d.currentPlayer)) this.narration = line;
+        else this.flashLine(line, 'peace', PEACE_MS, ev.by);
+        if (!skip) {
+          this.lostKeys[ev.against] = (this.lostKeys[ev.against] ?? 0) + 1;
+          this.lean();
+        }
+      }
+    }
+  }
+
+  /** The Ledger's line when an AI hardens to hostile toward a human: 'Sage is hostile to you · you took Ural'. */
+  private hostileLine(s: GameState, ai: PlayerId, toward: PlayerId): string {
+    let why = '';
+    try {
+      why = standingReason(s, ai, toward) || '';
+    } catch {
+      why = '';
+    }
+    const many = this.humanCount(s) >= 2;
+    const head = `${pName(s, ai)} is hostile to ${many ? pName(s, toward) : 'you'}`;
+    if (!why) return head;
+    // The engine's reason is a whole sentence ('Sage is hostile · you took Ural'): keep only its reason part.
+    const i = why.indexOf(SEP);
+    return i >= 0 ? `${head}${why.slice(i)}` : head;
+  }
+
+  /** An AI-to-AI understanding forms or breaks: said once, in the narration's tint. */
+  private understandingLine(line: string): void {
+    if (this.autoplayOn) return;
+    const d = this.disp;
+    if (d && this.isAiDriven(d.currentPlayer)) {
+      this.narration = line;
+      this.invalidate();
+    } else this.flashLine(line, 'tap', PEACE_MS);
   }
 
   /** A Turn Track click. Past and current segments are inert; a locked one explains itself. */
@@ -3118,16 +3331,15 @@ class Controller {
     if (value !== r.value) {
       this.clearRejection();
       r.set(value);
+    } else if (this.state.phase.kind === 'occupy' && !this.sel.countTouched) {
+      // v5.1 E2: a touch on the folded count unfolds the stepper.
+      this.sel.countTouched = true;
     }
     this.invalidate();
   }
 
   /** Esc / ocean: one level at a time (the cards sheet, the target, the pick). False = nothing to back out of. */
   private backOut(): boolean {
-    if (this.truceMode) {
-      this.truceMode = false;
-      return true;
-    }
     if (this.cardsOpen) {
       this.cardsOpen = false;
       return true;
@@ -3183,8 +3395,8 @@ class Controller {
       if (!repeat) this.dismissReceipt();
       return true;
     }
-    if (!this.menuKeys && (this.confirm || this.overlay || this.screen !== 'game' || this.handoff)) {
-      // src/ui owns keys on menus, overlays, confirms and the hand-off cover.
+    if (!this.menuKeys && (this.confirm || this.overlay || this.screen !== 'game')) {
+      // src/ui owns keys on menus, overlays and confirms.
       return false;
     }
     if (key === 'Escape') {
@@ -3222,10 +3434,6 @@ class Controller {
     if (!this.state || (key !== 'Enter' && key !== ' ')) return false;
     if (repeat) return true;
     if (this.turnBanner) this.dismissTurnBanner();
-    if (this.handoff) {
-      this.intent({ type: 'handoffAccept' });
-      return true;
-    }
     if (!this.interactive()) {
       this.skipWatched();
       return true;
@@ -3301,13 +3509,20 @@ class Controller {
       case 'tapContinent':
         this.tapContinent(i.id);
         break;
-      case 'tapCup': {
-        const d = this.disp;
-        if (!d || this.screen !== 'game') break;
-        this.cue('rattle');
-        if (d.phase.kind !== 'game-over') this.flashLine(`${poss(pName(d, d.currentPlayer))} turn`);
+      case 'tapCup':
+        // v5.1 B: the cup went; a stray tap from an older HUD does nothing.
         break;
-      }
+      case 'seatStanding':
+        // Hover / long-press of an AI's seat ring: its reason in the one line until released.
+        this.showStanding(i.player, true);
+        break;
+      case 'askPeace':
+        this.askPeace(i.to);
+        break;
+      case 'more':
+        if (i.scope === 'settings') this.settingsMore = i.open;
+        else this.newGameMore = i.open;
+        break;
       case 'tapEnso': {
         const d = this.disp;
         if (!d || this.screen !== 'game') break;
@@ -3451,12 +3666,7 @@ class Controller {
         break;
       }
       case 'handoffAccept':
-        if (this.handoff) {
-          this.handoff = null;
-          this.guardUntil = this.now() + 250;
-          // The cover carried the receipt; starting the turn puts it away.
-          this.dismissReceipt();
-        }
+        // v5.1 A: the cover went; an older HUD's tap is a no-op.
         break;
       case 'dismissTurnBanner':
         this.dismissTurnBanner();
@@ -3489,7 +3699,7 @@ class Controller {
         this.setSeatController(i.player, i.kind, i.difficulty);
         break;
       case 'proposeTruce':
-        this.proposeTruce(i.to);
+        // v5.1 C: the human truce protocol went (standing and 'Ask X for peace' replace it).
         break;
       case 'reloadForUpdate':
         this.save();
@@ -3665,7 +3875,7 @@ class Controller {
 
   private aiShouldAct(): boolean {
     const s = this.state;
-    if (!s || this.screen !== 'game' || this.overlay || this.confirm || this.handoff) return false;
+    if (!s || this.screen !== 'game' || this.overlay || this.confirm) return false;
     if (s.phase.kind === 'game-over') return false;
     return this.isAiDriven(s.currentPlayer);
   }
@@ -3757,8 +3967,7 @@ class Controller {
     }
 
     if (ph === 'setup-place' || ph === 'reinforce') {
-      // v5 D5: a turn that will attack gives part of its opening think to the cup's rattle (same total).
-      if (ctx.first && ph === 'reinforce') await this.sleep((ctx.attacks ? THINK_TURN_START - (RATTLE_MS - AI_GAP_MS) : THINK_TURN_START) * k);
+      if (ctx.first && ph === 'reinforce') await this.sleep(THINK_TURN_START * k);
       ctx.first = false;
       if (this.state !== s) return; // something else moved the game
       const collected: { ev: GameEvent; after: GameState; end: boolean }[] = [];
@@ -3794,14 +4003,9 @@ class Controller {
     if (ph === 'attack') {
       const a0 = this.chooseFor(s);
       if (isAttackAction(a0)) {
-        // One even breath before each engagement, so the line is read before the next begins. v5 D5: before the
-        // turn's first attack the cup rattles once (intent you can see), and the breath is the rattle's.
-        if (!ctx.rattled) {
-          ctx.rattled = true;
-          const pan = this.panOf(a0.from);
-          if (!this.autoplayOn) this.cue('rattle', pan !== null ? { pan } : undefined);
-          await this.sleep((ctx.first ? THINK_TURN_START : RATTLE_MS) * k);
-        } else await this.sleep((ctx.first ? THINK_TURN_START : AI_GAP_MS) * k);
+        // One even breath before each engagement, so the line is read before the next begins. (v5.1 B: the cup's
+        // rattle went with the cup.)
+        await this.sleep((ctx.first ? THINK_TURN_START : AI_GAP_MS) * k);
         ctx.first = false;
         if (this.state !== s || !this.aiShouldAct()) return;
         await this.aiEngagement(a0, pace);
@@ -4005,11 +4209,12 @@ class Controller {
       settings: this.settings,
       reducedMotion: this.reducedMotion(),
       save: this.saveSummary,
-      newGame: { ...buildNewGameVM(this.draft), ...newGameExtras(this.draft) },
+      newGame: { ...buildNewGameVM(this.draft), ...newGameExtras(this.draft), advancedOpen: this.newGameMore },
       game: this.buildGame(),
       victory: this.victory,
       rulesNotes: this.rulesNotes(),
       boardLost: this.boardLost,
+      settingsGroups: { primary: SETTINGS_PRIMARY, more: SETTINGS_MORE, moreOpen: this.settingsMore },
     };
   }
 
@@ -4036,9 +4241,8 @@ class Controller {
       receipt: this.receiptVM(),
       ...(this.updateReady ? { updateReady: true } : {}),
       banner,
-      handoff: this.handoff
-        ? { seat: seatRef(d, this.handoff.player), subline: this.handoffSubline(this.handoff.player), mission: this.missionFor(s, this.handoff.player) }
-        : null,
+      // v5.1 A: never a cover; the turn passes with the one line and the seat ring.
+      handoff: null,
       confirm: this.confirm,
       seatActions: this.buildSeatActions(d),
       viewMoved: this.viewMoved,
@@ -4050,11 +4254,10 @@ class Controller {
   }
 
   /**
-   * One gold (docs/INK.md B2.1): the hand-off ring → the open Cards sheet's trade → the pending commit
-   * button → the recommended track segment → the current segment. Never two.
+   * One gold (docs/INK.md B2.1): the open Cards sheet's trade → the pending commit button → the recommended
+   * track segment → the current segment. Never two.
    */
   private buildGold(d: GameState, strip: StripVM, cards: CardsVM | null): GoldVM {
-    if (this.handoff) return { kind: 'handoff' };
     if (this.screen !== 'game' || d.phase.kind === 'game-over') return null;
     if (cards?.open && cards.trade) return { kind: 'cardsTrade' };
     // Gold is "now" (INK B2.1, A9): while the board's gold is in flight (a stroke being drawn, the dice
@@ -4088,15 +4291,6 @@ class Controller {
     }
   }
 
-  private handoffSubline(p: PlayerId): string {
-    const s = this.state!;
-    const r = reinforcementsFor(s, p);
-    const n = s.players[p].cards.length;
-    const parts = [`+${r.total} armies waiting`, n === 1 ? '1 card' : `${n} cards`];
-    if (bestSet(s, p)) parts.push('set ready');
-    return parts.join(SEP);
-  }
-
   /** Rules sheet, 'This game': this game's rules, or the New game draft's before a game starts. */
   private rulesNotes(): string[] {
     const s = this.state;
@@ -4117,7 +4311,8 @@ class Controller {
   }
 
   private buildSeats(d: GameState): SeatChipVM[] {
-    const lit = this.truceMode ? this.truceSeats() : [];
+    // v5.1 C: each AI seat's standing toward the reader (the driver on a human turn, else the next human).
+    const sr = this.meta && !this.autoplayOn ? this.standingReader(d) : null;
     // v5 C2: the reader's grudges: per seat, the territories it took from them, net of the ones taken back.
     const reader = this.meta ? this.grudgeReader(d) : null;
     const ticks = reader !== null ? grudgeTicks(this.story(), reader) : {};
@@ -4125,7 +4320,8 @@ class Controller {
     return d.players.map((p) => ({
       grudgeTicks: p.id === reader ? 0 : (ticks[p.id] ?? 0),
       voiceLine: said[p.id] ?? null,
-      ...this.seatExtras(d, p.id, lit),
+      ...this.seatExtras(d, p.id),
+      ...this.standingFields(d, p.id, sr),
       seat: seatRef(d, p.id),
       current: p.id === d.currentPlayer && d.phase.kind !== 'game-over',
       eliminated: p.eliminated,
@@ -4138,19 +4334,21 @@ class Controller {
     }));
   }
 
-  /** v3 seat marks: the neutral flag, an AI's personality, its strongest grudge (≥ 2), a lit truce ring. */
-  private seatExtras(d: GameState, id: PlayerId, lit: PlayerId[]): Pick<SeatChipVM, 'neutral' | 'personality' | 'grudge' | 'truceTarget'> {
+  /**
+   * v3 seat marks: the neutral flag, an AI's personality (v5.1 D: only once it has spoken), its strongest
+   * grudge (≥ 2).
+   */
+  private seatExtras(d: GameState, id: PlayerId): Pick<SeatChipVM, 'neutral' | 'personality' | 'grudge'> {
     const p = d.players[id];
-    const out: Pick<SeatChipVM, 'neutral' | 'personality' | 'grudge' | 'truceTarget'> = {};
+    const out: Pick<SeatChipVM, 'neutral' | 'personality' | 'grudge'> = {};
     if (p.neutral) out.neutral = true;
     if (p.kind === 'ai' && !p.neutral && p.personality) {
       const info = PERSONALITIES[p.personality];
-      out.personality = { name: info.name, line: info.line };
+      if (this.meta?.revealed?.includes(id)) out.personality = { name: info.name, line: info.line };
       const top = p.eliminated ? null : grudgesOf(d, id)[0];
       const at = top && top.value >= 2 ? d.players[top.seat] : null;
       if (at && !at.eliminated && !at.neutral) out.grudge = seatRef(d, top!.seat);
     }
-    if (lit.includes(id)) out.truceTarget = true;
     return out;
   }
 
@@ -4177,7 +4375,7 @@ class Controller {
     if (!interactive) {
       if (d.phase.kind === 'game-over') idle = `${pName(d, d.phase.winner)} wins`;
       else if (this.screen === 'victory') idle = 'The game is over';
-      else if (!this.handoff) {
+      else {
         // What happened, as it lands (set from the events); before anything has, whose turn it is.
         narration =
           this.narration ?? (d.phase.kind === 'setup-claim' && d.config.setupMode !== 'draft' ? 'Dealing territories' : `${poss(pName(d, me))} turn`);
@@ -4196,7 +4394,7 @@ class Controller {
       sel,
       interactive,
       narration,
-      handoff: this.handoff ? this.handoff.player : null,
+      handoff: null,
       humansOut: this.allHumansOut,
       idleLine: idle,
       rejection: interactive && this.rejection ? { text: this.rejection.text, key: this.rejection.key } : null,
@@ -4219,20 +4417,8 @@ class Controller {
       strip.buttons = strip.buttons.map((b) => (b.primary ? { ...b, primary: false } : b));
       strip.track = { ...strip.track, primary: false };
     }
-    // Diplomacy (v3; v4 A5 the review's bug). An offer to the driver never takes the line, the count or the
-    // buttons: it rides as a secondary line with 'Accept' / 'Decline' as small words, and `Place N` stays
-    // the one gold. Otherwise, in Attack with nothing armed, `Truce` sits bare in the secondary slot while
-    // someone can take one.
-    let out = strip;
-    if (interactive) {
-      const offer = this.pendingOffer();
-      if (offer) {
-        out = withOffer(strip, this.offerSentence(d, offer));
-      } else if (strip.mode === 'attack' && strip.buttons.length === 0 && this.truceSeats().length > 0) {
-        out.buttons = [{ id: 'truce', label: 'Truce', primary: false }];
-        if (this.truceMode && strip.lineKind !== 'rejection') out.line = `Offer a ${TRUCE_ROUNDS}-round truce${SEP}${click()} a seat`;
-      }
-    }
+    // v5.1 C: no offer line, no Truce word: standing lives on the seat marks and the one gesture.
+    const out = strip;
     // v5 E8: desktop hover odds. A source is picked and the pointer rests on an enemy neighbour: the line reads
     // the armed odds before the click, and gives the instruction back when the pointer leaves.
     const hv = this.hoverTile;
@@ -4243,8 +4429,10 @@ class Controller {
       out.line = attackLine(d, sel.selected, hv, this.settings.showWinChance);
     }
     // v5 F: a clickable's line holds the strip a moment (never over a refused click's reason).
-    if (this.flash && this.flash.until > this.now() && out.lineKind !== 'rejection' && !this.handoff) {
+    if (this.flash && this.flash.until > this.now() && out.lineKind !== 'rejection') {
       out.line = this.flash.text;
+      // v5.1 C: a standing reason or a peace answer is set in that AI's light tint.
+      if (this.flash.seat !== undefined && d.players[this.flash.seat]) out.voice = seatRef(d, this.flash.seat);
     } else if (this.voiceNow && !interactive && out.line === this.voiceNow.text && d.players[this.voiceNow.seat]) {
       // v5 D4: the AI's own voice, set in its light tint.
       out.voice = seatRef(d, this.voiceNow.seat);
@@ -4759,6 +4947,25 @@ class Controller {
     return this.voices.log.map((e) => ({ ...e }));
   }
 
+  /** Test hook (v5.1 C): the seat marks' standings, as the VM shows them. */
+  standingHook(): StandingHook[] {
+    const g = this.getViewModel().game;
+    const d = this.disp;
+    if (!g || !d) return [];
+    const reader = this.autoplayOn ? null : this.standingReader(d);
+    return g.seats.map((c) => ({
+      seat: c.seat.id,
+      name: c.seat.name,
+      kind: c.seat.kind,
+      standing: c.standing ?? null,
+      reason: c.standingReason ?? null,
+      canAskPeace: !!c.canAskPeace,
+      understandingWith: [...(c.understandingWith ?? [])],
+      personality: c.personality?.name ?? null,
+      reader,
+    }));
+  }
+
   /** Test hook (v4): the loser's rings on the board now. */
   loserRingsHook(): NonNullable<BoardHighlights['loserRings']> {
     return this.loserRings();
@@ -4776,7 +4983,7 @@ class Controller {
     const b = g?.battle;
     const tr = strip?.track;
     const step = tr?.segments.find((x) => x.state === 'current')?.label ?? '';
-    // The one gold thing's label (GameVM.gold), as the HUD draws it; the hand-off ring has no label.
+    // The one gold thing's label (GameVM.gold), as the HUD draws it.
     const gd = g?.gold ?? null;
     const brass =
       !gd || gd.kind === 'handoff'
@@ -4810,7 +5017,7 @@ class Controller {
       viewMoved: !!g?.viewMoved,
       gold: !g?.gold ? null : g.gold.kind === 'button' ? `button:${g.gold.id}` : g.gold.kind === 'segment' ? `segment:${g.gold.seg}` : g.gold.kind,
       bannerLine: g?.banner?.line ?? null,
-      offer: strip?.offer ? { text: strip.offer.text, buttons: strip.offer.buttons.map((x) => x.label) } : null,
+      offer: null,
       receipt: g?.receipt ? { title: g.receipt.title, lines: g.receipt.lines.map((l) => l.text), summary: g.receipt.summary } : null,
     };
   }
@@ -4845,7 +5052,7 @@ class Controller {
       this.validateSel();
       const s = this.state!;
       if (s.phase.kind === 'occupy' && this.sel.occupyCount === null) {
-        this.sel.occupyCount = occupyDefault(s, s.phase.from, s.phase.to, s.phase.min, s.phase.max);
+        this.sel.occupyCount = s.phase.max;
       }
       this.invalidate();
       return { ok: true };
@@ -4943,6 +5150,7 @@ export function createController(opts: { board: BoardView; audio: AudioEngine } 
     replay: () => c.replayHook(),
     holding: () => c.holdingHook(),
     voiceLines: () => c.voiceLinesHook(),
+    standing: () => c.standingHook(),
   };
   return {
     getViewModel: () => c.getViewModel(),

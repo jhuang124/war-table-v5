@@ -253,7 +253,7 @@ describe('A1 the readable reel (stub board pacing)', () => {
     c.dispose();
   }, 30_000);
 
-  it('A2: every seat gets the cup (cupSlide, cupSet, turnPassed); AI-vs-AI plays at distance, never at half volume', async () => {
+  it('A2 / v5.1 B: every turn passes with one wood set-down (cupSet) and turnPassed, no cup slide or rattle; AI-vs-AI plays at distance, never at half volume', async () => {
     const { c, au } = make();
     const plays: { name: string; opts?: Record<string, unknown> }[] = [];
     (au.a as { play: (n: string, o?: Record<string, unknown>) => void }).play = (name, opts) => void plays.push({ name, opts });
@@ -261,7 +261,8 @@ describe('A1 the readable reel (stub board pacing)', () => {
     await until(() => (c.hooks.getState()?.round ?? 0) > 2, 200_000, 100);
     const turns = c.hooks.metrics().turns.length;
     expect(au.calls.filter((x) => x === 'cue:cupSet').length).toBeGreaterThanOrEqual(turns);
-    expect(au.calls.filter((x) => x === 'cue:cupSlide').length).toBeGreaterThanOrEqual(turns);
+    expect(au.calls.filter((x) => x === 'cue:cupSlide')).toEqual([]);
+    expect(au.calls.filter((x) => x === 'cue:rattle')).toEqual([]);
     expect(au.calls.filter((x) => x === 'turnPassed:false').length).toBeGreaterThanOrEqual(turns);
     expect(plays.some((p) => p.opts?.volume === 0.5)).toBe(false);
     expect(plays.some((p) => p.opts?.distance === 0.6)).toBe(true);
@@ -452,8 +453,8 @@ function truceBoard(mut?: (s: GameState) => void): GameState {
   return s;
 }
 
-describe('A5 a truce offer never hides Place N', () => {
-  it('with an offer pending: pick a territory → the stepper and `Place N` (the one gold); the offer rides underneath', async () => {
+describe('A5 / v5.1 C a pending offer in the state shows nothing', () => {
+  it('with an old offer in the state: no offer line; pick a territory → the stepper and `Place N` (the one gold)', async () => {
     const s = truceBoard((st) => {
       st.diplomacy = { truces: [], offers: [{ from: 2, to: 0, rounds: 3, kind: 'noAttack', turn: 8 }], proposedOn: { 2: 8 }, rebuffs: [] };
     });
@@ -462,7 +463,7 @@ describe('A5 a truce offer never hides Place N', () => {
     const { c, fb } = make({ kv });
     c.intent({ type: 'continue' });
     await vi.advanceTimersByTimeAsync(50);
-    expect(c.hooks.ui().offer?.text).toMatch(/^Priya proposes a truce with John · 3 rounds · you share a border in /);
+    expect(c.hooks.ui().offer).toBeNull();
     fb.click('ural');
     await vi.advanceTimersByTimeAsync(30);
     const u = c.hooks.ui();
@@ -470,14 +471,10 @@ describe('A5 a truce offer never hides Place N', () => {
     expect(u.primary).toBe('Place 3');
     expect(u.gold).toBe('button:place');
     expect(u.line).toBe('Place on Ural');
-    expect(u.offer?.buttons).toEqual(['Decline', 'Accept']);
+    expect(u.offer).toBeNull();
     c.intent({ type: 'button', id: 'place' });
     await vi.advanceTimersByTimeAsync(400);
     expect(c.hooks.getState()!.territories.ural.armies).toBe(11);
-    // …and the offer can still be answered from its own line.
-    c.intent({ type: 'button', id: 'declineTruce' });
-    await vi.advanceTimersByTimeAsync(400);
-    expect(c.hooks.getState()!.diplomacy?.offers.length).toBe(0);
     c.dispose();
   });
 });
@@ -492,23 +489,8 @@ describe('A5 the AI proposes rarely, and says why', () => {
     return s;
   };
 
-  it('a fresh pair: an offer, with a reason it can state', () => {
-    const s = base();
-    const p = chooseTruceProposal(s, 2);
-    expect(p).toMatchObject({ from: 2, to: 0 });
-    expect(truceReason(s, 2, 0)).toMatch(/^you share a border in (Asia|Europe)$/);
-    expect(truceReason(s, 0, 2)).toMatch(/^they share a border in /);
-  });
-
-  it('at most once per 3 rounds from a seat (so per pair), whatever came of it', () => {
-    const s = base();
-    const seats = s.players.length;
-    s.diplomacy = { truces: [], offers: [], proposedOn: { 2: s.turn - 2 * seats }, rebuffs: [] };
-    expect(chooseTruceProposal(s, 2)).toBeNull();
-    s.diplomacy.proposedOn = { 2: s.turn - 3 * seats };
-    expect(chooseTruceProposal(s, 2)).not.toBeNull();
-  });
-
+  // v5.1 C: 'a fresh pair: an offer, with a reason' and 'at most once per 3 rounds from a seat' retired: humans
+  // never receive proposals any more (standing and 'Ask X for peace' replace the offer protocol).
   it('a human hears one offer at a time, and none the round after one', () => {
     const s = base();
     s.diplomacy = { truces: [], offers: [{ from: 1, to: 0, rounds: 3, kind: 'noAttack', turn: s.turn - 1 }], proposedOn: {}, rebuffs: [] };
