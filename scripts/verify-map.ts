@@ -3,6 +3,9 @@
 //   npm run verify:map -- --map true-world
 //   npm run verify:map -- --map <id> --no-preview
 //   npm run verify:map -- --map <id> --thumb    (also rewrite maps/<id>/thumb.png)
+//   npm run verify:map -- --map <id> --no-sim   (skip the balance pass: `npm run sim 30 -- --map <id>`)
+// Besides the pass/fail checks it prints balance notes (each continent's bonus against its size and the
+// borders it must hold, with a suggested value) and, unless --no-sim, runs 30 AI games on the map.
 // Exits non-zero on any failure. docs/MAPS.md lists what each check means and what it can't see.
 
 import { createHash } from 'node:crypto';
@@ -13,9 +16,10 @@ import type { BoardGeometry, PolygonGeom } from '../src/map/types';
 import {
   ringArea, pointInPoly, distToPolyBoundary, segmentsCross, segDist2, SegGrid, polylineLength, type P,
 } from './map/geom';
-import { renderPreviews } from './map/preview';
+import { renderPreviews, renderThumb } from './map/preview';
 import { ROOT, lintPack, loadPack, mapArg, pairKey as key } from './map/pack';
-import type { MapRecipe } from './map/recipe';
+import { projectionOf, type MapRecipe } from './map/recipe';
+import { balanceNotes, runSim } from './map/balance';
 
 /**
  * sha256 of the classic board.json as it shipped before map packs (src/map/board.json at d3717cc).
@@ -30,6 +34,21 @@ const MAX_LANE_LEN = 14;
 const MAX_FOREIGN = 0.3; // lane length allowed over land of unrelated territories
 const MIN_WATER = 0.6; // share of each lane's length that must be over open water (visible water)
 
+// --all (npm run verify:maps): every folder under maps/ with a pack.json, one child run each.
+if (process.argv.includes('--all')) {
+  const { readdirSync } = await import('node:fs');
+  const { spawnSync } = await import('node:child_process');
+  const rest = process.argv.slice(2).filter((a) => a !== '--all');
+  const ids = readdirSync(resolve(ROOT, 'maps')).filter((d) => existsSync(resolve(ROOT, 'maps', d, 'pack.json'))).sort();
+  const bad: string[] = [];
+  for (const m of ids) {
+    const r = spawnSync(process.execPath, [...process.execArgv, process.argv[1], '--map', m, ...rest], { stdio: 'inherit' });
+    if (r.status !== 0) bad.push(m);
+  }
+  console.log(`\nverify:maps: ${ids.length - bad.length}/${ids.length} packs pass${bad.length ? `; failing: ${bad.join(', ')}` : ''}`);
+  process.exit(bad.length ? 1 : 0);
+}
+
 const id = mapArg();
 const pack = loadPack(id);
 const MIN_CLEARANCE = pack.manifest.presentation.anchorClearance;
@@ -42,6 +61,8 @@ const failures: string[] = [];
 const notes: string[] = [];
 const fail = (m: string) => failures.push(m);
 for (const p of lintPack(pack)) fail(p);
+if (/\bTODO\b/.test(pack.manifest.description)) notes.push('NOTE: pack.json description is still the scaffold TODO (docs/MAP-AUTHORING.md step h)');
+if (pack.manifest.hidden) notes.push(`NOTE: ${id} is hidden (not in the picker; ?map=${id} loads it). Remove "hidden" when the author checklist is done.`);
 
 const boardPath = resolve(pack.dir, 'board.json');
 if (!existsSync(boardPath)) {
@@ -54,12 +75,12 @@ const board = JSON.parse(bytes.toString('utf8')) as BoardGeometry;
 if (id === 'classic' && sha !== CLASSIC_SHA256) fail(`classic board.json changed: sha256 ${sha} ≠ the pre-pack board ${CLASSIC_SHA256}`);
 
 // ------------------------------------------------------------------ engine compatibility
-// The engine plays the classic rules + topology only (src/engine/mapData.ts). A pack with its own
-// rules can be built and verified, but not registered as playable until the engine reads rules per game.
+// A pack with its own rules is played through the v6 per-game map definition (src/engine/mapData.ts
+// mapDefOf); it needs the engine, renderer and HUD to read that instead of the classic constants.
 if (pack.rulesFrom !== 'classic') {
   const c = loadPack('classic');
   const same = JSON.stringify(c.rules) === JSON.stringify(pack.rules) && JSON.stringify(c.topology) === JSON.stringify(pack.topology);
-  if (!same) notes.push(`NOT PLAYABLE YET: ${id} has its own rules/topology; the engine plays classic's only (docs/MAPS.md, "A new board")`);
+  if (!same) notes.push(`NOTE: ${id} has its own rules/topology; it plays only where the engine reads mapDefOf(config) (docs/MAPS.md, "A new board")`);
 }
 
 // ------------------------------------------------------------------ presence
@@ -393,6 +414,20 @@ console.log(`land borders: ${terrLand.size}, sea lanes: ${laneSet.size}, borders
 console.log('sea lanes (length in board units):');
 for (const r of laneRows) console.log(r);
 
+// ------------------------------------------------------------------ balance (notes, then the sim)
+{
+  const b = balanceNotes(pack, board);
+  console.log('\nbalance (notes, not failures):');
+  for (const r of b.rows) console.log(r);
+  notes.push(...b.notes);
+}
+if (!process.argv.includes('--no-sim')) {
+  const r = await runSim(id, 30);
+  if (r.ok) console.log(`sim: 30 AI games on ${id} finished · ${r.rounds}`);
+  else fail(`sim: npm run sim 30 -- --map ${id} did not finish cleanly:\n${r.tail}`);
+  if (r.note) notes.push(r.note);
+}
+
 if (!process.argv.includes('--no-preview')) {
   const recipePath = resolve(ROOT, 'scripts/map/packs', id, 'index.ts');
   const recipe = existsSync(recipePath) ? ((await import(pathToFileURL(recipePath).href)) as { recipe: MapRecipe }).recipe : null;
@@ -401,10 +436,13 @@ if (!process.argv.includes('--no-preview')) {
     outDir: resolve(ROOT, 'artifacts/map', id),
     minClear: MIN_CLEARANCE,
     shots: recipe?.previews ?? [],
-    project: recipe ? (lon, lat) => recipe.projection.forward(recipe.projection.unwrapLon(lon), lat) : undefined,
+    project: recipe ? (lon, lat) => projectionOf(recipe).forward(projectionOf(recipe).unwrapLon(lon), lat) : undefined,
     thumbPath: thumb && (process.argv.includes('--thumb') || !existsSync(thumb)) ? thumb : undefined,
   });
   console.log(`previews: ${files.map((f) => f.replace(ROOT + '/', '')).join(', ')}`);
+} else if (process.argv.includes('--thumb') && pack.manifest.thumbnail) {
+  await renderThumb(board, pack, resolve(pack.dir, pack.manifest.thumbnail));
+  console.log(`thumbnail: maps/${id}/${pack.manifest.thumbnail}`);
 }
 
 for (const n of notes) console.log(`\n${n}`);

@@ -1,0 +1,26 @@
+{
+  "prompt": "Keep the composition, board, territories, figures, smoke and dice exactly as they are. Change only two things: (1) replace the gold arrow with a single confident gold brush stroke that has NO arrowhead — it tapers and splits into dry-brush bristle marks at its tip where it crosses into the red territory; (2) replace the heavy wooden bowl with a quiet, thin, translucent dice tray: a faint silver-ivory ink ring drawn on the paper with a slightly darker wash inside, so the dice sit on the board with no physical object around them. Make the figures a little paler ivory, like brush ink on paper.",
+  "aspect": null,
+  "transparent": false,
+  "refs": [
+    {
+      "path": "/Users/jhuang/Desktop/JH-Projects/risk3d/_claude/v2-frames/3-the-fight.png",
+      "sha256": "d65e1d1c6b96c51683dbf76aeb086ceb247047788b315ca4b669c9c863f58307"
+    }
+  ],
+  "session": null,
+  "variant": null,
+  "backend": "direct",
+  "model": "gpt-image-2 (service-selected)",
+  "reportedQuality": "medium",
+  "reportedSize": "1672x941",
+  "generationId": "1a1fadb5-1e7f-4d25-aff5-d706f68140b6",
+  "requestId": "a45afeab-11e7-4956-b294-7928768a3a12",
+  "codexVersion": "codex-cli 0.153.4",
+  "width": 1672,
+  "height": 941,
+  "bytes": 2238938,
+  "attempts": 1,
+  "durationMs": 51740,
+  "createdAt": "2026-09-30T02:24:55.920Z"
+}

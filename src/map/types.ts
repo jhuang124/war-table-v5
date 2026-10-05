@@ -91,9 +91,13 @@ export interface MapManifest {
   /** Generated preview image beside pack.json (build:map writes it), or absent. */
   thumbnail?: string;
   /**
-   * Optional (additive, v6): registered for the engine and tests but never offered in the New-game picker
-   * (listMaps skips it) and never booted by `?map=` or a save. A hidden pack may ship no board.json
-   * (maps/test-twelve, the engine's synthetic test board, ships none).
+   * Optional (additive, v6): picker order, ascending; ties and absent (= 100) sort by id. Classic is 0,
+   * true-world 1.
+   */
+  order?: number;
+  /**
+   * Optional (additive, v6): true = playable by `?map=<id>` (dev / e2e) but not offered in the picker
+   * (test packs, and a new map until it passes the author checklist). Absent = shown.
    */
   hidden?: boolean;
   presentation: MapPresentation;

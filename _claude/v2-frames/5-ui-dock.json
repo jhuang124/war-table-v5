@@ -1,0 +1,30 @@
+{
+  "prompt": "UI design frame for a premium ink-and-wash world-conquest board game: the bottom third of the screen, over the lower edge of the painted indigo map (South America and Africa softly visible above, as in the first reference). The controls are drawn as ink, not as app widgets: there are NO rounded rectangles, no pill buttons, no boxes, no panels. A single hairline gold rule runs across the screen with a small hand-drawn gold ring at the current phase, as in the second reference. Phase words sit along the rule in an elegant serif, ivory: \"Place\", \"Attack\", \"Fortify\", \"End turn\" — the active one, \"Attack\", is underlined by a short gold brush stroke; the others are quiet. To the right, a separate word \"Blitz\" with a small ink-brushed circle behind it. At far left, a small ivory brush mark in vermilion beside the serif text \"Vermilion · 12 armies\". Readable, minimal, calm; every mark is information. No other text, no icons, no kanji, no seals, no blossoms.",
+  "aspect": "16:9",
+  "transparent": false,
+  "refs": [
+    {
+      "path": "/Users/jhuang/Desktop/JH-Projects/risk3d/_claude/moodboard/chosen-silver-ink-board.png",
+      "sha256": "0407a4d84afe4497f5656738480efa29d6a93b67768c0daa374ea56818b73cce"
+    },
+    {
+      "path": "/Users/jhuang/Desktop/JH-Projects/risk3d/_claude/moodboard/john-ref-1-gold-rule.png",
+      "sha256": "667b477caf436f314b8ba0443f25c22918bd8a4db1e5d49476490ea8da026df6"
+    }
+  ],
+  "session": null,
+  "variant": null,
+  "backend": "direct",
+  "model": "gpt-image-2 (service-selected)",
+  "reportedQuality": "medium",
+  "reportedSize": "1672x941",
+  "generationId": "e06f8ba1-db01-4c02-99ef-30cce81aa46b",
+  "requestId": "cd68795d-c948-4644-96b0-1c1362b5487f",
+  "codexVersion": "codex-cli 0.153.4",
+  "width": 1672,
+  "height": 941,
+  "bytes": 2183272,
+  "attempts": 1,
+  "durationMs": 44523,
+  "createdAt": "2026-09-30T02:22:47.044Z"
+}

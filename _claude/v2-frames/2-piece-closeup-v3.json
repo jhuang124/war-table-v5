@@ -1,0 +1,30 @@
+{
+  "prompt": "Keep the board, camera, territories, colors, the numeral ring and depth of field exactly as they are. Change only the figures: repaint the soldiers, rider and cannon as PALE IVORY / bone-white brush-ink figures like the ones in the reference image — light-colored, softly glowing against the pigment, loose brushwork, no dark brown or sepia shading, no engraved detail. Under each group add a soft darker blot of the territory's own color soaking into the paper.",
+  "aspect": null,
+  "transparent": false,
+  "refs": [
+    {
+      "path": "/Users/jhuang/Desktop/JH-Projects/risk3d/_claude/v2-frames/2-piece-closeup-v2.png",
+      "sha256": "5296790b81884a6d1b158baa0f73c62cbd6a1a17769a335027bd0f84e6dd08d6"
+    },
+    {
+      "path": "/Users/jhuang/Desktop/JH-Projects/risk3d/_claude/moodboard/units-place.png",
+      "sha256": "2e81ec361e49f1dc7d148446f163e34a85089f8162edd174d873f8cbf03ad187"
+    }
+  ],
+  "session": null,
+  "variant": null,
+  "backend": "direct",
+  "model": "gpt-image-2 (service-selected)",
+  "reportedQuality": "medium",
+  "reportedSize": "1672x941",
+  "generationId": "b22260f3-3652-4644-b200-f8012ef4e474",
+  "requestId": "7eed921b-d191-4ff2-b789-7af9f41d8ce5",
+  "codexVersion": "codex-cli 0.153.4",
+  "width": 1672,
+  "height": 941,
+  "bytes": 2209849,
+  "attempts": 1,
+  "durationMs": 41754,
+  "createdAt": "2026-09-30T02:25:50.295Z"
+}

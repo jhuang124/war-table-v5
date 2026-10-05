@@ -3,7 +3,8 @@
 //   npm run build:map -- --map true-world
 // Reads maps/<id>/pack.json, rules.json, topology.json (or the pack it extends) and the recipe in
 // scripts/map/packs/<id>/index.ts; the pipeline itself is scripts/map/pipeline.ts. docs/MAPS.md has
-// the format. Then run `npm run verify:map -- --map <id>`.
+// the format. Also renders maps/<id>/thumb.png (the picker tile; --no-thumb skips it).
+// Then run `npm run verify:map -- --map <id>`.
 
 import { existsSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
@@ -11,6 +12,7 @@ import { pathToFileURL } from 'node:url';
 import { ROOT, lintPack, loadPack, mapArg } from './map/pack';
 import { buildBoard } from './map/pipeline';
 import type { MapRecipe } from './map/recipe';
+import { renderThumb } from './map/preview';
 
 const t0 = Date.now();
 const log = (...a: unknown[]) => console.log(`[${((Date.now() - t0) / 1000).toFixed(1)}s]`, ...a);
@@ -38,3 +40,7 @@ writeFileSync(out, json);
 const verts = Object.values(board.territories).reduce(
   (s, t) => s + t.polygons.reduce((q, pg) => q + pg.outer.length + pg.holes.reduce((u, h) => u + h.length, 0), 0), 0);
 log(`wrote ${out} (${(json.length / 1024).toFixed(0)} KB, ${verts} territory vertices)`);
+if (pack.manifest.thumbnail && !process.argv.includes('--no-thumb')) {
+  await renderThumb(board, pack, resolve(pack.dir, pack.manifest.thumbnail));
+  log(`wrote maps/${id}/${pack.manifest.thumbnail} (480 × 300)`);
+}

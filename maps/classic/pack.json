@@ -4,6 +4,7 @@
   "name": "Classic",
   "description": "The board you know.",
   "thumbnail": "thumb.png",
+  "order": 0,
   "presentation": {
     "anchorClearance": 1.3
   }

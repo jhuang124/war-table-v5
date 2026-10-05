@@ -8,28 +8,33 @@ and **true-world** (the same 42 territories and rules on a truer world map). A g
 
 | File | Who writes it | What it holds |
 |---|---|---|
-| `pack.json` | author | Manifest + presentation: `id`, `name`, one-line `description` for the picker, `extends` (take rules + topology from another pack), `thumbnail`, `presentation.anchorClearance` (army disc room, board units), optional `presentation.anchorOverhang` (armies may overhang water), optional `presentation.home` (camera home rectangle; not read by the renderer yet). |
+| `pack.json` | author | Manifest + presentation: `id`, `name`, one-line `description` for the picker, `extends` (take rules + topology from another pack), `thumbnail`, `presentation.anchorClearance` (army disc room, board units), optional `presentation.anchorOverhang` (armies may overhang water), optional `presentation.home` (camera home rectangle; not read by the renderer yet), optional `order` (picker order, ascending; absent = 100; Classic 0, True World 1) and `hidden` (loads by `?map=<id>`, not offered in the picker). |
 | `rules.json` | author | Rules: supported `seats` {min, max}, `startingArmies` per seat count (the setup table), `cardSymbols` cycle, `continents` [{id, name, bonus}] in display order, `territories` [{id, name, continent}] grouped by continent in continent order. That order is canonical: card symbols, AI iteration and label numbering follow it. |
 | `topology.json` | author | Topology: undirected `borders` [[a, b]], and `seaLanes` [{a, b, wrap?}], the borders that cross water. `wrap: true` = the crossing leaves the west edge from `a` and comes back in from the east edge to `b` (at most one per map). |
 | `board.json` | `npm run build:map` | Geometry + placed presentation, the renderer contract `BoardGeometry` (`src/map/types.ts`): territory polygons, bbox, area, army `anchor`, name `labelAnchor`, sea-lane polylines (first point on `a`'s shore, last on `b`'s: the two **shore points** where the crossing's ticks go), continent and ocean label spots, neutral `decorativeLand`, a `projection` note. |
-| `thumb.png` | `npm run verify:map` | 480 px preview for the New-game picker (written when missing, or with `--thumb`). |
+| `thumb.png` | `npm run build:map` | The 480 × 300 picker tile, an ink drawing of the board (indigo paper, ivory coasts, continent washes, no labels) rendered from board.json by `scripts/map/preview.ts` `thumbSvg`; never a screenshot. `verify:map --thumb` rewrites it. |
 
 The four concerns: **geometry** = `board.json` shapes; **topology** = `topology.json` (+ the lane
 polylines and shore points in `board.json`); **rules** = `rules.json`; **presentation** = `pack.json`
 (+ the placed anchors and labels in `board.json`, and the projection/lenses in the recipe).
 
 A generated pack also has a **recipe**, `scripts/map/packs/<id>/index.ts`, exporting `recipe: MapRecipe`
-(`scripts/map/recipe.ts`): the Natural Earth source file, the projection and lenses, which country (or
+(`scripts/map/recipe.ts`; recipe v2, all of it in docs/MAP-AUTHORING.md: a local GeoJSON source, a frame +
+projection preset, `cutBy` cut lines, `clip`, `otherLand`): the source, the projection and lenses, which country (or
 which part of it) becomes which territory, island stretches, lane shore hints (lon/lat), continent and
 ocean label hints, tuning (raster resolution, water gaps, smoothing), and the close-ups `verify:map`
 renders. Recipes are scripts (typechecked, can hold functions), so they live under `scripts/`, not `maps/`.
 
 ## Runtime
 
-- `src/map/packs.ts` — manifests + rules + topology of every registered pack, no geometry, no DOM.
+- **Registration is discovery** (v6): every folder `maps/<id>/` with a `pack.json` is a pack. Vite bundles
+  them with `import.meta.glob` (`maps/*/pack.json`, `rules.json`, `topology.json`, `board.json`,
+  `thumb.png`); plain Node (`npm run sim`, tsx scripts) reads the folder. A pack without a board.json yet, or
+  with broken files, is skipped with a console warning (Classic is required).
+- `src/map/packs.ts` — manifests + rules + topology of every discovered pack, no geometry, no DOM.
   `src/engine/mapData.ts` reads classic's rules and topology through it (same exports as before).
-- `src/map/registry.ts` — the one geometry loader: `listMaps()` (id, name, description, seats, counts,
-  thumbnail URL, rulesFrom), `getBoard(id)` (the pack's `board.json` with every lane's `shore` filled),
+- `src/map/registry.ts` — the one geometry loader: `listMaps()` (the picker's packs, `hidden` ones left out:
+  id, name, description, seats, counts, thumbnail URL, rulesFrom), `packIds()` (every pack with a board), `getBoard(id)` (the pack's `board.json` with every lane's `shore` filled),
   `activeMapId()` / `activeBoard()`, `resolveMapId()`.
 - `src/map/index.ts` — `BOARD` is `activeBoard()`: the map this page boots on. In order: `?map=<id>`
   (dev server and `VITE_E2E` builds only), else the saved game's `state.config.mapId`, else classic.
@@ -43,9 +48,10 @@ page booted on needs the renderer to swap geometry; see "Requests" in the v3 map
 ## Build and verify
 
 ```
-npm run build:map -- --map <id>      # recipe + rules + topology → maps/<id>/board.json (seconds)
-npm run verify:map -- --map <id>     # checks + previews in artifacts/map/<id>/ (+ thumb.png if missing)
-npm run verify:maps                  # every shipped pack, no previews
+npm run new:map -- <id> "<Name>"     # scaffold a pack (docs/MAP-AUTHORING.md)
+npm run build:map -- --map <id>      # recipe + rules + topology → maps/<id>/board.json + thumb.png (seconds)
+npm run verify:map -- --map <id>     # checks, balance notes, 30-game sim, previews in artifacts/map/<id>/
+npm run verify:maps                  # every pack under maps/, no previews, no sim
 ```
 
 `build:map` without `--map` builds classic. The pipeline (`scripts/map/pipeline.ts`) is deterministic:
@@ -70,23 +76,24 @@ differs by a byte from the pre-pack board (sha256 `a4b77df4…`), and so does
   open water** (visible water = adjacency), wrap lanes run off both edges;
 - continent and ocean labels on water.
 
-It prints a NOTE, not a failure, when a pack has its own rules: such a pack builds and verifies but is
-not playable until the engine reads rules per game.
+and, v6: territory names at most 22 characters, continent names at most 18, no exclamation mark in the
+description, and (unless `--no-sim`) `npm run sim 30 -- --map <id>` finishing with its rounds line.
+
+It prints NOTEs, not failures: a pack with its own rules (it plays where the engine reads
+`mapDefOf(config)`), each continent's bonus against its size and border territories with a suggested value
+(round((territories + border territories) / 2 − 1); off by two or more is flagged), a territory count outside
+25–45 or a continent count outside 3–7, mean territory area against Classic's, a scaffold TODO description,
+and `hidden`.
 
 ## Adding a map
 
-1. `maps/<id>/pack.json` (lowercase-kebab id). Either `"extends": "<pack>"` for a new drawing of an
-   existing board, or write `rules.json` + `topology.json`.
-2. A generated map: write `scripts/map/packs/<id>/index.ts` (copy true-world's), run `build:map`,
-   then `verify:map` and look at every preview. A hand-drawn map: write `board.json` yourself to the
-   `BoardGeometry` contract (anchors, label spots and lanes included) and run `verify:map`.
-3. Register it: its JSON imports in `src/map/packs.ts` (`PACK_FILES`) and its `board.json` +
-   `thumb.png` in `src/map/registry.ts`. Registration order is picker order.
-4. `npm test`, `npm run typecheck`, `npm run test:e2e smoke flow` with `RISK_QUERY='?map=<id>'`.
-5. On the real board: a dev server on a free port, then `npx tsx scripts/map/board-shots.ts --map <id>
-   --url http://127.0.0.1:<port>/` (rest shot, close-ups with a crossing aimed, phone tap check, and
-   the home scale in px per board unit), and `npx tsx scripts/map/land-pixels.ts` on the rest shots to
-   compare how much land a pack puts on screen against classic.
+Follow docs/MAP-AUTHORING.md: `npm run new:map -- <id> "<Name>"`, then rules, topology, recipe, build,
+verify, the real board, balance, the description. Registering is the folder itself; nothing in `src/` changes.
+A hand-drawn map (no recipe) writes `board.json` to the `BoardGeometry` contract itself and runs
+`verify:map`. Board shots on the real board: a dev server on a free port, then
+`npx tsx scripts/map/board-shots.ts --map <id> --url http://127.0.0.1:<port>/` (rest shot, close-ups with a
+crossing aimed, phone tap check, home scale), and `npx tsx scripts/map/land-pixels.ts` on the rest shots to
+compare how much land a pack puts on screen against classic.
 
 The camera frames the land's outline (convex hull of every territory), not the board rectangle, so
 ocean margins don't change the framing; the land outline's aspect against the screen does. A pack
@@ -162,9 +169,9 @@ Still outside the engine before an original 20–24-territory map is playable:
    setup batch and `territoriesToWin` use 42 literally; rerun `npm run sim -- --map <id>` per map and use
    `targetTerritories`.
 3. **The picker** offers only maps whose `seats` include the table's player count.
-4. Geometry: an original map has no Natural Earth source; hand-draw `board.json` (or add a recipe that
-   reads an SVG). Anchors, label spots and lanes must then be placed by hand or by a small helper.
-
+4. Geometry (v6, done): a recipe reads Natural Earth or any local GeoJSON (`source: { geojson, nameProperty }`),
+   carves countries with `cutBy`, frames with a projection preset; anchors, labels and lanes are placed by the
+   pipeline as for Classic. Only a map with no geographic source at all needs a hand-drawn `board.json`.
 ## True World: what it is
 
 Equal Earth (equal-area) centred on 10.8°E with the Pacific seam at 169.2°W, like every world map; the

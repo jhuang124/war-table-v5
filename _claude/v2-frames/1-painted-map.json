@@ -1,0 +1,26 @@
+{
+  "prompt": "Production key art for a premium digital board game: a hand-painted world map for a Risk-style game of world conquest, seen from directly above, filling the frame. Match the palette and mood of the reference: deep indigo handmade paper with visible fibre, feathered silver-ivory ink coastlines with real dry-brush texture and ink pooling at stroke ends, territories as muted translucent pigment washes (vermilion, slate blue, ochre, sage) that bleed slightly at borders like watercolor on damp paper, subtle paper grain and tide lines. Ocean is the bare indigo paper with a few faint hand-drawn swell strokes and a thin drift of pale mist. This must look authored by a skilled illustrator, not procedurally generated: varied line weight, confident single strokes, restraint. Small, calm circular ivory ink rings on each territory holding a plain serif numeral (army counts). No UI bar, no buttons, no title, no words, no kanji, no seals, no cherry blossoms, no mountains-as-Fuji, no ships, no sun. Only the map.",
+  "aspect": "16:9",
+  "transparent": false,
+  "refs": [
+    {
+      "path": "/Users/jhuang/Desktop/JH-Projects/risk3d/_claude/moodboard/chosen-silver-ink-board.png",
+      "sha256": "0407a4d84afe4497f5656738480efa29d6a93b67768c0daa374ea56818b73cce"
+    }
+  ],
+  "session": null,
+  "variant": null,
+  "backend": "direct",
+  "model": "gpt-image-2 (service-selected)",
+  "reportedQuality": "high",
+  "reportedSize": "1672x941",
+  "generationId": "145a3704-d7e8-4b98-901f-88bdffdb1a30",
+  "requestId": "d28e706c-d3ba-4397-8c3e-1353688cb631",
+  "codexVersion": "codex-cli 0.153.4",
+  "width": 1672,
+  "height": 941,
+  "bytes": 2698787,
+  "attempts": 1,
+  "durationMs": 122273,
+  "createdAt": "2026-09-30T02:22:02.423Z"
+}

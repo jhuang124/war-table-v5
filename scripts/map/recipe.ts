@@ -2,8 +2,17 @@
 // maps/<id>/board.json. One per generated pack, in scripts/map/packs/<id>/index.ts, exporting `recipe`.
 // The pack's rules.json (territory ids, names, continents) and topology.json (borders, sea lanes) are
 // read from maps/<id>/; the recipe only says where each territory is on the globe and how to draw it.
+//
+// Recipe v2 (docs/MAP-AUTHORING.md), all additive: a local GeoJSON `source`, a `frame` + projection
+// preset, `clip` (land outside a lon/lat polygon becomes faint decor or is dropped), `otherLand`, `splits`
+// (cut lines, see cut.ts `cutBy`), and an optional `describe`.
 
-import type { BoardProjection } from './projection';
+import { BoardProjection, presetProjection, type LonLatBox, type ProjectionPreset } from './projection';
+import { cutBy, type LonLat } from './cut';
+
+export { cutBy } from './cut';
+export type { LonLat } from './cut';
+export type { LonLatBox, ProjectionPreset } from './projection';
 
 /** A territory id from rules.json, an alias from `aliases`, 'decor' (neutral land) or 'drop'. */
 export type Resolved = string;
@@ -80,12 +89,50 @@ export interface PreviewShot {
   px: number;
 }
 
+/** Natural Earth countries file in node_modules/world-atlas (names are Natural Earth's short names). */
+export type WorldAtlasSource = 'countries-50m.json' | 'countries-10m.json';
+/**
+ * A local GeoJSON FeatureCollection of Polygon / MultiPolygon features, path relative to the repo root
+ * (keep it in maps/<id>/source/ with a README saying where it came from and its licence). `assign` keys
+ * are then the features' `nameProperty` values.
+ */
+export interface GeoJsonSource {
+  geojson: string;
+  nameProperty: string;
+}
+
+/** A country carved by hand-drawn cut lines: see cut.ts `cutBy` (the same thing, declared as data). */
+export interface Split {
+  /** Polylines in lon/lat, each running past the country's edge on both ends. */
+  lines: LonLat[][];
+  /** One seed point (lon/lat) inside each piece → the territory (or 'decor' / 'drop') it becomes. */
+  labels: Record<Resolved, LonLat>;
+}
+
 export interface MapRecipe {
-  /** Natural Earth countries file in node_modules/world-atlas. */
-  source: 'countries-50m.json' | 'countries-10m.json';
-  projection: BoardProjection;
-  /** Natural Earth country name → rule. Countries without a rule are dropped (and logged). */
+  /** Natural Earth countries (world-atlas) or a local GeoJSON file. */
+  source: WorldAtlasSource | GeoJsonSource;
+  /**
+   * A built projection (classic, true-world), or a preset fitted to `frame` (recipe v2):
+   * `{ preset: 'mercatorLike' | 'equalEarth' | 'local', width?, margin?, yScale?, lenses? }`.
+   */
+  projection: BoardProjection | ProjectionPreset;
+  /** The board frame [west, south, east, north] in degrees; required with a projection preset. */
+  frame?: { lonLat: LonLatBox };
+  /** Source feature name → rule. Features without a rule (or a split) are `otherLand`. */
   assign: Record<string, Rule>;
+  /** Features carved by cut lines (feature name → split); same as `assign[name] = cutBy(lines, labels)`. */
+  splits?: Record<string, Split>;
+  /** What happens to features with no rule: 'drop' (default; logged) or 'decor' (faint neutral land). */
+  otherLand?: 'decor' | 'drop';
+  /**
+   * A lon/lat polygon: land outside it becomes decor, or is dropped when it lies more than `clipDrop`
+   * degrees outside (how a Roman board shows only the Mediterranean world). Applies to every label,
+   * territories included, per pixel.
+   */
+  clip?: LonLat[];
+  /** Degrees outside `clip` beyond which land is dropped instead of drawn as decor (default: never dropped). */
+  clipDrop?: number;
   /**
    * Extra raster labels that belong to a territory but keep their own coastline (classic: Ireland is
    * Great Britain's, but must not fuse onto Britain). alias → territory id.
@@ -103,8 +150,50 @@ export interface MapRecipe {
   continentLabelHints: Record<string, [number, number]>;
   oceanLabels: { text: string; hint: [number, number]; size: number }[];
   tuning: Tuning;
-  /** The human-readable `projection` note written into board.json. */
-  describe(): string;
+  /** The human-readable `projection` note written into board.json (default: preset + frame + source). */
+  describe?(): string;
   /** Close-ups verify:map renders besides the whole board (artifacts/map/<id>/). */
   previews?: PreviewShot[];
+}
+
+const resolved = new WeakMap<MapRecipe, BoardProjection>();
+
+/** The BoardProjection a recipe projects through (its own, or its preset fitted to its frame). */
+export function projectionOf(recipe: MapRecipe): BoardProjection {
+  if (recipe.projection instanceof BoardProjection) return recipe.projection;
+  let p = resolved.get(recipe);
+  if (!p) {
+    if (!recipe.frame) throw new Error(`recipe: projection preset "${recipe.projection.preset}" needs frame: { lonLat: [west, south, east, north] }`);
+    p = presetProjection(recipe.projection, recipe.frame.lonLat);
+    resolved.set(recipe, p);
+  }
+  return p;
+}
+
+/** The rule for a source feature: assign, else its split, else otherLand. */
+export function ruleOf(recipe: MapRecipe, name: string): Rule | undefined {
+  const r = recipe.assign[name];
+  const s = recipe.splits?.[name];
+  if (r && s) throw new Error(`recipe: "${name}" is in both assign and splits`);
+  if (s) {
+    let cache = splitRules.get(s);
+    if (!cache) splitRules.set(s, (cache = cutBy(s.lines, s.labels)));
+    return cache;
+  }
+  return r ?? (recipe.otherLand === 'decor' ? 'decor' : undefined);
+}
+const splitRules = new WeakMap<Split, Rule>();
+
+/** The board.json `projection` note. */
+export function describeRecipe(recipe: MapRecipe): string {
+  if (recipe.describe) return recipe.describe();
+  const p = recipe.projection;
+  const src = typeof recipe.source === 'string' ? `Natural Earth ${recipe.source}` : recipe.source.geojson;
+  const proj = p instanceof BoardProjection ? 'custom projection' : `${p.preset} preset${p.lenses?.length ? ` with lenses ${p.lenses.map((l) => `${l.name} ×${l.m}`).join(', ')}` : ''}`;
+  const f = recipe.frame?.lonLat;
+  return (
+    `${proj}${f ? ` over lon ${f[0]}…${f[2]}, lat ${f[1]}…${f[3]}` : ''}; source ${src}` +
+    `${recipe.clip ? '; land outside the clip drawn as decor' : ''}. Rasterised at ${recipe.tuning.px} px/unit, ` +
+    `borders are shared arcs (DP + Chaikin). Origin bottom-left, +y north.`
+  );
 }

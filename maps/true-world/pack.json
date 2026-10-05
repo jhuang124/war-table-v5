@@ -5,6 +5,7 @@
   "description": "The same 42 on a truer world.",
   "extends": "classic",
   "thumbnail": "thumb.png",
+  "order": 1,
   "presentation": {
     "anchorClearance": 1.3,
     "anchorOverhang": {

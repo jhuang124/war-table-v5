@@ -1,0 +1,26 @@
+{
+  "prompt": "A hand-painted world map for a premium world-conquest board game, top-down, filling the frame. Use the reference only for palette and layout; the rendering must go clearly BEYOND it toward a real illustrator's gouache-and-ink original photographed flat. Deep indigo handmade paper with visible fibres and slight uneven tone. Coastlines drawn in silver-ivory ink with a real brush: line weight swells and thins, occasional dry-brush breaks, small ink pools where strokes begin, a few coastal islands dotted with the brush tip. Territories are translucent pigment washes (muted vermilion, slate blue, ochre, sage) laid wet: granulation, soft blooms and back-runs, darker tide lines where the wash dried, paper grain showing through. Territory borders are thin hand-drawn ivory lines, slightly irregular. Ocean: bare indigo paper, a few sparse swell strokes and a faint breath of pale mist. Small ivory ink rings with serif numerals mark army counts on each territory. Restraint above all: no title, no words, no compass rose, no ships, no sun, no kanji, no seals, no blossoms, no UI.",
+  "aspect": "16:9",
+  "transparent": false,
+  "refs": [
+    {
+      "path": "/Users/jhuang/Desktop/JH-Projects/risk3d/_claude/moodboard/chosen-silver-ink-board.png",
+      "sha256": "0407a4d84afe4497f5656738480efa29d6a93b67768c0daa374ea56818b73cce"
+    }
+  ],
+  "session": null,
+  "variant": null,
+  "backend": "direct",
+  "model": "gpt-image-2 (service-selected)",
+  "reportedQuality": "medium",
+  "reportedSize": "1672x941",
+  "generationId": "af7f994c-06cf-40bf-9142-47e70faa0fc9",
+  "requestId": "05449607-13d2-4183-886d-a6ec8ba0c0e2",
+  "codexVersion": "codex-cli 0.153.4",
+  "width": 1672,
+  "height": 941,
+  "bytes": 2918993,
+  "attempts": 1,
+  "durationMs": 49802,
+  "createdAt": "2026-09-30T02:24:03.893Z"
+}

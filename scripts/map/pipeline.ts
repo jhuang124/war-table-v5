@@ -14,18 +14,59 @@ import type { Topology, GeometryCollection } from 'topojson-specification';
 import polylabel from 'polylabel';
 
 import type { BoardGeometry, PolygonGeom, SeaLaneGeom, TerritoryGeom, Vec2 } from '../../src/map/types';
-import type { MapRecipe, Resolved, Rule } from './recipe';
+import { describeRecipe, projectionOf, ruleOf, type MapRecipe, type Resolved, type Rule } from './recipe';
 import { ROOT, pairKey, type LoadedPack } from './pack';
 import { Grid, OCEAN, fillPolygon, edt, labelBboxes, components, blur, fillFromNearest, SAT } from './raster';
 import { extractArcs, simplifyArc, findCrossingArcs, assemble, type LabelPolygon } from './vectorize';
 import { ringArea, closestOnSeg, round3, bboxOf, pointInPoly, distToPolyBoundary, type P } from './geom';
+
+type SourceFeature = { properties: { name: string }; geometry: { type: string; coordinates: any } | null };
+
+/** The recipe's source as features named by `name` (world-atlas countries, or a local GeoJSON file). */
+export function loadSource(recipe: MapRecipe): { features: SourceFeature[] } {
+  const src = recipe.source;
+  if (typeof src === 'string') {
+    const topo = JSON.parse(readFileSync(resolve(ROOT, 'node_modules/world-atlas', src), 'utf8')) as Topology;
+    return feature(topo, topo.objects.countries as GeometryCollection) as unknown as { features: SourceFeature[] };
+  }
+  const gj = JSON.parse(readFileSync(resolve(ROOT, src.geojson), 'utf8')) as {
+    type: string;
+    features: { properties: Record<string, unknown> | null; geometry: SourceFeature['geometry'] }[];
+  };
+  if (gj.type !== 'FeatureCollection') throw new Error(`${src.geojson}: expected a GeoJSON FeatureCollection`);
+  const features: SourceFeature[] = [];
+  for (const f of gj.features) {
+    const name = f.properties?.[src.nameProperty];
+    if (typeof name !== 'string' || !name) throw new Error(`${src.geojson}: a feature has no "${src.nameProperty}" property`);
+    features.push({ properties: { name }, geometry: f.geometry });
+  }
+  return { features };
+}
+
+/** Even-odd point in a lon/lat ring, and the distance (degrees) to it. */
+function inRing(x: number, y: number, ring: [number, number][]): boolean {
+  let inside = false;
+  for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+    const [xi, yi] = ring[i], [xj, yj] = ring[j];
+    if (yi > y !== yj > y && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi) inside = !inside;
+  }
+  return inside;
+}
+function ringDist(x: number, y: number, ring: [number, number][]): number {
+  let d = Infinity;
+  for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+    const c = closestOnSeg(x, y, ring[j][0], ring[j][1], ring[i][0], ring[i][1]);
+    d = Math.min(d, Math.hypot(c[0] - x, c[1] - y));
+  }
+  return d;
+}
 
 export function buildBoard(pack: LoadedPack, recipe: MapRecipe, log: (...a: unknown[]) => void): BoardGeometry {
   const TERRITORY_IDS = pack.territoryIds;
   const NAME = pack.names;
   const T = recipe.tuning;
   const PX = T.px, GAP = T.gap, LANE_GAP = T.laneGap, MIN_CLEARANCE = T.minClearance, TARGET_CLEARANCE = T.targetClearance;
-  const proj = recipe.projection;
+  const proj = projectionOf(recipe);
   const unwrapLon = (lon: number) => proj.unwrapLon(lon);
   const WIDTH = proj.width;
   const OVERHANG = pack.manifest.presentation.anchorOverhang ?? null;
@@ -73,10 +114,7 @@ export function buildBoard(pack: LoadedPack, recipe: MapRecipe, log: (...a: unkn
 
   // -------------------------------------------------------------------------------------------
   // 1. Source geometry
-  const topo = JSON.parse(readFileSync(resolve(ROOT, 'node_modules/world-atlas', recipe.source), 'utf8')) as Topology;
-  const fc = feature(topo, topo.objects.countries as GeometryCollection) as unknown as {
-    features: { properties: { name: string }; geometry: { type: string; coordinates: any } | null }[];
-  };
+  const fc = loadSource(recipe);
   const WIDTH_PX = WIDTH * PX;
   const HEIGHT = Math.ceil(proj.height * 2) / 2; // round to 0.5 units
   const HEIGHT_PX = Math.round(HEIGHT * PX);
@@ -108,7 +146,7 @@ export function buildBoard(pack: LoadedPack, recipe: MapRecipe, log: (...a: unkn
 
   for (const f of fc.features) {
     const name = f.properties.name;
-    const rule: Rule | undefined = recipe.assign[name];
+    const rule: Rule | undefined = ruleOf(recipe, name);
     if (!f.geometry) continue;
     if (!rule) {
       unassigned.add(name);
@@ -204,19 +242,38 @@ export function buildBoard(pack: LoadedPack, recipe: MapRecipe, log: (...a: unkn
       });
     }
   }
+  // Recipe v2 clip: land outside the lon/lat polygon becomes decor (or is dropped beyond clipDrop degrees).
+  const CLIP = recipe.clip?.map(([lo, la]) => [unwrapLon(lo), la] as [number, number]) ?? null;
+  const CLIP_DROP = recipe.clipDrop ?? Infinity;
+  let clippedPx = 0;
   for (let idx = 0; idx < codeGrid.length; idx++) {
     const c = codeGrid[idx];
     if (c < 0) continue;
     const code = codes[c];
     let l: number;
+    let ll: [number, number] | null = null;
+    const lonLat = () => {
+      if (!ll) {
+        const i = idx % WIDTH_PX, r = (idx - i) / WIDTH_PX;
+        ll = proj.inverse((i + 0.5) / PX, (r + 0.5) / PX);
+      }
+      return ll;
+    };
     if ('label' in code) l = code.label;
     else {
-      const i = idx % WIDTH_PX, r = (idx - i) / WIDTH_PX;
-      const [lon, lat] = proj.inverse((i + 0.5) / PX, (r + 0.5) / PX);
+      const [lon, lat] = lonLat();
       l = labelFor(code.pixel(lon, lat));
+    }
+    if (CLIP && l >= 0) {
+      const [lon, lat] = lonLat();
+      if (!inRing(lon, lat, CLIP)) {
+        l = CLIP_DROP === Infinity || ringDist(lon, lat, CLIP) <= CLIP_DROP ? DECOR : -1;
+        clippedPx++;
+      }
     }
     g.lab[idx] = l < 0 ? OCEAN : l;
   }
+  if (CLIP) log(`clip: ${clippedPx} land px outside the clip became decor or dropped`);
   log('rasterised');
 
   // -------------------------------------------------------------------------------------------
@@ -783,7 +840,7 @@ export function buildBoard(pack: LoadedPack, recipe: MapRecipe, log: (...a: unkn
     version: 1,
     width: WIDTH,
     height: HEIGHT,
-    projection: recipe.describe(),
+    projection: describeRecipe(recipe),
     territories,
     seaLanes,
     continents,

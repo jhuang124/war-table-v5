@@ -82,6 +82,10 @@ export function readBoard(p: LoadedPack): BoardGeometry {
 
 export const pairKey = (a: string, b: string) => (a < b ? `${a}|${b}` : `${b}|${a}`);
 
+/** Longest names the HUD sets without crowding (territory on hover/select, continent + bonus on the water). */
+export const MAX_TERRITORY_NAME = 22;
+export const MAX_CONTINENT_NAME = 18;
+
 /** Format checks on the hand-written files (no geometry). Returns failure messages. */
 export function lintPack(p: LoadedPack): string[] {
   const out: string[] = [];
@@ -90,6 +94,9 @@ export function lintPack(p: LoadedPack): string[] {
   if (!/^[a-z0-9]+(-[a-z0-9]+)*$/.test(m.id)) out.push(`pack.json: id "${m.id}" must be lowercase-kebab`);
   if (!m.name?.trim()) out.push('pack.json: name is empty');
   if (!m.description?.trim()) out.push('pack.json: description is empty');
+  else if (m.description.includes('!')) out.push('pack.json: description has an exclamation mark (plain words, docs/MAP-AUTHORING.md step h)');
+  if (m.order !== undefined && !Number.isFinite(m.order)) out.push('pack.json: order must be a number');
+  if (m.hidden !== undefined && typeof m.hidden !== 'boolean') out.push('pack.json: hidden must be true or false');
   if (!(m.presentation?.anchorClearance > 0)) out.push('pack.json: presentation.anchorClearance must be > 0');
   if (r.format !== 1) out.push('rules.json: format must be 1');
   if (t.format !== 1) out.push('topology.json: format must be 1');
@@ -112,6 +119,7 @@ export function lintPack(p: LoadedPack): string[] {
     cids.add(c.id);
     if (!(Number.isInteger(c.bonus) && c.bonus > 0)) out.push(`rules.json: continent ${c.id} bonus must be a positive integer`);
     if (!c.name?.trim()) out.push(`rules.json: continent ${c.id} has no name`);
+    else if (c.name.length > MAX_CONTINENT_NAME) out.push(`rules.json: continent name "${c.name}" is ${c.name.length} characters (at most ${MAX_CONTINENT_NAME})`);
   }
   const tids = new Set<string>();
   let lastCont = -1;
@@ -120,6 +128,7 @@ export function lintPack(p: LoadedPack): string[] {
     tids.add(x.id);
     if (!/^[a-z0-9_]+$/.test(x.id)) out.push(`rules.json: territory id "${x.id}" must be snake_case`);
     if (!x.name?.trim()) out.push(`rules.json: territory ${x.id} has no name`);
+    else if (x.name.length > MAX_TERRITORY_NAME) out.push(`rules.json: territory name "${x.name}" is ${x.name.length} characters (at most ${MAX_TERRITORY_NAME})`);
     const ci = r.continents.findIndex((c) => c.id === x.continent);
     if (ci < 0) out.push(`rules.json: territory ${x.id} is in unknown continent ${x.continent}`);
     else if (ci < lastCont) out.push(`rules.json: territories must be grouped by continent, in continent order (${x.id})`);

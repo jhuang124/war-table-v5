@@ -115,11 +115,18 @@ export function boardSvg(
   return parts.join('\n');
 }
 
-// --- The New-game thumbnail (v3): the board as a small ink drawing -------------------------------------
-// Indigo paper, ivory coastlines with a faint feathered halo, each continent's land in a faint wash of its
-// printed tint (src/shared/palette.ts CONTINENT_TINTS), territory borders as hairlines, the crossings as
-// fainter hairlines. No seat fills, no labels, no badges: drawn in the board's hand, not as a chart.
-const PAPER = '#101a30';
+// --- The New-game thumbnail (v6): the board as a small ink drawing, 480 × 300 --------------------------
+// Rendered from board.json by the pipeline (build:map writes it; verify:map --thumb rewrites it), never a
+// screenshot, so every pack's tile is drawn by the same hand. The palette is the v5 board's
+// (artifacts/review-shots/v5-board.png, src/shared/palette.ts): indigo paper (#1c2437 in open water, the
+// palette's #101a30 in the dark band that hugs every coast, a warm-dark vignette at the margins), an ivory
+// coast hairline with the band's faint outer contour, each continent's land in a muted wash of its printed
+// tint (CONTINENT_TINTS), territory borders as hairlines, crossings fainter still, decorative land faint.
+// No labels, no badges, no seat colours. The land is framed (not the board rectangle), centred, 16:10.
+export const THUMB_W = 480;
+export const THUMB_H = 300;
+const PAPER = '#1c2437';
+const PAPER_DEEP = '#101a30';
 const IVORY = '#f2ede2';
 const mixHex = (a: string, b: string, k: number) => {
   const p = (h: string) => [1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16));
@@ -128,39 +135,76 @@ const mixHex = (a: string, b: string, k: number) => {
   return `#${x.map((v, i) => Math.round(v + (y[i] - v) * k).toString(16).padStart(2, '0')).join('')}`;
 };
 
-export function thumbSvg(b: BoardGeometry, pack: LoadedPack, pxWidth: number): string {
+/** The land's frame for the thumbnail: every territory's bbox, padded, grown to 16:10 about its centre. */
+function thumbFrame(b: BoardGeometry): [number, number, number, number] {
+  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+  for (const t of Object.values(b.territories)) {
+    (x0 = Math.min(x0, t.bbox[0])), (y0 = Math.min(y0, t.bbox[1])), (x1 = Math.max(x1, t.bbox[2])), (y1 = Math.max(y1, t.bbox[3]));
+  }
+  const pad = 0.05 * Math.max(x1 - x0, y1 - y0);
+  (x0 -= pad), (x1 += pad), (y0 -= pad), (y1 += pad);
+  let w = x1 - x0, h = y1 - y0;
+  const cx = (x0 + x1) / 2, cy = (y0 + y1) / 2;
+  const aspect = THUMB_W / THUMB_H;
+  if (w / h > aspect) h = w / aspect;
+  else w = h * aspect;
+  // SVG viewBox is y-down: [minX, minY(top), w, h]
+  return [cx - w / 2, b.height - (cy + h / 2), w, h];
+}
+
+export function thumbSvg(b: BoardGeometry, pack: LoadedPack): string {
   const H = b.height;
-  const pxH = Math.round((pxWidth * b.height) / b.width);
-  const u = b.width / pxWidth; // board units per output px
+  const vb = thumbFrame(b);
+  const u = vb[2] / THUMB_W; // board units per output px
   const ids = pack.territoryIds as TKey[];
-  const land = mixHex(PAPER, IVORY, 0.07);
+  const land = mixHex(PAPER_DEEP, IVORY, 0.08);
   const fillOf = (c: string) => {
     const i = Math.max(0, pack.rules.continents.findIndex((x) => x.id === c));
-    return mixHex(land, CONTINENT_TINTS[i % CONTINENT_TINTS.length], 0.34);
+    return mixHex(land, CONTINENT_TINTS[i % CONTINENT_TINTS.length], 0.62);
   };
   const all = ids.flatMap((t) => b.territories[t].polygons.map((pg) => ({ t, d: pathOf(pg, H) })));
+  const stroke = (w: number, color: string, op = 1, extra = '') =>
+    `<g>${all.map((x) => `<path d="${x.d}" fill="none" stroke="${color}"${op < 1 ? ` stroke-opacity="${op}"` : ''} stroke-width="${(w * u).toFixed(4)}" stroke-linejoin="round"${extra}/>`).join('')}</g>`;
+  const band = 9; // px: the dark water that hugs the coast, out to its faint contour
   const parts: string[] = [];
-  parts.push(`<svg xmlns="http://www.w3.org/2000/svg" width="${pxWidth}" height="${pxH}" viewBox="0 0 ${b.width} ${b.height}">`);
+  parts.push(`<svg xmlns="http://www.w3.org/2000/svg" width="${THUMB_W}" height="${THUMB_H}" viewBox="${vb.map((v) => v.toFixed(4)).join(' ')}">`);
   parts.push(
-    `<defs><filter id="feather" x="-5%" y="-5%" width="110%" height="110%"><feGaussianBlur stdDeviation="${(1.6 * u).toFixed(3)}"/></filter>` +
-      `<radialGradient id="vig" cx="50%" cy="46%" r="70%"><stop offset="0.6" stop-color="#000" stop-opacity="0"/><stop offset="1" stop-color="#000" stop-opacity="0.35"/></radialGradient></defs>`,
+    `<defs><filter id="feather" x="-5%" y="-5%" width="110%" height="110%"><feGaussianBlur stdDeviation="${(1.4 * u).toFixed(4)}"/></filter>` +
+      `<radialGradient id="vig" cx="50%" cy="48%" r="72%"><stop offset="0.55" stop-color="#0a0d16" stop-opacity="0"/><stop offset="1" stop-color="#0a0d16" stop-opacity="0.45"/></radialGradient></defs>`,
   );
-  parts.push(`<rect x="0" y="0" width="${b.width}" height="${b.height}" fill="${PAPER}"/>`);
-  for (const pg of b.decorativeLand) parts.push(`<path d="${pathOf(pg, H)}" fill="${land}" stroke="${IVORY}" stroke-opacity="0.35" stroke-width="${(0.8 * u).toFixed(3)}" fill-rule="evenodd"/>`);
+  parts.push(`<rect x="${vb[0]}" y="${vb[1]}" width="${vb[2]}" height="${vb[3]}" fill="${PAPER}"/>`);
+  // decorative land: faint, no contour
+  for (const pg of b.decorativeLand) parts.push(`<path d="${pathOf(pg, H)}" fill="${mixHex(PAPER, IVORY, 0.1)}" stroke="${IVORY}" stroke-opacity="0.18" stroke-width="${(0.6 * u).toFixed(4)}" fill-rule="evenodd"/>`);
+  // the coast band: a faint ivory contour at its outer edge, the deep paper inside it
+  parts.push(stroke(2 * band + 1.6, IVORY, 0.32));
+  parts.push(stroke(2 * band, PAPER_DEEP));
   // the coast: a feathered halo, then the ivory line; the land fills then cover the inner half of every
   // stroke, so only the outer coast survives (a shared border is covered from both sides)
-  parts.push(`<g filter="url(#feather)" opacity="0.28">${all.map((x) => `<path d="${x.d}" fill="none" stroke="${IVORY}" stroke-width="${(5 * u).toFixed(3)}" stroke-linejoin="round"/>`).join('')}</g>`);
-  parts.push(`<g>${all.map((x) => `<path d="${x.d}" fill="none" stroke="${IVORY}" stroke-opacity="0.92" stroke-width="${(2.6 * u).toFixed(3)}" stroke-linejoin="round"/>`).join('')}</g>`);
+  parts.push(`<g filter="url(#feather)" opacity="0.3">${stroke(4.5, IVORY)}</g>`);
+  parts.push(stroke(2.4, IVORY, 0.9));
   parts.push(`<g>${all.map((x) => `<path d="${x.d}" fill="${fillOf(pack.continentOf[x.t])}" fill-rule="evenodd"/>`).join('')}</g>`);
   // territory borders, hairline
-  parts.push(`<g>${all.map((x) => `<path d="${x.d}" fill="none" stroke="${IVORY}" stroke-opacity="0.2" stroke-width="${(0.6 * u).toFixed(3)}" stroke-linejoin="round"/>`).join('')}</g>`);
-  // the crossings, fainter still
-  for (const lane of b.seaLanes)
+  parts.push(stroke(0.6, IVORY, 0.22));
+  // the crossings, fainter still (not the wrap: in a framed tile it reads as a stray line off the edge)
+  for (const lane of b.seaLanes.filter((l) => !l.wrap))
     for (const seg of lane.segments)
-      parts.push(`<polyline points="${seg.map(([x, y]) => `${x},${H - y}`).join(' ')}" fill="none" stroke="${IVORY}" stroke-opacity="0.3" stroke-width="${(0.7 * u).toFixed(3)}" stroke-linecap="round"/>`);
-  parts.push(`<rect x="0" y="0" width="${b.width}" height="${b.height}" fill="url(#vig)"/>`);
+      parts.push(`<polyline points="${seg.map(([x, y]) => `${x},${H - y}`).join(' ')}" fill="none" stroke="${IVORY}" stroke-opacity="0.3" stroke-width="${(0.7 * u).toFixed(4)}" stroke-linecap="round"/>`);
+  parts.push(`<rect x="${vb[0]}" y="${vb[1]}" width="${vb[2]}" height="${vb[3]}" fill="url(#vig)"/>`);
   parts.push('</svg>');
   return parts.join('\n');
+}
+
+/** Write the pack's 480 × 300 thumbnail (PNG) to `path`. */
+export async function renderThumb(b: BoardGeometry, pack: LoadedPack, path: string): Promise<void> {
+  const { chromium } = await import('playwright');
+  const browser = await chromium.launch({ args: ['--use-angle=metal', '--enable-gpu', '--ignore-gpu-blocklist', '--mute-audio'] });
+  try {
+    const page = await browser.newPage({ deviceScaleFactor: 1, viewport: { width: THUMB_W, height: THUMB_H } });
+    await page.setContent(`<html><body style="margin:0;background:${PAPER}">${thumbSvg(b, pack)}</body></html>`);
+    await page.screenshot({ path, clip: { x: 0, y: 0, width: THUMB_W, height: THUMB_H } });
+  } finally {
+    await browser.close();
+  }
 }
 
 export interface PreviewOpts {
@@ -208,14 +252,14 @@ export async function renderPreviews(b: BoardGeometry, pack: LoadedPack, o: Prev
     // SVG viewBox is y-down
     shots.push({ viewBox: [x0, b.height - y1, x1 - x0, y1 - y0], px: s.px, path: resolve(o.outDir, `preview-${s.name}.png`) });
   }
-  if (o.thumbPath) shots.push({ px: 480, bare: true, path: o.thumbPath });
+  if (o.thumbPath) shots.push({ px: THUMB_W, bare: true, path: o.thumbPath });
   const { chromium } = await import('playwright');
   const browser = await chromium.launch({ args: ['--use-angle=metal', '--enable-gpu', '--ignore-gpu-blocklist', '--mute-audio'] });
   try {
     const page = await browser.newPage({ deviceScaleFactor: 1 });
     for (const s of shots) {
       // the thumbnail is the ink drawing (thumbSvg); every other shot is the checking preview
-      const svg = s.bare ? thumbSvg(b, pack, s.px) : boardSvg(b, pack, { viewBox: s.viewBox, pxWidth: s.px, minClear: o.minClear, bare: s.bare });
+      const svg = s.bare ? thumbSvg(b, pack) : boardSvg(b, pack, { viewBox: s.viewBox, pxWidth: s.px, minClear: o.minClear, bare: s.bare });
       if (!s.bare) writeFileSync(s.path.replace(/\.png$/, '.svg'), svg);
       const m = /height="(\d+)"/.exec(svg)!;
       await page.setViewportSize({ width: s.px, height: Number(m[1]) });
