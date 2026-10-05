@@ -313,3 +313,26 @@ export class Slider {
     this.el.setAttribute('aria-valuenow', String(Math.round(v * 100)));
   }
 }
+
+/**
+ * v5.1 (QUIETER §3 D, E3): the one word 'More' that folds the rest of a sheet open in place (New game,
+ * Settings). A bare serif word at 18 px, ivory 70 %; open, it carries the brush underline (the same mark as a
+ * chosen word) and reads at full ivory. Never a chevron, a box or a disclosure triangle.
+ */
+export function moreWord(testid: string, onClick: () => void): HTMLButtonElement {
+  const b = h('button', 'more-word nofocus');
+  b.type = 'button';
+  b.dataset.testid = testid;
+  b.setAttribute('aria-expanded', 'false');
+  const label = h('span', 'more-label', 'More');
+  label.append(underlineEl(hashSeed(`more:${testid}`), undefined, 'brush-ul more-ul'));
+  b.append(label);
+  b.addEventListener('click', onClick);
+  return b;
+}
+
+/** Reflect the fold's state on its 'More' word. */
+export function setMoreWord(b: HTMLButtonElement, open: boolean): void {
+  toggle(b, 'open', open);
+  b.setAttribute('aria-expanded', String(open));
+}

@@ -157,7 +157,8 @@ export const STRIPS: Record<string, StripVM> = {
   'fortify-picked': strip({ mode: 'fortify', track: track('fortify', { recommended: 'endTurn' }), line: 'Move from Ural to Siberia', count: { control: 'slider', value: 8, min: 1, max: 8 }, buttons: [btn('move', 'Move 8 · end turn', true)] }),
   'ai-turn': strip({ mode: 'watching', track: track('attack', { seat: COBALT, live: false, turnKey: '6:1' }), accent: 'cobalt', line: 'Slate attacks Siam', lineKind: 'narration' }),
   'humans-out': strip({ mode: 'watching', track: track('fortify', { seat: AMBER, live: false, turnKey: '9:2' }), accent: 'amber', line: 'All humans are out', buttons: [btn('callGame', 'End game'), btn('watchAis', 'Watch to the end', true)] }),
-  handoff: strip({ mode: 'watching', track: track('place', { seat: SAM, live: false, turnKey: '6:1' }), accent: 'cobalt', line: 'Pass to Sam' }),
+  'sam-turn': strip({ track: track('place', { seat: SAM, turnKey: '6:1' }), accent: 'cobalt', line: 'Place 7 armies · click a territory' }),
+  'occupy-collapsed': strip({ mode: 'occupy', track: track('attack', { states: { fortify: 'locked', endTurn: 'locked' }, disabled: true }), line: 'Move into Siberia', count: { control: 'slider', value: 11, min: 3, max: 11, collapsed: true }, buttons: [btn('move', 'Move 11', true)] }),
 };
 
 export const ARMED: BattleVM = {
@@ -258,7 +259,7 @@ export interface Fixture {
   label: string;
   vm: ViewModel;
   /** Post-mount pokes at local UI state. */
-  after?: 'openHouse' | 'skipVictoryIntro';
+  after?: 'openHouse' | 'openMore' | 'skipVictoryIntro';
   /** Dice the fake tray shows (attacker, defender). */
   dice?: [number[], number[]] | null;
 }
@@ -277,9 +278,8 @@ const root = (o: Partial<ViewModel>): ViewModel => ({
   rulesNotes: RULES,
   ...o,
 });
-/** GameVM.gold as the controller picks it: hand-off → the open Cards sheet's trade → the pending commit → the recommended segment → the current one. */
+/** GameVM.gold as the controller picks it: the open Cards sheet's trade → the pending commit → the recommended segment → the current one. */
 function goldOf(g: GameVM): GameVM['gold'] {
-  if (g.handoff) return { kind: 'handoff' };
   if (g.cards?.open && g.cards.trade) return { kind: 'cardsTrade' };
   const b = g.strip.buttons.find((x) => x.primary);
   if (b) return { kind: 'button', id: b.id };
@@ -307,7 +307,24 @@ export function fixtures(_W: number, _H: number): Fixture[] {
   add('newgame-2', 'Screens', 'New game, 2 seats', root({ screen: 'newGame', game: null, newGame: NEW_GAME }));
   add('newgame-4', 'Screens', 'New game, 4 seats', root({ screen: 'newGame', game: null, newGame: { ...NEW_GAME_4, setup: 'placeOwn', summary: 'Territories dealt at random · you place your own armies · first to 30 territories wins' } }));
   add('newgame-problems', 'Screens', 'New game, problems', root({ screen: 'newGame', game: null, newGame: NEW_GAME_PROBLEMS }));
-  add('newgame-house', 'Screens', 'New game, house rules open', root({ screen: 'newGame', game: null, newGame: { ...NEW_GAME_4, house: { draft: true, cardBonus: 'fixed', fortifyRule: 'adjacent', setupBatch: 5, seed: 1234 } } }), { after: 'openHouse' });
+  add('newgame-house', 'Screens', 'New game, More open (house rules changed)', root({ screen: 'newGame', game: null, newGame: { ...NEW_GAME_4, house: { draft: true, cardBonus: 'fixed', fortifyRule: 'adjacent', setupBatch: 5, seed: 1234 } } }), { after: 'openHouse' });
+  // v5.1 D: three decisions; personalities random and hidden ('Any') unless a player picks one under More.
+  const NG51: NewGameVM = {
+    ...NEW_GAME_4,
+    seats: NEW_GAME_4.seats.map((x, i) => ({ ...x, personality: i === 3 ? 'warlord' : undefined })),
+    maps: [
+      { id: 'classic', name: 'Classic', description: 'The board you know: six continents, 42 territories', seats: '2–4 players', thumbnail: null, disabled: false },
+      { id: 'true-world', name: 'True world', description: 'The same game on a truer map', seats: '2–4 players', thumbnail: null, disabled: false },
+    ],
+    mapId: 'classic',
+    personalities: [
+      { id: 'turtle', name: 'Turtle', line: 'Holds what it has and keeps its word' },
+      { id: 'opportunist', name: 'Opportunist', line: 'Takes what is loose' },
+      { id: 'warlord', name: 'Warlord', line: 'Attacks first and remembers' },
+    ],
+  };
+  add('newgame-51', 'v5.1', 'New game · three decisions (More folded)', root({ screen: 'newGame', game: null, newGame: NG51 }));
+  add('newgame-51-more', 'v5.1', 'New game · More open', root({ screen: 'newGame', game: null, newGame: NG51 }), { after: 'openMore' });
   add('victory', 'Screens', 'Victory (intro banner)', root({ screen: 'victory', game: null, victory: VICTORY }));
   add('victory-full', 'Screens', 'Victory: awards + chart', root({ screen: 'victory', game: null, victory: VICTORY }), { after: 'skipVictoryIntro' });
 
@@ -351,7 +368,6 @@ export function fixtures(_W: number, _H: number): Fixture[] {
   // Watching
   add('ai-turn', 'Watching', 'AI turn · narration', game({ strip: STRIPS['ai-turn'], seats: chips(1), cards: null, battle: { attacker: { seat: COBALT, territory: 'India', armies: 9 }, defender: { seat: AMBER, territory: 'Siam', armies: 3 }, rolling: true, captured: null, tray: true } }), { dice: [[5, 5, 1], [2, 1]] });
   add('humans-out', 'Watching', 'All humans out', game({ strip: STRIPS['humans-out'], seats: chips(2, { 0: { eliminated: true, territories: 0, out: { by: AMBER, round: 11 } } }), cards: null }));
-  add('handoff', 'Watching', 'Hand-off cover', game({ strip: STRIPS.handoff, handoff: { seat: SAM, subline: '+9 armies waiting · 3 cards · set ready' }, cards: null }));
 
 
   // Banners
@@ -408,7 +424,21 @@ export function fixtures(_W: number, _H: number): Fixture[] {
   add('replay', 'v5', 'Replay · the war in ink', root({ screen: 'victory', game: { ...BASE_GAME, cards: null, replay: REPLAY }, victory: VICTORY }));
   add('victory-moments', 'v5', 'Recap · turning points', root({ screen: 'victory', game: null, victory: { ...VICTORY, moments: MOMENTS } }), { after: 'skipVictoryIntro' });
   add('name-card-history', 'v5', 'Name card · a stone\'s history', game({ strip: STRIPS.attack, cards: null, nameCard: { territory: 'Ural', continent: 'Asia', bonus: 7, owner: JOHN, armies: 19, x: Math.round(_W * 0.62), y: Math.round(_H * 0.42), key: 1, history: 'Held since round 3 · taken from Sage' } }));
-  add('handoff-mission', 'v5', 'Hand-off cover · secret mission', game({ strip: STRIPS.handoff, handoff: { seat: SAM, subline: '+9 armies waiting · 3 cards · set ready', mission: 'Your mission: hold Asia and Africa' }, cards: null }));
+  // v5.1 · decide, don't ask: whose turn as a filled ring, standing marks, the understanding tie, ask for peace
+  const standingSeats = (cur: number, o: Partial<Record<number, Partial<SeatChipVM>>> = {}) =>
+    chips(cur, {
+      0: { continents: ['australia'], cards: 3, ...(o[0] ?? {}) },
+      1: { standing: 'ally', standingReason: 'Slate is your ally · peace for 2 more rounds', grudgeTicks: 0, continents: ['europe'], cards: 2, ...(o[1] ?? {}) },
+      2: { standing: 'wary', standingReason: 'Ochre is wary of you · you took Siam last round', canAskPeace: true, grudgeTicks: 2, cards: 4, ...(o[2] ?? {}) },
+      3: { standing: 'hostile', standingReason: 'Sage is hostile · you broke the peace in round 4', grudgeTicks: 4, continents: ['south_america'], ...(o[3] ?? {}) },
+    });
+  add('seats-standing', 'v5.1', 'Seat strip · filled current ring, standing marks', game({ seats: standingSeats(0), strip: STRIPS.attack, cards: null }));
+  add('seats-even', 'v5.1', 'Seat strip · all four standings', game({ seats: standingSeats(0, { 1: { standing: 'even', standingReason: 'Slate is even with you · you share no border' }, 2: { standing: 'ally' }, 3: { standing: 'wary' } }), strip: STRIPS.attack, cards: null }));
+  add('seats-ai-turn', 'v5.1', 'Seat strip · an AI\'s turn (its ring filled)', game({ seats: standingSeats(2), strip: { ...STRIPS['ai-turn'], track: track('attack', { seat: AMBER, live: false, turnKey: '6:2' }), accent: 'amber', line: 'Ochre attacks Siam' }, cards: null }));
+  add('understanding', 'v5.1', 'Understanding tie · Ochre and Sage', game({ seats: standingSeats(0, { 2: { understandingWith: [3] }, 3: { understandingWith: [2] } }), strip: STRIPS.attack, cards: null }));
+  add('sam-turn', 'v5.1', 'Two humans · Sam\'s turn (no cover)', game({ seats: [JOHN, SAM, AMBER, EMERALD].map((seat, i) => ({ seat, current: i === 1, eliminated: false, territories: [14, 11, 9, 8][i] })), strip: STRIPS['sam-turn'], cards: null, holding: { seat: SAM, armies: 7, breakdown: '11 territories · Europe +5' } }));
+  add('occupy-collapsed', 'v5.1', 'Occupy · all but one, count folded', game({ strip: STRIPS['occupy-collapsed'], cards: null, seats: chips(0, { 0: { territories: 15 }, 1: { territories: 10 } }) }));
+  add('settings-folded', 'v5.1', 'Settings · four things, More folded', game({ strip: STRIPS.attack, cards: null }, { overlay: 'settings' }));
   add('reduced', 'Menu', 'Reduced motion on', game({ strip: STRIPS['attack-armed'], battle: ARMED, cards: null }, { reducedMotion: true, settings: { ...SETTINGS, reduceMotion: true } }), { dice: null });
   return F;
 }

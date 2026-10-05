@@ -2,8 +2,11 @@
 //
 // In game the only chrome is ink on the paper (docs/INK.md B5): the seat rings + the ensō menu at the
 // top; at the bottom the one line, the gold rule with the game's ensō, and the Turn Track pill with the
-// action pills; during a fight, the dice tray's header words. The breath line, the cards sheet, the
-// hand-off cover and the menu sheets come and go.
+// action pills; during a fight, the dice tray's header words. The breath line, the cards sheet and the
+// menu sheets come and go.
+// v5.1 (QUIETER §3, "decide, don't ask"): no hand-off cover and no cup. Whose turn is the turn line, the
+// current seat's filled ring and its name in pigment. A tap on a ring that can be asked for peace offers
+// 'Ask Sage for peace' in the one line with the one word 'Ask'; anything else puts the offer away.
 // v5: on victory the replay strip (the war re-soaked round by round) comes first and the recap waits for it;
 // the holding dab sits beside the seat mark; grudge ticks and voice lines live on the seat rings.
 //
@@ -17,7 +20,7 @@ import '@fontsource-variable/cormorant-garamond/wght.css';
 import '@fontsource-variable/cormorant-garamond/wght-italic.css';
 import './styles.css';
 import './mobile.css';
-import type { GameVM, MountUi, Screen, SeatChipVM, StripVM, UiIntent, ViewModel } from '../game/viewModel';
+import type { GameVM, MountUi, Screen, SeatChipVM, SeatRef, StripVM, UiIntent, ViewModel } from '../game/viewModel';
 import type { ViewportInsets } from '../render/BoardView';
 import { h, hashSeed, motion, setAttr, toggle } from './dom';
 import { boardTrayGeometry as trayGeometry, inkTrayTop } from '../shared/tray';
@@ -26,7 +29,7 @@ import { BattleHeader } from './hud/battle';
 import { CardsSheet } from './hud/cards';
 import { BottomStrip } from './hud/strip';
 import { TopStrip } from './hud/topstrip';
-import { Confirm, Handoff, Overlays } from './overlays';
+import { Confirm, Overlays } from './overlays';
 import { NewGameScreen } from './screens/newgame';
 import { TitleScreen } from './screens/title';
 import { VictoryScreen } from './screens/victory';
@@ -80,11 +83,13 @@ interface Instance {
 }
 let current: Instance | null = null;
 
-/** Gallery / test hook: poke local-only UI state (house rules drawer, victory intro). */
+/** Gallery / test hook: poke local-only UI state (the New game 'More' fold, victory intro). */
 export function uiDebug() {
   const c = current;
   return {
-    openHouseRules: () => c?.newGame.setHouseOpen(true),
+    openMore: (on = true) => c?.newGame.setMoreOpen(on),
+    /** v5.1: the house rules live in the 'More' fold now. */
+    openHouseRules: () => c?.newGame.setMoreOpen(true),
     skipVictoryIntro: () => c?.victory.showFull(),
   };
 }
@@ -137,27 +142,25 @@ export const mountUi: MountUi = (host, api) => {
     syncSay();
   };
   // The hint only speaks into a quiet moment of a human's own turn: never over a turn line, a fight,
-  // a hand-off, a sheet or a moved view, and never once the game is decided.
+  // a sheet or a moved view, and never once the game is decided.
   const hintQuiet = (v: ViewModel) => {
     const g = v.game;
-    return v.screen === 'game' && !v.overlay && !!g && !g.banner && !g.receipt && !g.handoff && !g.confirm && !g.viewMoved && !g.battle && !g.cards?.open && g.strip.track.live && !worldHolder(g);
+    return v.screen === 'game' && !v.overlay && !!g && !g.banner && !g.receipt && !g.confirm && !g.viewMoved && !g.battle && !g.cards?.open && g.strip.track.live && !worldHolder(g);
   };
   installLayout();
 
   const title = new TitleScreen(send);
   const newGame = new NewGameScreen(send);
   const victory = new VictoryScreen(send);
-  const handoff = new Handoff(send);
   const overlays = new Overlays(send);
   const confirm = new Confirm(send);
-  // "While you were away" (v4 A3): a paper sheet on the board over the HUD (and over a hand-off cover).
   // The war in ink (v5 C): the end-of-game time-lapse's paper strip; the recap is held back while it plays.
   const replay = new Replay(send);
   // A lost WebGL context (mobile GPUs drop it under memory pressure): a quiet pill while the board rebuilds.
   const lost = h('div', 'board-lost hidden', 'Reloading the board…');
   lost.setAttribute('role', 'status');
   lost.dataset.testid = 'board-lost';
-  root.append(hud, title.el, newGame.el, victory.el, handoff.el, replay.el, overlays.el, confirm.el, lost);
+  root.append(hud, title.el, newGame.el, victory.el, replay.el, overlays.el, confirm.el, lost);
   current = { newGame, victory };
 
   const screens: Partial<Record<Screen, HTMLElement>> = { title: title.el, newGame: newGame.el, victory: victory.el };
@@ -196,6 +199,7 @@ export const mountUi: MountUi = (host, api) => {
       if (next === 'newGame' && prev && prev !== 'boot') sheetDrop(ng);
       else if (prev === 'newGame') sheetLift(ng, null, () => resetSheet(ng));
     }
+    if (next === 'newGame' && prev !== 'newGame') newGame.onEnter();
     if (next === 'newGame') requestAnimationFrame(() => screen === 'newGame' && !vm?.overlay && newGame.focusFirstName());
     if (next !== 'boot' && boot) {
       const b = boot;
@@ -354,6 +358,26 @@ export const mountUi: MountUi = (host, api) => {
     return heldVm!;
   };
 
+  // v5.1 C: 'Ask Sage for peace', offered in the one line after a tap on that seat's ring. UI-local: it lives
+  // until 'Ask' is pressed, anything else is pressed, Esc, or the seat can no longer be asked.
+  let asking: SeatRef | null = null;
+  let acceptedHandoff: GameVM['handoff'] = null;
+  const setAsk = (seat: SeatRef | null) => {
+    if (seat?.id === asking?.id) return;
+    asking = seat;
+    strip.setAsk(seat);
+  };
+  const syncAsk = (g: GameVM) => {
+    if (!asking) return;
+    const c = g.seats.find((x) => x.seat.id === asking!.id);
+    if (!c?.canAskPeace || c.eliminated || g.confirm) setAsk(null);
+  };
+  top.onAsk = (c) => setAsk(c.seat);
+  strip.onAsk = (seat) => {
+    setAsk(null);
+    send({ type: 'askPeace', to: seat.id });
+  };
+
   let vm: ViewModel | null = null;
   let gameSeed = -1;
   // The game's turning points, kept from the replay for the recap when VictoryVM doesn't carry its own.
@@ -410,24 +434,25 @@ export const mountUi: MountUi = (host, api) => {
       strip.setHolding(g.holding);
       // Ambient motion yields to the strike (INK A1): the rule's glint and breath rest while dice roll.
       toggle(root, 'is-striking', !!g.battle?.rolling);
-      // The cup pours as the dice leave it (PLAN §2): toward the ink ring, under the fight header.
-      if (g.battle?.rolling && !prev?.game?.battle?.rolling) {
-        const hb = document.querySelector<HTMLElement>('[data-testid="battle"]')?.getBoundingClientRect();
-        top.pour(hb && hb.width > 0 ? { x: hb.left + hb.width / 2, y: hb.bottom + 36 } : { x: innerWidth / 2, y: innerHeight * 0.72 });
-      }
       battle.update(g.battle);
       announce.update(g.banner);
       syncSay();
       cards.update(g.cards);
-      handoff.update(g.handoff);
       confirm.update(g.confirm);
+      syncAsk(g);
+      // v5.1 A: there is no hand-off cover. A controller that still raises one (before its v5.1 pass lands)
+      // gets it accepted at once, so the turn simply passes: decide, don't ask.
+      if (g.handoff && g.handoff !== acceptedHandoff) {
+        acceptedHandoff = g.handoff;
+        queueMicrotask(() => send({ type: 'handoffAccept' }));
+      }
     } else if (!g && prev?.game) {
       strip.setHolding(null);
       battle.update(null);
       announce.update(null);
       cards.update(null);
-      handoff.update(null);
       confirm.update(null);
+      setAsk(null);
     }
     if (!prev || prev.overlay !== next.overlay || prev.settings !== next.settings || prev.screen !== next.screen || prev.rulesNotes !== next.rulesNotes || (next.overlay && prev.game !== next.game))
       overlays.update(next);
@@ -518,7 +543,7 @@ export const mountUi: MountUi = (host, api) => {
       return;
     }
     if (v.screen === 'game') {
-      if (g?.handoff && (e.key === 'Enter' || e.key === ' ')) (stop(), send({ type: 'handoffAccept' }));
+      if (asking && e.key === 'Escape') (stop(), setAsk(null));
       else if (focusedCtl && (e.key === 'Enter' || e.key === ' ')) e.stopPropagation();
       return;
     }
@@ -552,6 +577,11 @@ export const mountUi: MountUi = (host, api) => {
   wake();
 
   root.addEventListener('pointerdown', onPointerDown);
+  // v5.1 C: a press anywhere (the board included) but 'Ask' or a ring that can be asked puts the offer away.
+  const onAnyDown = (e: PointerEvent) => {
+    if (asking && !(e.target instanceof Element && e.target.closest('[data-testid="btn-askPeace"], .seat-chip.can-ask'))) setAsk(null);
+  };
+  window.addEventListener('pointerdown', onAnyDown, true);
   window.addEventListener('pointerup', clearDown);
   window.addEventListener('pointercancel', clearDown);
   root.addEventListener('pointerleave', clearDown);
@@ -576,6 +606,7 @@ export const mountUi: MountUi = (host, api) => {
       window.removeEventListener('resize', queueMeasure);
       window.removeEventListener('resize', onResizeScale);
       window.removeEventListener('pointerup', clearDown);
+      window.removeEventListener('pointerdown', onAnyDown, true);
       window.removeEventListener('pointercancel', clearDown);
       window.removeEventListener('keydown', onKey, true);
       root.remove();

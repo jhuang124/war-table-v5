@@ -90,7 +90,6 @@
 .form-tablet .slider { padding: 1.2rem 0; }
 .form-tablet .name-input { height: 2.75rem; }
 .form-tablet .swatch-pop .swatch { width: 2.75rem; height: 2.75rem; }
-.form-tablet .house-toggle { min-height: 2.75rem; }
 .form-tablet .btn.link, .form-tablet .btn.role-exit { min-height: 2.75rem; }
 .form-tablet .sp-btn { width: 2.75rem; height: 2.75rem; }
 /* The Turn Track's words are 44 px touch targets on their own (each word is its transparent box). */
@@ -291,22 +290,6 @@
 .form-phone.landscape .cards-sheet { max-width: 40rem; padding-bottom: calc(var(--sa-b) + 0.6rem); }
 .form-phone .cs-foot .btn { height: 2.75rem; }
 
-/* Hand-off: the cover stays deep; its content is a sheet at the bottom (pull down = start turn) */
-.form-phone .handoff { place-items: end center; }
-.form-phone .ho-box {
-  width: 100%; max-width: 36rem; gap: 0.6rem; background: rgba(16, 26, 48, 0.98);
-  padding: 0.3rem 1.5rem calc(var(--sa-b) + 1.25rem); border-radius: 0; border: 0; border-top: 1px solid var(--ivory-20);
-}
-.form-phone .ho-box .grab { align-self: stretch; }
-.form-phone .ho-emb { width: 4.5rem; height: 4.5rem; }
-.form-phone .ho-title { font-size: 2.5rem; }
-.form-phone .ho-sub { font-size: 1.125rem; margin-bottom: 0.35rem; }
-.form-phone .ho-box .btn.big { width: 100%; height: 3.75rem; font-size: 1.125rem; }
-.form-phone.landscape .ho-box { gap: 0.35rem; padding-bottom: calc(var(--sa-b) + 0.8rem); }
-.form-phone.landscape .ho-title { font-size: 1.5rem; }
-.form-phone.landscape .ho-emb { width: 3rem; height: 3rem; margin-bottom: 0; }
-.form-phone.landscape .ho-box .btn.big { height: 3.25rem; }
-
 /* ---- Title ---- */
 .form-phone.portrait .title-col {
   left: 0; right: 0; top: 0; bottom: 0; width: auto; transform: none; justify-content: space-between;
@@ -365,7 +348,6 @@
 .form-phone .seg-cards { gap: 1rem; }
 .form-phone .seg-cards .seg-label { font-size: 1.125rem; }
 .form-phone .seg-cards .seg-detail, .form-phone .seg-cards .seg-meta { font-size: 0.875rem; }
-.form-phone .house-toggle { min-height: 2.75rem; }
 .form-phone .house-grid { grid-template-columns: minmax(0, 1fr); gap: 0.9rem; }
 .form-phone .seed-input { max-width: none; height: 2.75rem; }
 .form-phone .ng-foot {
@@ -447,11 +429,10 @@
 .form-phone.landscape .v-scroll { gap: 0.85rem; }
 
 
-/* v3 table cues on phones: a narrower cup slot, the event line only (no ledger lines), no round label in the say row */
-.form-phone .seat-chip { --cup-slot: 1.75rem; }
-/* Only the seat holding the cup makes room for it (its name shows too): four seats and the ensō fit 390 px. */
-.form-phone .seat-chip:not(.current) { --cup-slot: 0.2rem; }
-.form-phone .ts-cup .cup-body { right: -0.2rem; bottom: -0.45rem; width: 2.35rem; height: 2.7rem; }
+/* v3 table cues on phones: the event line only (no ledger lines), no round label in the say row.
+   v5.1: no cup slot; the current seat's filled ring is the largest mark. */
+.form-phone .seat-chip.current .sc-ring { width: 3rem; height: 3rem; }
+.form-phone .settings-primary { grid-template-columns: 1fr; gap: 1rem; }
 .form-phone .sc-marks { height: 0.7rem; font-size: 0.875rem; }
 .form-phone .sc-cards svg { display: none; }
 .form-phone .st-round { display: none; }
@@ -478,3 +459,12 @@
 /* Grudge ticks under 400 px wide: the rings sit ~3.4 rem apart and the marks row under each has no room for
    them beside the continent ticks and the card count (8 ticks ran into the next seat's marks at 390 px). */
 @media (max-width: 399.98px) { .form-phone .sc-grudges { display: none !important; } }
+
+/* v5.1 D on phones: folded, a seat is one row (emblem, name, Human · AI, ×); More open, the AI rows return to
+   the stacked layout. The fold's own grid is one column, like the sheet's. */
+.form-phone .ng-sheet:not(.more-open) .seat-row { grid-template-columns: 2.9rem minmax(0, 1fr) auto 2.75rem; grid-template-areas: 'emb name kind rm'; }
+.form-phone .ng-sheet.more-open .seat-row { grid-template-columns: 2.9rem minmax(0, 1fr) minmax(0, 1fr) 2.75rem; }
+.form-phone.landscape .ng-sheet.more-open .seat-row { grid-template-columns: 2.9rem minmax(6rem, 1fr) auto minmax(0, 13rem) 2.75rem; }
+.form-phone .ng-more-grid { grid-template-columns: minmax(0, 1fr); gap: 0.35rem; }
+.form-phone .ng-more-grid > .ng-label { padding-top: 0.9rem; }
+.form-phone .seg-pers { flex-wrap: wrap; }

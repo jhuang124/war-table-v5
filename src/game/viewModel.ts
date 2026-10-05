@@ -142,6 +142,11 @@ export interface NewGameVM {
   trucesApply?: boolean;
   /** Additive (v5 G): the Missions rule applies (3–4 seats, or 2 with Neutral armies on). */
   missionsApply?: boolean;
+  /**
+   * Additive (v5.1 D, HUD builder): the 'More' fold on New game is open (map, difficulty, personalities, setup,
+   * house rules). Absent = the UI keeps its own fold state (closed on entry).
+   */
+  advancedOpen?: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -272,6 +277,11 @@ export interface CountVM {
   value: number;
   min: number;
   max: number;
+  /**
+   * Additive (v5.1 E2, HUD builder): the default is already chosen (occupy moves all but one): the HUD shows the
+   * primary (`Move N`) and the number as a bare word, and the stepper / slider only once the number is touched.
+   */
+  collapsed?: boolean;
 }
 
 export interface StripVM {
@@ -592,6 +602,8 @@ export type UiIntent =
   | { type: 'house'; patch: Partial<HouseRulesDraft> }
   /** Additive (v3): pick a map pack. */
   | { type: 'map'; id: string }
+  /** Additive (v5.1 D, HUD builder): the 'More' word on New game folds the rest open / shut. */
+  | { type: 'more'; open: boolean }
   | { type: 'start' }
   // in game
   | { type: 'button'; id: ButtonId }
