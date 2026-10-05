@@ -1,4 +1,5 @@
-// Two frozen moments for the v3 review: the cup pouring (~150 ms into the roll) and the elimination topple
+// Two frozen moments for the v3 review: the dice in flight (~150 ms into the roll; v5.1 B: no cup, they pour
+// in from the attacker's side of the ring) and the elimination topple
 // (mid-topple, and at the last disc). The board runs in slow motion (__debug.anim.speed) and the DOM's own
 // animations are paused at their frame, so each shot is the beat. A tool, not in test:e2e.
 // Usage: npx tsx tests/e2e/board-moments.ts [outDir]   (server on RISK_URL)
@@ -22,15 +23,10 @@ const press = async (id: string) => {
   const b = (await page.locator(`[data-testid="${id}"]`).first().boundingBox())!;
   await page.mouse.click(b.x + b.width / 2, b.y + b.height / 2);
 };
-const cover = async () => {
-  if ((await page.evaluate(() => window.__risk.ui().gold)) === 'handoff') {
-    await page.waitForTimeout(300);
-    await press('handoff-accept');
-  }
-  await page.waitForTimeout(1800);
-};
+// (v5.1 A: no hand-off cover; the turn line dries on its own)
+const cover = () => page.waitForTimeout(1800);
 
-// --- the pour ------------------------------------------------------------------------------------------
+// --- the dice in flight -----------------------------------------------------------------------------------
 await loadScenario(page, restBoard({ kind: 'attack' }, (s) => void (s.territories.siberia = { owner: 1, armies: 3 })));
 await cover();
 await clickT(page, 'ural');
@@ -39,22 +35,10 @@ await clickT(page, 'siberia');
 await page.waitForTimeout(400);
 await speed(page, 0.05);
 await press('btn-roll');
-// the cup's tip and the dice's flight are WAAPI animations: hold them all at 150 ms
-await page.waitForFunction(() => document.getAnimations().some((a) => (a.effect as KeyframeEffect | null)?.target instanceof Element && ((a.effect as KeyframeEffect).target as Element).closest('.ts-cup, .cup-die')), null, { timeout: 3000 }).catch(() => undefined);
-await page.evaluate(() => {
-  for (const a of document.getAnimations()) {
-    const t = (a.effect as KeyframeEffect | null)?.target as Element | null;
-    if (t && t.closest('.ts-cup, .cup-die')) {
-      a.pause();
-      const delay = Number((a.effect as KeyframeEffect).getTiming().delay) || 0;
-      a.currentTime = 150 + (t.closest('.cup-die') ? delay * 0.5 : 0);
-    }
-  }
-});
-await page.waitForTimeout(120);
-await page.screenshot({ path: `${OUT}/moment-pour-150ms.png` });
-await page.screenshot({ path: `${OUT}/moment-pour-150ms-closeup.png`, clip: { x: 0, y: 0, width: 760, height: 620 } });
-await page.evaluate(() => document.getAnimations().forEach((a) => a.play()));
+// the dice fly on the board (WebGL) at 1/20 speed: 150 ms of board time is 3 s of wall time
+await page.waitForTimeout(3000);
+await page.screenshot({ path: `${OUT}/moment-roll-150ms.png` });
+await page.screenshot({ path: `${OUT}/moment-roll-150ms-closeup.png`, clip: { x: 0, y: 0, width: 760, height: 620 } });
 await speed(page, 1);
 await idle(page);
 

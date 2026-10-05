@@ -1,12 +1,14 @@
 // v3 surfaces (logic lane): the engine's new features on screen, on the real board + HUD.
 //   1. The map picker: True World is picked, the game starts on it (through a reload onto its board) and a
-//      reload + Continue reopens it on True World. An AI seat shows its personality in the strip.
-//   2. A scripted AI → human proposal: the AI's truce sentence lands in the ledger; on John's turn the line is
-//      that sentence and the dock says Decline / Accept, Accept holding the one gold (sampled per frame, the
-//      track's underline yields); Accept answers it and the ledger says so.
-//   3. John's own offer: `Truce` in Attack lights the rings that can take one; a tap on a lit ring proposes.
-//   4. The strip: an AI's personality word and its grudge tick ("Holds a grudge against John").
-//   5. A 2-player game from the New game screen: the grey neutral seat, dimmed, with its count, no cup.
+//      reload + Continue reopens it on True World (v5.1 D: the picker is folded under More). Personalities
+//      default to Any (random and hidden): the strip shows none until that AI has spoken.
+//   2–3. Standing (v5.1 C, replaces the truce offer): __risk.standing() has a value for every AI seat, each AI
+//      ring carries its seat-standing mark, a hover writes the reason in the one line, a tap on a ring that
+//      can be asked offers "Ask X for peace" with a bare Ask word (one gold per sampled frame), and Ask is
+//      answered at once: "X agrees · three rounds" or "X refuses · …".
+//   4. The strip: an AI's personality word once it has spoken, and its grudge tick ("Holds a grudge against John").
+//   5. A 2-player game from the New game screen with Neutral armies on (under More): the grey neutral seat,
+//      dimmed, with its count, no cup (v5.1 B: there is no cup at all).
 //   6. A new build: the event line's "Update ready · reload" (a mocked controllerchange), and a reload at
 //      once off the game.
 //   7. True World under stones (?map=true-world) at 1440×900, iphone, iphone-land: no stone over another
@@ -14,8 +16,8 @@
 // Screenshots go to artifacts/surfaces/.
 import { mkdirSync } from 'node:fs';
 import type { Page } from 'playwright';
-import { BASE, Q, check, clearStorage, clickBtn, finish, idle, loadScenario, open, place, rendered, scenario, seg, state, ui } from './lib';
-import { openDevice, type DeviceName } from './mobile-lib';
+import { BASE, Q, check, clearStorage, clickBtn, finish, idle, loadScenario, open, scenario, state, ui } from './lib';
+import { longPress, openDevice, type DeviceName } from './mobile-lib';
 import type { GameState } from '../../src/engine';
 
 const OUT = 'artifacts/surfaces';
@@ -87,6 +89,10 @@ if (run('1')) {
   check((await page.evaluate(() => window.__risk.map())) === 'classic', 'a fresh page boots on Classic', results);
   await clickBtn(page, 'title-new');
   await settleUi(page, 700);
+  // v5.1 D: the map picker is folded under More
+  check(!(await page.locator('[data-testid="map-picker"]').isVisible()), 'the map picker is folded away until More', results);
+  await clickBtn(page, 'ng-more');
+  await settleUi(page, 500);
   const maps = await page.locator('[data-testid="map-picker"] .map-opt').evaluateAll((els) =>
     els.map((e) => ({
       id: (e as HTMLElement).dataset.map,
@@ -102,7 +108,7 @@ if (run('1')) {
     `the picker offers Classic (picked) and True World, each a thumbnail, a line and its seats (${JSON.stringify(maps)})`,
     results,
   );
-  // AI seats: three different personalities by default, each word titled with its line
+  // AI seats: personality 'Any' by default (v5.1 D: random and hidden), each word still titled with its line
   const pers = await page.evaluate(() =>
     [1, 2, 3].map((i) => ({
       on: document.querySelector(`[data-testid="seat-pers-${i}"] .seg-opt.on`)?.textContent,
@@ -110,7 +116,7 @@ if (run('1')) {
       title: (document.querySelector(`[data-testid="seat-pers-${i}-warlord"]`) as HTMLElement | null)?.title,
     })),
   );
-  check(pers.map((p) => p.on).join(',') === 'Turtle,Opportunist,Warlord' && pers.every((p) => !!p.line && /Remembers who hurt it/.test(p.title ?? '')), `AI seats default to Turtle, Opportunist, Warlord, the chosen line under each (${JSON.stringify(pers)})`, results);
+  check(pers.map((p) => p.on).join(',') === 'Any,Any,Any' && pers.every((p) => !p.line && /Remembers who hurt it/.test(p.title ?? '')), `AI seats default to Any (random, hidden), no line under it (${JSON.stringify(pers)})`, results);
   await clickBtn(page, 'map-true-world');
   await settleUi(page);
   const picked = await page.evaluate(() => ({
@@ -119,18 +125,15 @@ if (run('1')) {
   }));
   check(picked.tw === 'true' && +picked.ul > 0.9, `True World picked: its name carries the brush underline (${JSON.stringify(picked)})`, results);
   await shot(page, 'newgame-1440x900');
-  // House rules: Neutral armies and Truces, both on
-  await clickBtn(page, 'house-toggle');
-  await settleUi(page, 400);
+  // House rules (v5.1 D: in the fold, off by default; no Truces switch: standing is the game, not a rule)
   const house = await page.evaluate(() => ({
     neutral: document.querySelector('[data-testid="house-neutral"]')?.getAttribute('aria-checked'),
     neutralNa: document.querySelector('[data-testid="house-neutral"]')?.classList.contains('na'),
-    truces: document.querySelector('[data-testid="house-truces"]')?.getAttribute('aria-checked'),
+    truces: document.querySelectorAll('[data-testid="house-truces"]').length,
   }));
-  check(house.neutral === 'true' && house.neutralNa === true && house.truces === 'true', `house rules: Neutral armies on (dimmed: 4 seats) and Truces on (${JSON.stringify(house)})`, results);
-  await page.locator('[data-testid="house-truces"]').scrollIntoViewIfNeeded();
+  check(house.neutral === 'false' && house.neutralNa === true && house.truces === 0, `house rules: Neutral armies off (dimmed: 4 seats), no Truces switch (${JSON.stringify(house)})`, results);
+  await page.locator('[data-testid="house-seed"]').scrollIntoViewIfNeeded();
   await shot(page, 'newgame-house-1440x900');
-  await clickBtn(page, 'house-toggle');
   // Start: the page reloads onto True World and deals the game there
   await Promise.all([page.waitForEvent('framenavigated', { timeout: 15000 }), clickBtn(page, 'ng-start')]);
   await page.waitForFunction(() => !!window.__risk && window.__risk.ui().screen === 'game' && !!window.__risk.getState(), null, { timeout: 20000 });
@@ -148,9 +151,11 @@ if (run('1')) {
       title: c.title,
     })),
   );
+  // v5.1 D: a personality shows only once that AI has spoken (its first voice line reveals it)
+  const known = await page.evaluate(() => (window.__risk as unknown as { standing(): { seat: number; personality: string | null }[] }).standing());
   check(
-    strip[0].pers === null && strip.slice(1).every((c, i) => c.pers === ['Turtle', 'Opportunist', 'Warlord'][i] || c.pers === 'voice') && /Keeps its word/.test(strip[1].title),
-    `the strip: each AI's personality under its name (v4: 14 px italic), its line as the title (${strip.map((c) => `${c.name}:${c.pers}`).join(' ')})`,
+    strip[0].pers === null && strip.slice(1).every((c, i) => c.pers === 'voice' || (c.pers || null) === (known[i + 1]?.personality ?? null)),
+    `the strip: an AI's personality only once it has spoken (${strip.map((c, i) => `${c.name}:${c.pers ?? '-'}/${known[i]?.personality ?? '-'}`).join(' ')})`,
     results,
   );
   await page.waitForTimeout(1800); // the turn banner dries
@@ -180,8 +185,10 @@ if (run('1')) {
     maps: document.querySelectorAll('[data-testid="map-picker"] .map-opt').length,
     pers: [1, 2, 3].map((i) => document.querySelector(`[data-testid="seat-pers-${i}"] .seg-opt.on`)?.textContent).join(','),
   }));
-  check(seen.maps === 2 && seen.pers === 'Turtle,Opportunist,Warlord', `iphone-land New game: the map picker and each AI's personality (${JSON.stringify(seen)})`, results);
+  check(seen.maps === 2 && seen.pers === 'Any,Any,Any', `iphone-land New game: the map picker and each AI's personality (${JSON.stringify(seen)})`, results);
   await shot(page, 'newgame-iphone-land');
+  await page.locator('[data-testid="ng-more"]').tap();
+  await settleUi(page, 500);
   await page.locator('[data-testid="seat-pers-1"]').scrollIntoViewIfNeeded();
   await shot(page, 'newgame-iphone-land-seats');
   allErrors.push(...ctx.errors);
@@ -189,15 +196,11 @@ if (run('1')) {
 }
 
 // ---------------------------------------------------------------------------------------------------------
-// 2–4. Diplomacy on screen (Classic, 1440×900)
+// 2–3. Standing on screen (v5.1 C: replaces the truce offer; Classic, 1440×900 and iphone-land)
 // ---------------------------------------------------------------------------------------------------------
-/**
- * A board where Cobalt (seat 1, an AI Turtle) faces John's big stacks on its border and is the one to move:
- * its truce logic offers John a truce at the start of its turn (John is the only threat it can ask). Amber
- * and Emerald stay classic AIs (they never propose, and always decline).
- */
-function offerBoard(): GameState {
-  const s = scenario(
+/** John's turn (Place), his big stacks on Cobalt's, Amber's and Emerald's borders. */
+function standingBoard(): GameState {
+  return scenario(
     { ural: [0, 12], ukraine: [0, 12], afghanistan: [0, 10], middle_east: [0, 9], siberia: [1, 1], china: [1, 1], india: [1, 1] },
     { kind: 'reinforce', remaining: 3, mustTrade: false, placed: {}, midTurn: false },
     {
@@ -205,101 +208,100 @@ function offerBoard(): GameState {
       mutate: (st) => {
         st.config = { ...st.config, diplomacy: true };
         st.players[1].personality = 'turtle';
-        st.currentPlayer = 1;
-        st.firstPlayer = 1;
       },
     },
   );
-  return s;
 }
+type StandingRow = { seat: number; name: string; kind: string; standing: string | null; reason: string | null; canAskPeace: boolean; understandingWith: number[] };
+const standingOf = (page: Page) => page.evaluate(() => (window.__risk as unknown as { standing(): StandingRow[] }).standing()) as Promise<StandingRow[]>;
+const lineText = (page: Page) => page.evaluate(() => document.querySelector('[data-testid="line"]')?.textContent?.trim() ?? '');
+const STANDINGS = ['ally', 'even', 'wary', 'hostile'];
 
 if (run('2')) {
   const ctx = await open();
   const { page } = ctx;
-  const s0 = offerBoard();
-  await loadScenario(page, s0, { waitIdle: false });
-  // the AI turns play (instant), then John's turn opens
-  await page.waitForFunction(() => {
-    const s = window.__risk.getState();
-    return !!s && s.currentPlayer === 0 && s.turn > 5 && window.__risk.isIdle();
-  }, null, { timeout: 30000 });
-  await rendered(page);
-  const ledger = await page.evaluate(() => window.__risk.ledger());
-  const proposed = ledger.find((l) => l.kind === 'truce' && /^Cobalt proposes a truce with John · \d rounds?( · .+)?$/.test(l.text));
-  check(!!proposed, `the AI proposed: "${proposed?.text ?? (ledger.filter((l) => l.kind === 'truce').map((l) => l.text).join(' | ') || 'no truce line')}" is in the ledger`, results);
+  await loadScenario(page, standingBoard());
   await page.waitForTimeout(1700); // the turn banner dries
-  let u = (await ui(page)) as Awaited<ReturnType<typeof ui>> & { offer?: { text: string; buttons: string[] } | null };
-  // v4 (A5): the offer waits on its own line; the strip's line and the one gold stay with the player's step
-  check(!!u.offer && /^Cobalt proposes a truce with John · \d rounds?( · .+)?$/.test(u.offer.text) && u.offer.buttons.join(' / ') === 'Decline / Accept' && u.gold !== 'button:acceptTruce', `John's turn: the offer waits on its own line ("${u.offer?.text}"), its words ${u.offer?.buttons.join(' / ')}, the gold stays ${u.gold}`, results);
-  const dock = await page.evaluate(() => {
-    const acc = document.querySelector('[data-testid="btn-acceptTruce"]');
-    const dec = document.querySelector('[data-testid="btn-declineTruce"]');
-    const cur = document.querySelector('.tr-seg.is-current');
-    return {
-      acceptRinged: !!acc?.classList.contains('gold') && getComputedStyle(acc!.querySelector('.btn-ring')!).display !== 'none',
-      declineBare: !!dec && !dec.classList.contains('gold') && getComputedStyle(dec.querySelector('.btn-ring')!).display === 'none',
-      trackGold: !!cur?.classList.contains('gold'),
-    };
-  });
-  check(!dock.acceptRinged && dock.declineBare && dock.trackGold, `v4: Accept and Decline are bare words, the phase underline keeps the gold (${JSON.stringify(dock)})`, results);
-  const g = await goldOver(page, 1200);
-  check(g.max === 1, `one gold at a time while the offer waits: max ${g.max} per frame (${g.worst.join(', ')})`, results);
-  await shot(page, 'truce-offer-1440x900');
-  await clickBtn(page, 'btn-acceptTruce');
-  await idle(page);
-  const after = (await state(page))!;
-  const lines = await page.evaluate(() => window.__risk.ledger().filter((l) => l.kind === 'truce').map((l) => l.text));
+  const st = await standingOf(page);
+  const ais = st.filter((r) => r.kind === 'ai');
   check(
-    (after.diplomacy?.truces ?? []).some((t) => t.from === 1 && t.to === 0) && lines.some((l) => /^John accepts Cobalt's truce · until round \d+$/.test(l)),
-    `Accept answers it: a truce between Cobalt and John, and the ledger says "${lines[lines.length - 1]}"`,
+    ais.length === 3 && ais.every((r) => STANDINGS.includes(r.standing ?? '') && !!r.reason) && st.filter((r) => r.kind === 'human').every((r) => r.standing === null),
+    `__risk.standing(): a value and a reason for every AI seat (${ais.map((r) => `${r.name} ${r.standing}`).join(' · ')})`,
     results,
   );
+  const marks = await page.evaluate(() =>
+    [1, 2, 3].map((i) => {
+      const m = document.querySelector(`[data-testid="seat-standing-${i}"]`);
+      return m ? ([...m.classList].find((c) => c.startsWith('st-')) ?? 'mark') : null;
+    }),
+  );
+  const johnMark = await page.locator('[data-testid="seat-standing-0"]').isVisible().catch(() => false);
+  check(marks.every((m, i) => m === `st-${ais[i].standing}`) && !johnMark, `each AI ring carries its standing mark, John's none shown (${marks.join(', ')})`, results);
+  // a hover over a ring writes its reason in the one line; leaving puts it away
+  const who = ais.find((r) => r.canAskPeace) ?? ais[0];
+  const ring = page.locator(`[data-testid="seat-${who.seat}"]`);
+  const box = (await ring.boundingBox())!;
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await page.waitForFunction((r) => window.__risk.ui().line === r, who.reason, { timeout: 2000 }).catch(() => undefined);
+  let u = await ui(page);
+  check(u.line === who.reason, `hover on ${who.name}'s ring: the line says "${u.line}" (reason "${who.reason}")`, results);
+  await page.mouse.move(720, 500);
+  await page.waitForFunction((r) => window.__risk.ui().line !== r, who.reason, { timeout: 2000 }).catch(() => undefined);
   u = await ui(page);
-  check(!u.buttons.includes('Accept') && u.gold !== 'button:acceptTruce', `the dock is John's again (${u.buttons.join(' / ') || 'no buttons'}, gold ${u.gold})`, results);
-  // --- 3. John's own offer, from Attack ---------------------------------------------------------------
-  await place(page, 'ural');
-  await idle(page);
-  await seg(page, 'attack');
-  await idle(page);
+  check(u.line !== who.reason, `leaving the ring puts the reason away ("${u.line}")`, results);
+  await shot(page, 'standing-marks-1440x900');
+  // a tap on a ring that can be asked: "Ask X for peace" in the line, a bare Ask word
+  check(ais.some((r) => r.canAskPeace), `on John's turn some AI can be asked (${ais.filter((r) => r.canAskPeace).map((r) => r.name).join(', ') || 'none'})`, results);
+  await ring.click();
+  const ask = `Ask ${who.name} for peace`;
+  await page.mouse.move(720, 500);
+  await page.waitForFunction((t) => (document.querySelector('[data-testid="line"]')?.textContent ?? '').includes(t), ask, { timeout: 2000 }).catch(() => undefined);
+  const askBtn = page.locator('[data-testid="btn-askPeace"]');
+  const bare = await askBtn.evaluate((b) => !b.classList.contains('gold') && (b.textContent ?? '').trim() === 'Ask').catch(() => false);
+  check((await lineText(page)).includes(ask) && (await askBtn.isVisible()) && bare, `a tap on ${who.name}'s ring: "${await lineText(page)}" and a bare "Ask" word`, results);
+  const g = await goldOver(page, 1000);
+  check(g.max === 1, `one gold at a time while Ask waits: max ${g.max} per frame (${g.worst.join(', ')})`, results);
+  await shot(page, 'standing-ask-1440x900');
+  // Ask: answered at once, in one sentence
+  const n0 = (await page.evaluate(() => window.__risk.ledger())).length;
+  await askBtn.click();
+  await page.waitForFunction((n) => window.__risk.ledger().length > n, n0, { timeout: 3000 }).catch(() => undefined);
   u = await ui(page);
-  check(u.buttons.join('/') === 'Truce' && u.gold === 'segment:attack', `Attack: a bare "Truce" in the secondary slot (${u.buttons.join('/')}; gold ${u.gold})`, results);
-  await clickBtn(page, 'btn-truce');
-  await settleUi(page, 400);
-  const lit = await page.evaluate(() => [...document.querySelectorAll<HTMLElement>('.seat-chip.truce-target')].map((c) => c.querySelector('.sc-name')?.textContent));
-  const line = (await ui(page)).line;
-  check(lit.join(',') === 'Amber,Emerald' && /^Offer a 3-round truce · click a seat$/.test(line), `Truce lights the rings that can take one (${lit.join(', ')}; Cobalt already has one) and the line says "${line}"`, results);
-  await shot(page, 'truce-pick-1440x900');
-  await page.locator('.seat-chip.truce-target').first().click();
-  await idle(page);
-  const lines2 = await page.evaluate(() => window.__risk.ledger().filter((l) => l.kind === 'truce').map((l) => l.text));
-  check(lines2.includes('John proposes a truce with Amber · 3 rounds') && lines2.includes("Amber turns down John's truce"), `a lit ring proposes 3 rounds; a classic AI turns it down (${lines2.slice(-2).join(' | ')})`, results);
-  // the ledger with the truce lines
-  await page.waitForTimeout(300);
-  await clickBtn(page, 'events');
-  await settleUi(page, 500);
-  const ledgerShown = await page.evaluate(() => [...document.querySelectorAll('[data-testid="log"] .log-line.kind-truce')].map((l) => l.textContent));
-  check(ledgerShown.length >= 3, `the ledger sheet prints the truce sentences (${ledgerShown.length} lines)`, results);
-  await shot(page, 'ledger-truce-1440x900');
-  await page.keyboard.press('Escape');
+  const answer = new RegExp(`^${who.name} (agrees · three rounds|refuses( · .+)?)$`);
+  check(answer.test(u.line), `Ask is answered at once: "${u.line}"`, results);
+  const lines = await page.evaluate(() => window.__risk.ledger().filter((l) => l.kind === 'truce').map((l) => l.text));
+  const after = (await standingOf(page)).find((r) => r.seat === who.seat)!;
+  const agreed = /agrees/.test(u.line);
+  check(
+    lines.some((l) => l.startsWith(`${who.name} ${agreed ? 'agrees' : 'refuses'}`)) && !after.canAskPeace && (!agreed || after.standing === 'ally'),
+    `the ledger keeps the answer ("${lines[lines.length - 1]}"); ${who.name} is now ${after.standing}, can be asked again: ${after.canAskPeace}`,
+    results,
+  );
+  check(
+    !(await askBtn.isVisible()) && (await page.locator('[data-testid="btn-truce"], [data-testid="btn-acceptTruce"], [data-testid="btn-declineTruce"]').count()) === 0,
+    'no Ask word left, and no Truce / Accept / Decline anywhere',
+    results,
+  );
   allErrors.push(...ctx.errors);
   await ctx.browser.close();
 }
 
-// the same offer at phone-landscape size (screenshot + the dock's words)
+// the same marks at phone-landscape size: a long-press on a ring writes the reason
 if (run('2')) {
   const ctx = await openDevice('iphone-land');
   const { page } = ctx;
-  const s0 = offerBoard();
-  await loadScenario(page, s0, { waitIdle: false });
-  await page.waitForFunction(() => {
-    const s = window.__risk.getState();
-    return !!s && s.currentPlayer === 0 && s.turn > 5 && window.__risk.isIdle();
-  }, null, { timeout: 30000 });
-  await rendered(page);
+  await loadScenario(page, standingBoard());
   await page.waitForTimeout(1700);
-  const u = (await ui(page)) as Awaited<ReturnType<typeof ui>> & { offer?: { text: string; buttons: string[] } | null };
-  check(u.offer?.buttons.join(' / ') === 'Decline / Accept', `iphone-land: the offer's Decline / Accept (${u.offer?.buttons.join(' / ') ?? ''})`, results);
-  await shot(page, 'truce-offer-iphone-land');
+  const st = (await standingOf(page)).filter((r) => r.kind === 'ai');
+  const marks = await page.locator('[data-testid^="seat-standing-"]:not(.hidden)').count();
+  check(marks === st.length && st.every((r) => STANDINGS.includes(r.standing ?? '')), `iphone-land: a standing mark on each AI ring (${marks} marks; ${st.map((r) => r.standing).join(', ')})`, results);
+  const box = (await page.locator(`[data-testid="seat-${st[0].seat}"]`).boundingBox())!;
+  const said = await longPress(ctx, box.x + box.width / 2, box.y + box.height / 2, 800, async () => {
+    await page.waitForFunction((r) => window.__risk.ui().line === r, st[0].reason, { timeout: 1500 }).catch(() => undefined);
+    return (await ui(page)).line;
+  });
+  check(said === st[0].reason, `iphone-land: a long-press on ${st[0].name}'s ring writes "${said}"`, results);
+  await shot(page, 'standing-iphone-land');
   allErrors.push(...ctx.errors);
   await ctx.browser.close();
 }
@@ -321,6 +323,30 @@ for (const form of run('4') ? (['1440x900', 'iphone-land'] as const) : []) {
   });
   await loadScenario(page, s);
   await page.waitForTimeout(1700);
+  // v5.1 D: personalities are hidden until that AI has spoken: none of the three has yet
+  const hidden = await page.evaluate(() =>
+    [...document.querySelectorAll<HTMLElement>('.seat-chip')].slice(1).map((c) => {
+      const p = c.querySelector<HTMLElement>('.sc-pers');
+      return p && getComputedStyle(p).display !== 'none' && !p.classList.contains('hidden') ? p.textContent || null : null;
+    }),
+  );
+  check(hidden.every((p) => !p), `${form}: no AI personality shown before it has spoken (${hidden.join(', ')})`, results);
+  // each has spoken (the UI meta's revealed seats, as its first voice line writes them): written before the
+  // page boots on the next load (once), then resume
+  await page.addInitScript((id) => {
+    if (sessionStorage.getItem('surf.revealed')) return;
+    sessionStorage.setItem('surf.revealed', '1');
+    const k = 'risk3d.ui.v1';
+    const ui = JSON.parse(localStorage.getItem(k) ?? '{}');
+    ui.game = { ...(ui.game ?? {}), id, revealed: [1, 2, 3] };
+    localStorage.setItem(k, JSON.stringify(ui));
+  }, s.id);
+  await page.reload();
+  await page.waitForFunction(() => !!window.__risk);
+  await page.locator('[data-testid="title-continue"]').click();
+  await page.waitForFunction(() => window.__risk.ui().screen === 'game' && !!window.__risk.getState());
+  await idle(page);
+  await page.waitForTimeout(1700);
   const marks = await page.evaluate(() => {
     const g = document.querySelector<HTMLElement>('[data-testid="seat-grudge-1"]');
     return {
@@ -333,7 +359,7 @@ for (const form of run('4') ? (['1440x900', 'iphone-land'] as const) : []) {
   const john = 'rgb(195, 155, 140)'; // Vermilion's light
   if (form === '1440x900') {
     check(!!marks.grudge && marks.grudge.title === 'Holds a grudge against John' && marks.grudge.color === john && marks.others === 1, `Cobalt (grudge 3.2 against John) has one brush tick in John's colour, "${marks.grudge?.title}"; Emerald's 1.4 shows nothing (${JSON.stringify(marks.grudge)})`, results);
-    check(marks.pers.slice(1).join(',') === 'Warlord,Turtle,Opportunist', `each AI's personality word under its name (${marks.pers.join(', ')})`, results);
+    check(marks.pers.slice(1).join(',') === 'Warlord,Turtle,Opportunist', `once spoken, each AI's personality word under its name (${marks.pers.join(', ')})`, results);
   } else {
     check(marks.pers.every((p) => p === null) && /^Warlord · /.test(marks.titles[1]), `phones: no personality words on the strip, the title carries it ("${marks.titles[1]}")`, results);
   }
@@ -358,6 +384,11 @@ for (const form of run('5') ? (['1440x900', 'iphone-land'] as const) : []) {
     await clickBtn(page, 'seat-remove-3');
     await clickBtn(page, 'seat-remove-2');
     await settleUi(page, 300);
+    // v5.1 D: Neutral armies is a house rule under More, off by default
+    await clickBtn(page, 'ng-more');
+    await settleUi(page, 300);
+    await clickBtn(page, 'house-neutral');
+    await page.waitForFunction(() => document.querySelector('[data-testid="house-neutral"]')?.getAttribute('aria-checked') === 'true', null, { timeout: 2000 });
     await clickBtn(page, 'ng-start');
   } else {
     // (the phone New game is covered by mobile-flow; start the same 2-player table through the hook)
@@ -370,15 +401,14 @@ for (const form of run('5') ? (['1440x900', 'iphone-land'] as const) : []) {
   const n = s.players.find((p) => p.neutral);
   const seat = await page.evaluate(() => {
     const c = document.querySelector<HTMLElement>('.seat-chip.neutral');
-    const cup = document.querySelector<HTMLElement>('[data-testid="cup"] .cup-body')?.getBoundingClientRect();
-    const r = c?.querySelector('.sc-ring')?.getBoundingClientRect();
+    const cups = document.querySelectorAll('[data-testid="cup"], .cup-body').length;
     return c
       ? {
           name: c.querySelector('.sc-name')?.textContent,
           terr: c.querySelector('.sc-terr')?.textContent,
           opacity: +getComputedStyle(c).opacity,
           current: c.classList.contains('current'),
-          cupNear: !!cup && !!r && Math.abs(cup.right - r.left) < 30 && Math.abs(cup.bottom - r.bottom) < 20,
+          cups,
         }
       : null;
   });
@@ -386,7 +416,7 @@ for (const form of run('5') ? (['1440x900', 'iphone-land'] as const) : []) {
   const neutralTiles = Object.values(grey).filter((t) => t.owner === n?.id).length;
   // Dealt 14; by the time the strip is read the AI may already have taken one or two, so accept 1–14.
   check(!!n && (n.color as string) === 'neutral' && n.name === 'Neutral' && neutralTiles >= 1 && neutralTiles <= 14, `${form}: a 2-player game deals the grey neutral seat (${n?.name}, ${n?.color}, ${neutralTiles} territories)`, results);
-  check(!!seat && seat.name === 'Neutral' && seat.terr === String(neutralTiles) && Math.abs(seat.opacity - 0.6) < 0.01 && !seat.current && !seat.cupNear, `${form}: its ring keeps its count, dimmed, never current, no cup (${JSON.stringify(seat)})`, results);
+  check(!!seat && seat.name === 'Neutral' && seat.terr === String(neutralTiles) && Math.abs(seat.opacity - 0.6) < 0.01 && !seat.current && seat.cups === 0, `${form}: its ring keeps its count, dimmed, never current, no cup anywhere (${JSON.stringify(seat)})`, results);
   await shot(page, `neutral-2p-${form}`);
   allErrors.push(...ctx.errors);
   await ctx.browser.close();

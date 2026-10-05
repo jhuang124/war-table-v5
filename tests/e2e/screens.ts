@@ -123,11 +123,7 @@ for (const target of TARGETS) {
   };
   const load = async (s: GameState) => {
     await loadScenario(page, s);
-    // Two humans on a phone: the hand-off sheet comes first.
-    if ((await page.evaluate(() => window.__risk.ui().gold)) === 'handoff') {
-      await page.waitForTimeout(400);
-      await press('handoff-accept');
-    }
+    // (v5.1 A: no hand-off sheet between humans)
     await page.waitForTimeout(1700); // the turn line comes and goes; past the input guard
   };
   const only = process.env.STEPS?.split(',');
@@ -231,30 +227,15 @@ for (const target of TARGETS) {
     await idle(page, 40000).catch(() => undefined);
   });
 
-  await step('handoff', async () => {
-    // Two humans, "Hide cards between turns" on, Sam holds cards: John ends his turn, the cover comes.
-    const settings = await page.evaluate(() => ({ ...JSON.parse(localStorage.getItem('risk3d.settings.v1') ?? '{}'), hideCardsBetweenTurns: true }));
-    await loadScenario(
-      page,
-      base({ kind: 'attack' }, (s) => {
-        s.players[1].cards = [
-          { id: 0, territory: 'ural', symbol: 'infantry' },
-          { id: 1, territory: 'peru', symbol: 'cavalry' },
-        ];
-      }),
-      { settings },
-    );
+  await step('turnline', async () => {
+    // v5.1 A: John ends his turn and the next seat's turn line is the whole hand-off (no cover, no cup).
+    await loadScenario(page, base({ kind: 'attack' }));
     await page.waitForTimeout(1700);
     await press('seg-endTurn');
-    await page.locator('[data-testid="handoff"]').waitFor({ state: 'visible', timeout: 8000 });
-    await page.waitForTimeout(1200); // the ensō draws itself
-    await shot('09a-handoff');
-    await press('handoff-accept');
-    await page.waitForTimeout(400);
-    await page.evaluate(() => {
-      const k = 'risk3d.settings.v1';
-      localStorage.setItem(k, JSON.stringify({ ...JSON.parse(localStorage.getItem(k) ?? '{}'), hideCardsBetweenTurns: false, v: 5 }));
-    });
+    await page.waitForFunction(() => /'s turn/.test(window.__risk.ui().bannerLine ?? ''), null, { timeout: 8000 }).catch(() => undefined);
+    await page.waitForTimeout(250);
+    await shot('09a-turn-line');
+    await idle(page, 40000).catch(() => undefined);
   });
 
   await step('menu', async () => {

@@ -1,8 +1,8 @@
 // The table cues (_claude/v3/PLAN.md §2–3, §5), logic lane: the turn banner arrives with the turn, the
 // ledger writes one plain sentence per event over a scripted turn, a captured continent's outline takes
 // its holder's colour, every stone is sized by its count with its unit figure standing on it (soldier 1–4,
-// rider 5–9, cannon 10+, scaled to the stone), the numeral at its edge reads the count, and the cup sits
-// beside the current seat's ring.
+// rider 5–9, cannon 10+, scaled to the stone), the numeral at its edge reads the count, and (v5.1 B: the
+// cup is gone) whose turn it is is the current seat's filled ring alone.
 import { ONE_HUMAN, check, clickBtn, clickT, finish, idle, loadScenario, open, scenario, seg, state, ui } from './lib';
 import { openDevice } from './mobile-lib';
 import { restBoard } from './board-lib';
@@ -72,16 +72,12 @@ const sizes = () => page.evaluate((d) => { const k = (eval(d) as Dbg).tokens; re
   // larger means more, to the cap; the numeral carries the rest
   const h = await Promise.all(['peru', 'china', 'ukraine', 'ural'].map(stoneOf));
   check(h[0].dPx < h[1].dPx && h[1].dPx < h[2].dPx && h[2].dPx <= h[3].dPx, `larger means more: 1 → 5 → 6 → 19 armies are ${h.map((x) => x.dPx.toFixed(1)).join(' · ')} px across`, results);
-  // the cup: beside the current seat's ring
-  const cup = await page.evaluate(() => {
-    const c = document.querySelector<HTMLElement>('[data-testid="cup"]');
-    const ring = document.querySelector<HTMLElement>('.seat-chip.current .sc-ring');
-    if (!c || !ring) return null;
-    const cb = c.querySelector('.cup-body')!.getBoundingClientRect();
-    const rb = ring.getBoundingClientRect();
-    return { dx: rb.left - cb.right, dy: Math.abs(cb.bottom - rb.bottom), h: cb.height, rh: rb.height };
+  // v5.1 B: no cup; the current seat's ring alone says whose turn it is
+  const turnMark = await page.evaluate(() => {
+    const cur = [...document.querySelectorAll<HTMLElement>('.seat-chip.current')].map((c) => c.dataset.testid);
+    return { cup: document.querySelectorAll('[data-testid="cup"], .cup, .cup-body').length, cur, ring: !!document.querySelector('.seat-chip.current .sc-ring') };
   });
-  check(!!cup && cup.dx >= -4 && cup.dx <= 12 && cup.dy <= 10 && cup.h >= cup.rh * 0.5, `the cup sits beside the current seat's ring (${JSON.stringify(cup)})`, results);
+  check(turnMark.cup === 0 && turnMark.cur.length === 1 && turnMark.cur[0] === 'seat-0' && turnMark.ring, `no cup; the current seat's ring marks John's turn (${JSON.stringify(turnMark)})`, results);
 }
 
 // --- 2. a scripted turn: one ledger line per event; the continent outline takes its holder's colour ----
@@ -135,7 +131,7 @@ const sizes = () => page.evaluate((d) => { const k = (eval(d) as Dbg).tokens; re
       const now = performance.now();
       if (!w.__tb.t0 && s && s.turn > turn0 && s.currentPlayer === 0) w.__tb.t0 = now;
       const a = document.querySelector('.announce')?.textContent ?? '';
-      if (w.__tb.t0 && !w.__tb.t1 && /John's turn · round \d+/.test(a)) {
+      if (w.__tb.t0 && !w.__tb.t1 && /John's turn/.test(a)) {
         w.__tb.t1 = now;
         w.__tb.text = a;
       }
@@ -170,11 +166,12 @@ const sizes = () => page.evaluate((d) => { const k = (eval(d) as Dbg).tokens; re
   // --- 3. the turn banner: within 300 ms of the turn starting ----------------------------------------
   const tb = await page.evaluate(() => (window as unknown as { __tb: { t0: number; t1: number; text: string } }).__tb);
   check(tb.t1 > 0 && tb.t1 - tb.t0 <= 300, `the turn banner "${tb.text.trim()}" arrives ${Math.round(tb.t1 - tb.t0)} ms after John's turn starts (≤ 300)`, results);
-  check(/John's turn · round \d+ · \d+ to place/.test(tb.text), 'the banner reads "John\'s turn · round N · N to place"', results);
+  // v5.1 A: the turn line is "John's turn · N armies"; the round lives in the dock only
+  check(/John's turn · \d+ arm(y|ies)/.test(tb.text), `the banner reads "John's turn · N armies" ("${tb.text.trim()}")`, results);
   const r = await page.evaluate(() => document.querySelector('[data-testid="round"]')?.textContent ?? '');
   check(/^Round \d+$/.test(r), `the dock says the round ("${r}")`, results);
-  const br = /round (\d+)/.exec(tb.text)?.[1];
-  check(!!br && r === `Round ${br}`, `the banner and the dock agree on the round (${br} / "${r}")`, results);
+  const br = String((await state(page))!.round);
+  check(r === `Round ${br}`, `the dock's round is the game's round (${br} / "${r}")`, results);
   // the dock's event line shows the latest; a tap opens the ledger by round
   const last = log[log.length - 1];
   const ev = await page.evaluate(() => document.querySelector('[data-testid="event-line"]')?.textContent ?? '');

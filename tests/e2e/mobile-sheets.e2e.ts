@@ -1,10 +1,11 @@
 // Phone sheets and touch extras (docs/MOBILE.md §3, §5, §8), in portrait (iPhone 15 Pro) and landscape
 // (Pixel 7): every sheet opens and dismisses — the menu (scrim tap), Settings (pulled down by its
 // handle), Rules (Close), Log (pulled down), the Cards sheet (scrim tap, and pulled down), the End game
-// confirm (scrim tap = Keep playing), the new-game colour sheet (scrim tap) and the hand-off cover
-// (pulled down = start turn). Plus: long-press name card (never selects), pinch + pan move the view and
-// the Reset view pill brings it home, haptics on select / dice / conquest, the hand-off cover defaults
-// on for touch, the rotate pill shows once, the page never scrolls or zooms, 0 console errors.
+// confirm (scrim tap = Keep playing) and the new-game colour sheet (scrim tap). Plus: long-press name
+// card (never selects), pinch + pan move the view and the Reset view pill brings it home, haptics on
+// select / dice / conquest, the rotate pill shows once, the page never scrolls or zooms, 0 console errors.
+// v5.1 A: no hand-off cover and no 'Hide cards between turns' switch: between two humans the turn passes
+// straight to Sam, live, with nothing to pull down.
 import { check, finish, idle, loadScenario, scenario, state, TWO_HUMANS, ui } from './lib';
 import { dragSheetDown, longPress, openDevice, pageStill, pinch, drag, settleAnims, tapId, tapT, type DeviceName, type MCtx } from './mobile-lib';
 import type { GameState } from '../../src/engine';
@@ -73,11 +74,11 @@ async function run(dev: DeviceName): Promise<void> {
   await page.reload();
   await page.waitForFunction(() => window.__risk?.ui().screen === 'title');
 
-  // Touch defaults: the hand-off cover is on.
+  // v5.1: Settings has no 'Hide cards between turns' switch (folded or not).
   await tapId(page, 'title-settings');
   check(await shown(ctx, 'settings'), `${tag} title → Settings sheet`, results);
-  const coverOn = await page.locator('.switch', { hasText: 'Hide cards between turns' }).getAttribute('aria-checked');
-  check(coverOn === 'true', `${tag} touch device: "Hide cards between turns" defaults on (${coverOn})`, results);
+  const hideSwitches = await page.locator('.switch', { hasText: 'Hide cards between turns' }).count();
+  check(hideSwitches === 0, `${tag} no "Hide cards between turns" switch (${hideSwitches})`, results);
   await dragSheetDown(ctx, 'settings');
   check(await gone(ctx, 'settings'), `${tag} Settings pulled down by its handle closes`, results);
   await still();
@@ -209,7 +210,7 @@ async function run(dev: DeviceName): Promise<void> {
     await idle(page);
   }
 
-  // Hand-off (two humans, cover on by default): the sheet pulled down starts Sam's turn.
+  // Two humans (v5.1 A): End turn passes straight to Sam, no cover to pull down.
   const two = base((s) => {
     s.phase = { kind: 'attack' } as never;
     s.players[1].cards = [{ id: 9, territory: 'siam', symbol: 'cavalry' }];
@@ -217,10 +218,8 @@ async function run(dev: DeviceName): Promise<void> {
   await page.evaluate(() => localStorage.removeItem('risk3d.settings.v1'));
   await loadScenario(page, two);
   await tapId(page, 'seg-endTurn');
-  check(await shown(ctx, 'handoff', 8000), `${tag} two humans: the hand-off cover (default on)`, results);
-  await page.waitForTimeout(400);
-  await dragSheetDown(ctx, 'handoff-grab', 320);
-  check(await gone(ctx, 'handoff', 2000), `${tag} pulling the hand-off sheet down starts Sam's turn`, results);
+  await page.waitForTimeout(600);
+  check((await page.locator('[data-testid="handoff"]').count()) === 0, `${tag} two humans: no hand-off cover`, results);
   await page.waitForFunction(() => window.__risk.ui().trackSeat === 'Sam' && window.__risk.ui().trackLive, null, { timeout: 5000 }).catch(() => undefined);
   const su = await ui(page);
   check((await state(page))!.currentPlayer === 1 && su.trackLive && su.trackSeat === 'Sam', `${tag} … Sam's turn is live (${su.trackSeat}, live ${su.trackLive})`, results);

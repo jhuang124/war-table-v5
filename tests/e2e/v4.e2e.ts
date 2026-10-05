@@ -3,7 +3,8 @@
 //   E6 numerals     every stone numeral ≥ 18 px on desktop
 //   P1 drift        a mist edge moves ≥ 1 px over 2 s, the coast glow ≥ 1 px (BoardView.paperDrift hook)
 //   E5 tier bands   every board event that carries a tier keeps its motion inside the tier's band at 1×
-//   A5 truce        a pending truce offer never hides the Place count control (the v3 bug)
+//   A5 truce        an old save with a pending truce offer never hides the Place count control (the v3 bug);
+//                   v5.1 C: nothing asks the player to answer it (no Accept / Decline)
 // Logic lane, realtime (drift and motion need real time). Numbers are always printed.
 import { check, clickT, finish, loadScenario, open, ui } from './lib';
 import { restBoard } from './board-lib';
@@ -11,9 +12,6 @@ import { restBoard } from './board-lib';
 const results: string[] = [];
 const { browser, page, errors } = await open(undefined, { width: 1440, height: 900 });
 await loadScenario(page, restBoard({ kind: 'attack' }));
-if ((await page.evaluate(() => window.__risk.ui().gold)) === 'handoff') {
-  await page.locator('[data-testid="handoff-accept"]').first().click();
-}
 await page.waitForTimeout(1200);
 
 // --- E6 type scale -------------------------------------------------------------------------------------
@@ -98,9 +96,10 @@ await loadScenario(
 await clickT(page, 'ural');
 const hasCount = await page.waitForFunction(() => !!window.__risk.ui().count, null, { timeout: 2500 }).then(() => true, () => false);
 const u2 = await ui(page);
-results.push(`with a pending truce offer: buttons ${u2.buttons.join('/')}, count control ${hasCount ? 'present' : 'missing'}`);
-check(hasCount, 'A5 a pending truce offer does not hide the Place count control', results);
-check(!u2.gold || u2.gold !== 'acceptTruce', `A5 Accept truce is not the one gold while placing (gold = ${u2.gold})`, results);
+results.push(`with a pending truce offer in the save: buttons ${u2.buttons.join('/')}, count control ${hasCount ? 'present' : 'missing'}`);
+check(hasCount, 'A5 a pending truce offer (an old save) does not hide the Place count control', results);
+const answer = await page.locator('[data-testid="btn-acceptTruce"], [data-testid="btn-declineTruce"]').count();
+check(u2.offer === null && answer === 0 && u2.gold !== 'button:acceptTruce', `A5 v5.1: no offer to answer while placing (offer ${JSON.stringify(u2.offer)}, Accept/Decline ${answer}, gold ${u2.gold})`, results);
 
 await browser.close();
 finish(results, errors);

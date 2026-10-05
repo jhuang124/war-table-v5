@@ -154,6 +154,11 @@ async function run(dev: DeviceName): Promise<void> {
     const c = u.count!;
     check(c.control === 'slider' && u.primary === `Move ${c.value}`, `${tag} occupy: slider ${c.min}–${c.max} at ${c.value}, ${u.primary}`, results);
     await targets();
+    // v5.1 E2: the count starts collapsed (all but one chosen): its number is a word; a tap opens the slider.
+    const word = page.locator('[data-testid="count-expand"]');
+    check(await word.isVisible(), `${tag} occupy count collapsed to its number (${(await word.textContent())?.trim()})`, results);
+    await tapId(page, 'count-expand');
+    await page.waitForTimeout(120);
     // A tap on the slider track sets the count (the left third).
     const track = page.locator('[data-testid="count-slider"] .cs-track');
     await track.waitFor({ state: 'visible', timeout: 3000 }).catch(async () => page.screenshot({ path: `artifacts/e2e/mobile-turn-${dev}-occupy.png` }));

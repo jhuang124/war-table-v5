@@ -12,7 +12,6 @@ const { browser, page, errors } = await open(undefined, { width: 1440, height: 9
 
 // --- E · the holding dab ------------------------------------------------------------------------------------
 await loadScenario(page, restBoard({ kind: 'reinforce', remaining: 7, mustTrade: false, placed: {}, midTurn: false }));
-if ((await page.evaluate(() => window.__risk.ui().gold)) === 'handoff') await page.locator('[data-testid="handoff-accept"]').first().click();
 await page.waitForTimeout(800);
 const holding = await page.evaluate(() => (window.__risk as unknown as { holding?: () => { armies: number; breakdown: string } | null }).holding?.() ?? null);
 const dabVisible = await page.locator('[data-testid="holding"]').first().isVisible().catch(() => false);
@@ -31,7 +30,6 @@ check(!!place && place.evening >= 0 && place.evening <= 1, 'B the evening clock 
 
 // --- A · fight hooks: lean + stagger -------------------------------------------------------------------------
 await loadScenario(page, restBoard({ kind: 'attack' }));
-if ((await page.evaluate(() => window.__risk.ui().gold)) === 'handoff') await page.locator('[data-testid="handoff-accept"]').first().click();
 await page.waitForTimeout(600);
 await clickT(page, 'ural');
 await clickT(page, 'siberia');

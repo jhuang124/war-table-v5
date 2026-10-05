@@ -1,7 +1,7 @@
-// Multi-human paths through real clicks: manual setup ("Place your own": pick, Place, Undo, Place the
-// rest, Done on the Turn Track), the hand-off cover (setting on; End turn on the track), forced +
-// mid-turn card trades (one button, the best set; the track locked meanwhile), and all humans out →
-// the strip offers "Watch to the end" → victory → rematch.
+// Multi-human paths through real clicks: manual setup ("Place your own" under New game's More: pick,
+// Place, Undo, Place the rest, Done on the Turn Track), the turn passing between two humans (v5.1 A: no
+// cover; the turn line names the next seat), forced + mid-turn card trades (one button, the best set; the
+// track locked meanwhile), and all humans out → the strip offers "Watch to the end" → victory → rematch.
 import { check, clearStorage, clickBtn, clickT, finish, idle, loadScenario, open, place, rendered, scenario, seg, state, ui } from './lib';
 import type { Card, GameState, TerritoryId } from '../../src/engine';
 
@@ -20,6 +20,9 @@ await page.waitForTimeout(50);
 await page.locator('[data-testid="seat-name-1"]').fill('Sam');
 await page.locator('[data-testid="seat-name-1"]').press('Tab');
 await clickBtn(page, 'seat-remove-3');
+// v5.1 D: setup is folded under More
+check(!(await page.locator('[data-testid="setup-placeOwn"]').isVisible()), 'setup choices are folded away before More', results);
+await clickBtn(page, 'ng-more');
 await clickBtn(page, 'setup-placeOwn');
 await page.waitForFunction(() => document.querySelector('[data-testid="ng-summary"]')?.textContent?.includes('your own'));
 const summary = await page.locator('[data-testid="ng-summary"]').textContent();
@@ -27,28 +30,20 @@ check(summary === 'Territories dealt at random · you place your own armies · f
 const t0 = Date.now();
 await clickBtn(page, 'ng-start');
 let humanSetupTurns = 0;
-let sawCoverInSetup = false;
+let sawCover = false;
 for (let guard = 0; guard < 40; guard++) {
   await page.waitForFunction(
     () => {
       const s = window.__risk.getState();
-      // (v3: the first main turn opens with the cup passing between the two humans: the cover waits)
-      if (s && s.phase.kind !== 'setup-place' && document.querySelector('[data-testid="handoff"]')) return true;
       return !!s && window.__risk.isIdle() && (s.phase.kind !== 'setup-place' || s.players[s.currentPlayer].kind === 'human');
     },
     null,
     { timeout: 60_000 },
   );
   const s = await state(page);
-  if (s && s.phase.kind !== 'setup-place' && (await page.locator('[data-testid="handoff"]').count())) {
-    await page.waitForTimeout(300);
-    await clickBtn(page, 'handoff-accept');
-    await idle(page);
-    break;
-  }
+  if (await page.locator('[data-testid="handoff"]').count()) sawCover = true;
   await rendered(page);
   if (!s || s.phase.kind !== 'setup-place') break;
-  if (await page.locator('[data-testid="handoff"]').count()) sawCoverInSetup = true;
   const toPlace = s.phase.toPlace;
   const u0 = await ui(page);
   if (humanSetupTurns === 0) check(u0.line === `Place ${toPlace} armies · click a territory` && u0.step === 'Setup', `setup: [${u0.step}] ${u0.line}`, results);
@@ -69,10 +64,10 @@ for (let guard = 0; guard < 40; guard++) {
 }
 const sMain = await state(page);
 check(sMain!.phase.kind === 'reinforce' && sMain!.round === 1, `setup finished → round 1 reinforce (${humanSetupTurns} human setup turns)`, results);
-check(!sawCoverInSetup, 'no hand-off cover during setup', results);
+check(!sawCover, 'no hand-off cover during setup or as the first main turn passes (v5.1 A)', results);
 console.log(`   manual setup took ${Math.round((Date.now() - t0) / 1000)} s of wall time with scripted clicks`);
 
-// --- Hand-off cover (setting on): John ends his turn, Sam holds cards ------------------------------
+// --- The turn passes between two humans (v5.1 A): no cover, the turn line names Sam ------------------
 const TWO_PLUS_AI = [
   { name: 'John', color: 'crimson', kind: 'human' },
   { name: 'Sam', color: 'cobalt', kind: 'human' },
@@ -87,40 +82,24 @@ const hs = scenario({ ural: [0, 5], ukraine: [0, 2] }, { kind: 'attack' }, {
   },
 });
 await loadScenario(page, hs);
+const set0 = await page.evaluate(() => JSON.parse(localStorage.getItem('risk3d.settings.v1') ?? '{}'));
+check(!set0.hideCardsBetweenTurns, `no 'Hide cards between turns' setting in force (${set0.hideCardsBetweenTurns})`, results);
 await page.evaluate(() => {
-  const s = JSON.parse(localStorage.getItem('risk3d.settings.v1') ?? '{}');
-  localStorage.setItem('risk3d.settings.v1', JSON.stringify({ ...s, hideCardsBetweenTurns: true }));
+  const w = window as unknown as { __cover: number };
+  w.__cover = 0;
+  new MutationObserver(() => {
+    if (document.querySelector('[data-testid="handoff"], [data-testid="handoff-accept"]')) w.__cover++;
+  }).observe(document.getElementById('ui')!, { subtree: true, childList: true, attributes: true });
 });
-await loadScenario(page, hs); // reload so the setting is read
-await page.evaluate(() => {
-  const s = JSON.parse(localStorage.getItem('risk3d.settings.v1') ?? '{}');
-  localStorage.setItem('risk3d.settings.v1', JSON.stringify({ ...s, hideCardsBetweenTurns: true }));
-});
-await page.reload();
-await page.waitForFunction(() => !!window.__risk);
-await page.evaluate((st) => localStorage.setItem('risk3d.save.v1', JSON.stringify({ v: 1, savedAt: Date.now(), state: st })), hs as never);
-await page.reload();
-await page.waitForFunction(() => !!window.__risk);
-await clickBtn(page, 'title-continue');
-await idle(page);
-await rendered(page);
 await seg(page, 'endTurn'); // straight from Attack: skips fortify
-await page.waitForSelector('[data-testid="handoff"]', { timeout: 3000 });
-const cover = await page.locator('[data-testid="handoff"]').textContent();
-check(/Pass the cup to Sam/.test(cover ?? '') && /armies waiting · 2 cards/.test(cover ?? ''), `cover: ${cover?.replace(/\s+/g, ' ').trim()}`, results);
-const handHidden = await page.evaluate(() => window.__risk.ui().line);
-check(handHidden === 'Pass the cup to Sam', `the line under the cover: ${handHidden}`, results);
-const turnBannerBefore = (await ui(page)).banners.filter((b) => b.endsWith('TURN'));
-check(turnBannerBefore.length === 0 || !turnBannerBefore[0].startsWith('SAM'), 'turnStarted waits for the cover', results);
-await clickBtn(page, 'handoff-accept');
-await page.waitForFunction(() => !document.querySelector('[data-testid="handoff"]'));
-await page.waitForTimeout(80);
-const afterCover = await ui(page);
-check(afterCover.banners.some((b) => b.startsWith("SAM'S TURN · +")), `after the cover: ${afterCover.banners.join(' | ')}`, results);
-await page.evaluate(() => {
-  const s = JSON.parse(localStorage.getItem('risk3d.settings.v1') ?? '{}');
-  localStorage.setItem('risk3d.settings.v1', JSON.stringify({ ...s, hideCardsBetweenTurns: false, v: 5 }));
-});
+await page.waitForFunction(() => window.__risk.getState()!.currentPlayer === 1, null, { timeout: 5000 });
+await page.waitForFunction(() => /^Sam's turn · \d+ armies$/.test(window.__risk.ui().bannerLine ?? ''), null, { timeout: 3000 }).catch(() => undefined);
+const passed = await ui(page);
+check(passed.bannerLine !== null && /^Sam's turn · \d+ armies$/.test(passed.bannerLine), `the turn line names Sam: "${passed.bannerLine}" (${passed.banners.join(' | ')})`, results);
+check((await page.evaluate(() => (window as unknown as { __cover: number }).__cover)) === 0 && (await page.locator('[data-testid="handoff"]').count()) === 0, 'no hand-off cover appeared as the turn passed', results);
+await idle(page);
+const afterPass = await state(page);
+check(afterPass!.currentPlayer === 1 && afterPass!.phase.kind === 'reinforce', `Sam's reinforce, nothing to accept (${afterPass!.phase.kind})`, results);
 
 // --- Forced trade at 5 cards -------------------------------------------------------------------------
 const hand5: Card[] = [
@@ -183,17 +162,14 @@ u = await ui(page);
 check(s!.players[0].cards.length === 3 && (s!.phase as { remaining: number }).remaining > 0, `after the trade: ${u.line}`, results);
 const own = (Object.keys(s!.territories) as TerritoryId[]).find((t) => s!.territories[t].owner === 0)!;
 await place(page, own);
-await page.waitForTimeout(100);
 u = await ui(page);
-check(u.line === 'All placed · keep attacking' && u.primary === null && u.recommended === 'attack' && u.brass.join() === 'Attack', `exit: ${u.line} · brass ${u.brass.join(' / ')}`, results);
-await clickT(page, own); // in Place with 0 left, a board click is refused
-u = await ui(page);
-check(u.line === 'All armies placed · click Attack to go on' && u.lineKind === 'rejection', `board click with all placed: ${u.line}`, results);
-await seg(page, 'attack');
+const exitLine = u.line;
+// v5.1 E1: the last army placed, Place → Attack advances by itself (~250 ms); no click on the track.
+await page.waitForFunction(() => window.__risk.ui().step === 'Attack', null, { timeout: 3000 }).catch(() => undefined);
 await idle(page);
 s = await state(page);
 u = await ui(page);
-check(s!.phase.kind === 'attack' && u.step === 'Attack', `back to Attack via the track (${s!.phase.kind})`, results);
+check(s!.phase.kind === 'attack' && u.step === 'Attack', `all placed ("${exitLine}") → back to Attack by itself (${s!.phase.kind}, step ${u.step})`, results);
 const gotBanner = await page.evaluate(() => window.__risk.getState()!.players[1].eliminated);
 check(gotBanner, 'Sam is out', results);
 

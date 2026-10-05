@@ -183,17 +183,17 @@ for (const dev of LIST) {
     await page.waitForTimeout(300);
     await shot('17-ai-turn');
   });
-  await step('handoff', async () => {
-    // Two humans: John ends his turn, the cover asks for Sam (who holds cards).
+  await step('turnline', async () => {
+    // Two humans (v5.1 A): John ends his turn; Sam's turn line is the hand-off (no cover).
     const s = base({ kind: 'attack' }, (st) => {
       st.players[1].cards = [{ id: 7, territory: 'siam', symbol: 'cavalry' }];
     }, TWO_HUMANS as never);
     await loadScenario(page, s);
     await pastGuard(page);
     await tapId(page, 'seg-endTurn');
-    await page.locator('[data-testid="handoff"]').waitFor({ state: 'visible', timeout: 8000 });
-    await page.waitForTimeout(500);
-    await shot('18-handoff');
+    await page.waitForFunction(() => /^Sam's turn/.test(window.__risk.ui().bannerLine ?? ''), null, { timeout: 8000 }).catch(() => undefined);
+    await page.waitForTimeout(250);
+    await shot('18-turn-line');
   });
   await step('victory', async () => {
     const s = base({ kind: 'attack' }, (st) => {

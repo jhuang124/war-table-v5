@@ -139,6 +139,7 @@ export async function seg(page: Page, id: string, force = false): Promise<void> 
 export async function setCount(page: Page, n: number): Promise<void> {
   const c = (await ui(page)).count;
   if (!c) throw new Error('no count control');
+  await expandCount(page);
   if (c.control === 'stepper') {
     await page.locator('[data-testid="count-inc"]').waitFor({ state: 'visible', timeout: 3000 });
     let v = c.value;
@@ -166,6 +167,18 @@ export async function setCount(page: Page, n: number): Promise<void> {
     x += (n - v) * Math.max(1, box.width / Math.max(1, c.max - c.min) / 3);
   }
   throw new Error(`slider did not reach ${n}`);
+}
+
+/**
+ * v5.1 E2: a collapsed count (occupy: all-but-one already chosen) shows only its number (`count-expand`);
+ * a touch opens the stepper / slider. Opens it when it shows; true if it did.
+ */
+export async function expandCount(page: Page): Promise<boolean> {
+  const w = page.locator('[data-testid="count-expand"]').first();
+  if (!(await w.isVisible().catch(() => false))) return false;
+  await w.click();
+  await page.waitForTimeout(60);
+  return true;
 }
 
 /**

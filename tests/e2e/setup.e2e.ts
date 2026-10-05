@@ -14,6 +14,7 @@ await page.waitForFunction(() => window.__risk?.ui().screen === 'title');
 await clickBtn(page, 'title-new');
 await page.locator('[data-testid="seat-name-0"]').fill('John');
 await page.locator('[data-testid="seat-name-0"]').press('Enter');
+await clickBtn(page, 'ng-more'); // v5.1 D: Setup is folded under More
 await clickBtn(page, 'setup-placeOwn');
 await page.waitForFunction(() => document.querySelector('[data-testid="ng-summary"]')?.textContent?.includes('your own'), null, { timeout: 2000 }).catch(() => undefined);
 const summary = await page.locator('[data-testid="ng-summary"]').textContent();

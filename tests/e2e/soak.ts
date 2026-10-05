@@ -57,7 +57,6 @@ interface Job {
   length: 'quick' | 'evening' | 'full';
   autoplay: boolean;
   reloads: boolean;
-  hideCards: boolean;
   chaos: number; // probability of click-through / skip clicks
 }
 const COLORS = ['crimson', 'cobalt', 'amber', 'emerald'];
@@ -90,7 +89,6 @@ function makeJobs(): Job[] {
       length,
       autoplay: auto,
       reloads: RELOADS && r() < 0.6,
-      hideCards: seats.filter((k) => k === 'human').length >= 2 && r() < 0.5,
       chaos: r() < 0.5 ? 0.15 : 0.02,
     });
   }
@@ -188,8 +186,8 @@ window.__name = (f) => f;
     // Busy but nothing moving: no board event started or finished and no state change for 15 s.
     // (isIdle() alone is false through every AI turn, so on its own it says nothing.)
     const act = H.events + ':' + H.settled + ':' + H.changes;
-    // (The hand-off cover legitimately waits for the next player.)
-    if (idle || act !== lastAct || document.querySelector('[data-testid="handoff"]')) { lastAct = act; notIdleSince = now; notIdleFlagged = false; }
+    if (!H.coverFlagged && document.querySelector('[data-testid="handoff"]')) { H.coverFlagged = true; flag('handoff-cover-shown (v5.1 removed it)', {}); }
+    if (idle || act !== lastAct) { lastAct = act; notIdleSince = now; notIdleFlagged = false; }
     else if (now - notIdleSince > 15000 && !notIdleFlagged) { notIdleFlagged = true; flag('busy-no-progress>15s', { since: Math.round(now - notIdleSince) }); }
     const key = s.turn + '|' + s.currentPlayer + '|' + s.phase.kind + '|' + (s.phase.kind === 'setup-place' || s.phase.kind === 'reinforce' ? JSON.stringify(s.phase) : '');
     const aiTurn = s.players[s.currentPlayer].kind === 'ai' || H.autoplay;
@@ -198,7 +196,7 @@ window.__name = (f) => f;
       progFlagged = true; flag('ai-no-progress>60s', { key });
     }
     // Human with nothing to do: no strip button, no eligible Turn Track segment, no clickable tile.
-    if (!aiTurn && idle && s.phase.kind !== 'game-over' && !document.querySelector('[data-testid="handoff"]')) {
+    if (!aiTurn && idle && s.phase.kind !== 'game-over') {
       const anyBtn = u.buttons.length > 0 || (u.trackLive && !u.trackDisabled && u.track.some((x) => x.startsWith('eligible:')));
       let anyTile = false;
       if (!anyBtn) for (const t of Object.keys(s.territories)) { if (R.explain(t).ok) { anyTile = true; break; } }
@@ -593,17 +591,6 @@ async function startGame(page: Page, job: Job, viaRematch: boolean): Promise<voi
   if (viaRematch) {
     await page.locator('[data-testid="rematch"]').click({ timeout: 10000 });
   } else {
-    // Settings are read at boot: flip "Hide cards between turns" by reloading with it set.
-    const hide = await page.evaluate(() => !!JSON.parse(localStorage.getItem('risk3d.settings.v1') ?? '{}').hideCardsBetweenTurns);
-    if (hide !== job.hideCards) {
-      await page.evaluate((on) => {
-        const s = JSON.parse(localStorage.getItem('risk3d.settings.v1') ?? '{}');
-        s.hideCardsBetweenTurns = on;
-        localStorage.setItem('risk3d.settings.v1', JSON.stringify(s));
-      }, job.hideCards);
-      await page.reload();
-      await page.waitForFunction(() => !!window.__risk, null, { timeout: 60000, polling: 100 });
-    }
     await page.evaluate(
       ({ job, COLORS, NAMES, DIFFS }) => {
         window.__risk.setSpeed(1, 'watch');
@@ -719,11 +706,6 @@ async function playGame(page: Page, job: Job, worker: number, viaRematch: boolea
     if (MENU && !snap.over && rnd() < MENU) {
       const what = await menuChaos(bot, snap.human);
       bot.reloads.push(what);
-      continue;
-    }
-    if (snap.handoff) {
-      await bot.think(200, 600);
-      await bot.btn('handoff-accept');
       continue;
     }
     if (snap.humansOut && rnd() < 0.5) {

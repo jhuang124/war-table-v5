@@ -12,7 +12,7 @@ await page.waitForFunction(() => window.__risk?.ui().screen === 'title');
 await clickBtn(page, 'title-new');
 await page.locator('[data-testid="seat-name-0"]').fill('John');
 await page.locator('[data-testid="seat-name-0"]').press('Enter');
-await clickBtn(page, 'house-toggle');
+await clickBtn(page, 'ng-more'); // v5.1 D: the seed is folded under More
 await page.locator('[data-testid="house-seed"]').fill('777');
 await page.locator('[data-testid="house-seed"]').press('Enter');
 await clickBtn(page, 'ng-start');

@@ -59,9 +59,11 @@ while (Date.now() < deadline && rounds < 3) {
   if (!firstClickAt) firstClickAt = Date.now();
   await place(page, tile);
   await idle(page);
+  // v5.1 E1: with everything placed, Place → Attack advances by itself (~250 ms); End turn stays explicit.
+  const t0 = Date.now();
+  await page.waitForFunction(() => window.__risk.ui().step === 'Attack', null, { timeout: 3000, polling: 20 }).catch(() => undefined);
   const u = await ui(page);
-  placedLines.push(`${u.line} [${u.recommended}]`);
-  // From Place with everything placed, End turn chains the phase changes (one click).
+  placedLines.push(`${u.step} ${Date.now() - t0} ms`);
   await seg(page, 'endTurn');
   rounds++;
 }
@@ -89,8 +91,8 @@ for (let i = 0; i < turns.length; i++) {
 }
 check(worst > 0 && worst <= 25_000, `a full round of 3 AI turns ≤ 25 s (worst ${worst} ms)`, results);
 check(
-  placedLines.length > 0 && placedLines.every((l) => /^All placed · (Attack is next \[attack\]|end your turn \[endTurn\])$/.test(l)),
-  `all placed → the line and the recommended segment: ${placedLines.join(' | ')}`,
+  placedLines.length > 0 && placedLines.every((l) => /^Attack \d+ ms$/.test(l)),
+  `all placed → the marker moves to Attack by itself (v5.1 E1; after idle): ${placedLines.join(' | ')}`,
   results,
 );
 const A = (await page.evaluate('window.__aiStrip')) as { n: number; live: number; steps: Record<string, number>; seatMismatch: number; mm: string[]; lines: Record<string, number> };
@@ -106,10 +108,8 @@ check(
 );
 const humans = turns.filter((t) => t.kind === 'human');
 check(humans.every((t) => t.forcedWaitMs === 0), `human forced wait: ${humans.map((t) => t.forcedWaitMs).join(', ')} ms`, results);
-// v3: an AI's truce offer asks first (Decline / Accept): each answer is one more click on that turn, not tempo.
-const answers = (await page.evaluate(() => window.__risk.ledger())).filter((l) => /^John (turns down|accepts) /.test(l.text)).length;
-const extra = humans.reduce((a, t) => a + Math.max(0, t.clicks - 4), 0);
-check(humans.every((t) => t.clicks <= 4 + answers) && extra <= answers, `human clicks per quick turn: ${humans.map((t) => t.clicks).join(', ')} (≤ 4, plus ${answers} truce ${answers === 1 ? 'offer' : 'offers'} answered)`, results);
+// v5.1: Place → Attack is automatic (one click fewer) and no truce offer ever asks for an answer.
+check(humans.length > 0 && humans.every((t) => t.clicks <= 3), `human clicks per quick turn: ${humans.map((t) => t.clicks).join(', ')} (≤ 3: pick, Place, End turn)`, results);
 check(m.cameraMovesDuringHumanInput === 0, `cameraMovesDuringHumanInput ${m.cameraMovesDuringHumanInput}`, results);
 await page.screenshot({ path: 'artifacts/e2e/round-end.png' });
 await browser.close();

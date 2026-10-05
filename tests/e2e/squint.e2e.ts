@@ -17,9 +17,6 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 const results: string[] = [];
 const { browser, page, errors } = await open(undefined, { width: 1440, height: 900 });
 await loadScenario(page, restBoard({ kind: 'attack' }));
-if ((await page.evaluate(() => window.__risk.ui().gold)) === 'handoff') {
-  await page.locator('[data-testid="handoff-accept"]').first().click();
-}
 await page.waitForTimeout(1500);
 
 const K = 0.3;

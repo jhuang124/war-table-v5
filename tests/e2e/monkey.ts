@@ -187,14 +187,12 @@ async function playGame(browser: Browser, seed: number): Promise<Result> {
   });
   await page.goto(BASE, { timeout: 120_000 });
   await page.waitForFunction(() => !!window.__risk, null, { timeout: 120_000 });
-  const handoffOn = mode !== '1h3ai' && R() < 0.6;
-  await page.evaluate(
-    ([h]) => {
-      localStorage.clear();
-      localStorage.setItem('risk3d.settings.v1', JSON.stringify({ animationSpeed: 1, aiSpeed: 'watch', hideCardsBetweenTurns: h }));
-    },
-    [handoffOn] as const,
-  );
+  // (v5.1 A: no 'Hide cards between turns' setting and no hand-off cover; one draw kept so seeds replay the same)
+  if (mode !== '1h3ai') R();
+  await page.evaluate(() => {
+    localStorage.clear();
+    localStorage.setItem('risk3d.settings.v1', JSON.stringify({ animationSpeed: 1, aiSpeed: 'watch' }));
+  });
   await page.reload({ timeout: 120_000 });
   await page.waitForFunction(() => !!window.__risk, null, { timeout: 120_000 });
   const turnLimit = 4 + Math.floor(R() * 5);
@@ -203,7 +201,7 @@ async function playGame(browser: Browser, seed: number): Promise<Result> {
     ([p, sd, tl, man]) => window.__risk.newGame({ players: p as never, seed: sd, dominationPercent: 60, turnLimit: tl, initialPlacement: man ? 'manual' : 'auto' }),
     [players, seed, turnLimit, manual] as const,
   );
-  note(`start seed=${seed} mode=${mode} turnLimit=${turnLimit} manual=${manual} handoff=${handoffOn}`);
+  note(`start seed=${seed} mode=${mode} turnLimit=${turnLimit} manual=${manual}`);
 
   let inputs = 0;
   let reason = '';
@@ -434,16 +432,10 @@ async function playGame(browser: Browser, seed: number): Promise<Result> {
           break;
         }
       } else stuckSince = 0;
-      // Handoff cover: accept it after a beat.
+      // v5.1 A: the hand-off cover is gone; one showing up is a failure.
       if (sn.handoff) {
-        await page.waitForTimeout(100 + R() * 400);
-        if (R() < 0.7) {
-          note('handoff accept');
-          await page.locator('[data-testid="handoff-accept"]').click({ timeout: 2000 }).catch(() => undefined);
-        } else {
-          await act();
-        }
-        continue;
+        await fail('a hand-off cover appeared (v5.1 removed it)');
+        break;
       }
       // Quiet check every ~25 inputs on a human turn: let it settle, then compare board vs state.
       if (sn.human && inputs > 0 && inputs % 25 === 0 && checks < inputs / 25) {

@@ -13,12 +13,7 @@ const TAG = process.argv[4] ?? 'rest';
 mkdirSync(OUT, { recursive: true });
 
 async function settle(page: Page) {
-  if ((await page.evaluate(() => window.__risk.ui().gold)) === 'handoff') {
-    await page.waitForTimeout(300);
-    const loc = page.locator('[data-testid="handoff-accept"]').first();
-    const b = (await loc.boundingBox())!;
-    await page.mouse.click(b.x + b.width / 2, b.y + b.height / 2);
-  }
+  // (v5.1 A: no hand-off cover to accept between humans; the turn line dries on its own)
   await page.waitForTimeout(2600);
 }
 

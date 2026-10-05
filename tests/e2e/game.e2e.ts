@@ -1,6 +1,6 @@
 // The main path, 1 human + 3 normal AIs, from the title with real mouse clicks on the real board and HUD
 // (no keys): title → New game (name, seed) → Start → Quick deal → first Place (≤ 20 s)
-//   Place: pick, count to 2, Place 2, Undo, Place all · the Turn Track: Attack · target-first attack ·
+//   Place: pick, count to 2, Place 2, Undo, Place all · Attack by itself (v5.1 E1) · target-first attack ·
 //   Roll (a single roll) · Blitz · occupy with Move N · the chained source · another fight · the track:
 //   Fortify → a move that ends the turn · AI turns hand control back within budget · later rounds (skip
 //   fortify: End turn straight from Attack) until a card set is ready → traded from the Cards sheet (or
@@ -32,7 +32,7 @@ await page.evaluate(`(() => {
 await clickBtn(page, 'title-new');
 await page.locator('[data-testid="seat-name-0"]').fill('John');
 await page.locator('[data-testid="seat-name-0"]').press('Enter');
-await clickBtn(page, 'house-toggle');
+await clickBtn(page, 'ng-more'); // v5.1 D: the seed is folded under More
 await page.locator('[data-testid="house-seed"]').fill('4242');
 await page.locator('[data-testid="house-seed"]').press('Enter');
 const summary = await page.locator('[data-testid="ng-summary"]').textContent();
@@ -93,18 +93,16 @@ check(st.territories[f.from].armies === before, `Undo → ${f.from} ${st.territo
 await seg(page, 'attack');
 check((await ui(page)).line === `Place your ${toPlace} armies first`, `locked Attack: "${(await ui(page)).line}"`, results);
 await place(page, f.from);
-await idle(page);
+const placedAt = Date.now();
 st = (await state(page))!;
 check((st.phase as { remaining: number }).remaining === 0 && st.territories[f.from].armies === before + toPlace, `Place ${toPlace} → all on ${f.from}`, results);
+// v5.1 E1: the last army placed, the marker moves to Attack by itself (~250 ms; the "All placed" line is transient).
+await page.waitForFunction(() => window.__risk.ui().step === 'Attack', null, { timeout: 3000, polling: 20 }).catch(() => undefined);
 u = await ui(page);
-check(u.line === 'All placed · Attack is next' && u.brass.join() === 'Attack' && u.recommended === 'attack', `the line: ${u.line} · brass ${u.brass.join()}`, results);
-// A board click never leaves Place.
-await clickT(page, f.to);
-check((await state(page))!.phase.kind === 'reinforce', 'an enemy click in Place (all placed) does not start attacking', results);
-
-// The track: Attack. Target-first: click the enemy; Roll = a single roll.
-await seg(page, 'attack');
+check(u.step === 'Attack' && (await state(page))!.phase.kind === 'attack', `all placed → Attack by itself in ${Date.now() - placedAt} ms (step ${u.step}, no click)`, results);
 await idle(page);
+
+// Attack. Target-first: click the enemy; Roll = a single roll.
 await clickT(page, f.to);
 u = await ui(page);
 check(u.primary === 'Blitz' && !!u.battle && /^.+ → .+ · \d+%( · .+)?$/.test(u.line) && u.step === 'Attack', `armed target-first: "${u.line}" · tray ${u.battle?.header}`, results);
@@ -239,7 +237,8 @@ for (; round < 12 && !traded; round++) {
   if (!fr) break;
   await place(page, fr.from);
   await idle(page);
-  await seg(page, 'attack');
+  // v5.1 E1: Place → Attack by itself
+  await page.waitForFunction(() => window.__risk.ui().step === 'Attack', null, { timeout: 3000 }).catch(() => undefined);
   await idle(page);
   await clickT(page, fr.to);
   u = await ui(page);
@@ -282,7 +281,7 @@ check(watchAi.length >= 4 && med <= 6000, `AI turn median ${med} ms (≤ 6 s, ${
 check(p95 <= 12_000, `AI turn p95 ${p95} ms (≤ 12 s)`, results);
 const humans = m.turns.filter((t) => t.kind === 'human');
 console.log('   human turns:', humans.map((t) => `${t.clicks} clicks/${t.ms} ms`).join(', '));
-check(humans.length > 0 && humans[0].clicks <= 26, `turn 1 (place with a count and an Undo, the track, roll, blitz, move, chain, fortify) took ${humans[0]?.clicks} clicks`, results);
+check(humans.length > 0 && humans[0].clicks <= 25, `turn 1 (≤ 25; v5.1: Place → Attack is automatic, one click fewer) (place with a count and an Undo, roll, blitz, move, chain, fortify) took ${humans[0]?.clicks} clicks`, results);
 check(humans.every((t) => t.forcedWaitMs === 0), `human forced wait: ${humans.map((t) => t.forcedWaitMs).join(', ')} ms`, results);
 const full1 = m.rolls.filter((r) => r.style === 'full' && !r.blitz && r.count === 1).map((r) => r.ms);
 const blitz = m.rolls.filter((r) => r.blitz && r.style === 'full').map((r) => r.ms);

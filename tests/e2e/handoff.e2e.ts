@@ -1,8 +1,9 @@
-// Two humans with "Hide cards between turns" on: John looks at his hand in the Cards sheet, places,
-// and ends his turn through the Turn Track (Attack, then End turn); zero frames of Sam's hand may be visible before the cover is up. Every DOM
-// mutation and every animation frame is checked in the page. Then: the cover reads right, Enter
-// accepts, the turn banner follows, and (v3, _claude/v3/PLAN.md §2) the cup passes to a human holding no
-// cards too: the cover is on whenever 2+ humans share the device; the setting still turns it off.
+// Two humans share the device (v5.1 A, _claude/v5/QUIETER.md §3 A): there is no hand-off cover. John looks
+// at his hand in the Cards sheet, places with it open (Place waits: it never advances under the sheet) and
+// ends his turn through the Turn Track with the sheet still open. Zero frames of Sam's hand may be visible: every
+// DOM mutation and every animation frame is checked in the page across the real end-turn transition. As the
+// turn passes, John's sheet closes itself, no cover element ever appears, and the turn line names Sam
+// ("Sam's turn · N armies") with Sam's seat ring the current one. Sam's hand shows only when Sam opens it.
 import { ART, check, clickBtn, finish, idle, loadScenario, open, place, rendered, scenario, seg, state, ui } from './lib';
 import type { Card, GameState } from '../../src/engine';
 
@@ -18,7 +19,7 @@ const johnCards: Card[] = [
 ];
 const samCards: Card[] = [
   { id: 20, territory: 'brazil', symbol: 'infantry' },
-  { id: 21, territory: 'peru', symbol: 'infantry' },
+  { id: 21, territory: 'peru', symbol: 'cavalry' },
   { id: 22, territory: 'china', symbol: 'infantry' },
 ];
 const hs = scenario({ ural: [0, 5], ukraine: [0, 2] }, { kind: 'reinforce', remaining: 3, mustTrade: false, placed: {}, midTurn: false }, {
@@ -29,9 +30,8 @@ const hs = scenario({ ural: [0, 5], ukraine: [0, 2] }, { kind: 'reinforce', rema
     s.players[1].cards = samCards;
   },
 });
+// An old settings file that still asks to hide cards: v5.1 ignores it (the setting went).
 await loadScenario(page, hs, { settings: { hideCardsBetweenTurns: true } });
-const settings = await page.evaluate(() => JSON.parse(localStorage.getItem('risk3d.settings.v1') ?? '{}'));
-check(settings.hideCardsBetweenTurns === true, 'setting on: Hide cards between turns', results);
 
 // John opens his hand from the strip (Cards 2), a read-only sheet.
 let u0 = await ui(page);
@@ -44,77 +44,52 @@ check(u0.cardsOpen && (await page.locator('[data-testid="cards-trade"]').isVisib
 
 await page.evaluate(`(() => {
   const sam = [20, 21, 22];
-  const L = (window.__leak = { checks: 0, leaks: 0, coverSeen: 0, first: null, stop: false });
+  const L = (window.__leak = { checks: 0, leaks: 0, cover: 0, first: null, stop: false });
   const visible = (el) => { if (!el) return false; const r = el.getBoundingClientRect(); if (r.width < 1 || r.height < 1) return false; let n = el; while (n && n !== document.body) { const cs = getComputedStyle(n); if (cs.display === 'none' || cs.visibility === 'hidden' || Number(cs.opacity) === 0) return false; n = n.parentElement; } return true; };
   const probe = (src) => {
     if (L.stop) return;
     L.checks++;
-    const cover = document.querySelector('[data-testid="handoff"]');
-    const coverOn = !!cover && visible(cover) && Number(getComputedStyle(cover).opacity) >= 0.999;
-    if (coverOn) L.coverSeen++;
+    if (document.querySelector('[data-testid="handoff"], [data-testid="handoff-accept"], [data-testid="handoff-mission"]')) L.cover++;
     const shown = sam.filter((id) => visible(document.querySelector('[data-testid="card-' + id + '"]')));
-    if (shown.length && !coverOn) { L.leaks++; if (!L.first) L.first = src + ' cards ' + shown.join(','); }
+    if (shown.length) { L.leaks++; L.last = Math.round(performance.now() - (window.__endAt || 0)); if (!L.first) { const u = window.__risk.ui(); L.first = src + ' cards ' + shown.join(',') + ' (engine seat ' + window.__risk.getState().currentPlayer + ', track ' + u.trackSeat + ', cardsOpen ' + u.cardsOpen + ', line "' + u.line + '", t ' + Math.round(performance.now() - (window.__endAt || 0)) + ' ms after End turn)'; } }
   };
   new MutationObserver(() => probe('mutation')).observe(document.getElementById('ui'), { subtree: true, childList: true, attributes: true, characterData: true });
   const raf = () => { probe('frame'); if (!L.stop) requestAnimationFrame(raf); };
   requestAnimationFrame(raf);
 })()`);
 
-// Place everything, the Attack segment, then End turn on the track.
+// Place everything with the hand still open: the marker waits in Place (v5.1 E1 never advances while the
+// Cards sheet is open), and End turn on the track ends the turn with John's hand on screen.
 await place(page, 'ural');
-await idle(page);
+await page.waitForTimeout(600);
 let ua = await ui(page);
-check(ua.line === 'All placed · Attack is next' && ua.recommended === 'attack', `all placed: ${ua.line} (recommended ${ua.recommended})`, results);
-await seg(page, 'attack');
-await idle(page);
-ua = await ui(page);
-check(ua.step === 'Attack' && ua.track.join(',') === 'done:place,current:attack,eligible:fortify,eligible:endTurn', `Attack: ${ua.track.join(', ')}`, results);
-await seg(page, 'endTurn');
-await page.waitForSelector('[data-testid="handoff"]', { timeout: 5000 });
-await page.waitForTimeout(600); // keep watching while the cover sits there
-await page.screenshot({ path: `${ART}/handoff-cover.png` });
-const leak = (await page.evaluate('window.__leak')) as { checks: number; leaks: number; coverSeen: number; first: string | null };
-check(leak.leaks === 0, `zero frames of Sam’s hand before the cover (${leak.checks} checks, ${leak.leaks} leaks${leak.first ? ', first: ' + leak.first : ''})`, results);
-check(leak.coverSeen > 0, 'the cover was up at full opacity', results);
-const cover = (await page.locator('[data-testid="handoff"]').textContent())?.replace(/\s+/g, ' ').trim() ?? '';
-check(/Pass the cup to Sam/.test(cover) && !!(await page.locator('[data-testid="handoff"] .ho-cup svg').count()) && /armies waiting · 3 cards · set ready/.test(cover) && /I'm Sam · start turn/.test(cover), `cover: ${cover}`, results);
+const openAtEnd = ua.cardsOpen;
+check(openAtEnd && ua.step === 'Place' && (await page.locator('[data-testid="card-0"]').isVisible()), `all placed with the hand open: still Place, the hand on screen (step ${ua.step}, open ${ua.cardsOpen})`, results);
+await page.evaluate(() => ((window as unknown as { __endAt: number }).__endAt = performance.now()));
+await seg(page, 'endTurn', true);
+await page.waitForFunction(() => window.__risk.getState()!.currentPlayer === 1, null, { timeout: 5000 });
+await page.waitForFunction(() => /^Sam's turn/.test(window.__risk.ui().bannerLine ?? ''), null, { timeout: 3000 }).catch(() => undefined);
 let u = await ui(page);
-check(u.line === 'Pass the cup to Sam' && !u.banners.some((b) => b.startsWith("SAM'S TURN")), `under the cover: the line "${u.line}", turn banner waits`, results);
-// Under the cover the track is not live and nothing on the strip is brass (the cover's button is the
-// one thing to press). Sam's turn hasn't started on the display yet (turnStarted waits for the cover),
-// so the marker still reads the displayed turn.
-check(!u.trackLive && u.recommended === null && u.brass.length === 0, `under the cover: the track is not live, nothing brass (live ${u.trackLive}, marker ${u.trackSeat} ${u.step}, brass ${u.brass.join(' / ') || 'none'})`, results);
-await seg(page, 'place', true);
-check((await state(page))!.currentPlayer === 1 && !!(await page.locator('[data-testid="handoff"]').count()), 'a click on the track under the cover does nothing', results);
-await page.evaluate('window.__leak.stop = true');
-await page.keyboard.press('Enter');
-await page.waitForFunction(() => !document.querySelector('[data-testid="handoff"]'));
-await page.waitForTimeout(120);
-u = await ui(page);
-check(u.banners.some((b) => b.startsWith("SAM'S TURN")), `after Enter: ${u.banners.join(' | ')}`, results);
+const turnLine = u.bannerLine;
+await page.screenshot({ path: `${ART}/handoff-turn-line.png` });
+await page.waitForTimeout(600); // keep watching while Sam's turn settles
 await idle(page);
 await rendered(page);
+const ring = await page.evaluate(() => [...document.querySelectorAll<HTMLElement>('.seat-chip.current')].map((c) => c.dataset.testid));
+const leak = (await page.evaluate('window.__leak')) as { checks: number; leaks: number; cover: number; first: string | null; last?: number };
+await page.evaluate('window.__leak.stop = true');
+check(leak.checks > 20 && leak.leaks === 0, `zero frames of Sam’s hand across the turn pass (${leak.checks} checks, ${leak.leaks} leaks${leak.first ? `, first: ${leak.first}; last ${leak.last} ms after End turn` : ''})`, results);
+check(leak.cover === 0, `no hand-off cover element in any of those frames (${leak.cover})`, results);
+u = await ui(page);
+check(!u.cardsOpen && (await page.locator('[data-testid="card-0"]').isVisible()) === false, `John's sheet closed itself as the turn passed (open before ${openAtEnd}, now ${u.cardsOpen})`, results);
+check(!!turnLine && /^Sam's turn · \d+ arm(y|ies)$/.test(turnLine), `the turn line names Sam: "${turnLine}"`, results);
+check(ring.length === 1 && ring[0] === 'seat-1', `Sam's seat ring is the current one (${ring.join(', ')})`, results);
 const s = (await state(page))!;
-check(s.currentPlayer === 1 && s.phase.kind === 'reinforce', `Sam's reinforce (${s.phase.kind})`, results);
+check(s.currentPlayer === 1 && s.phase.kind === 'reinforce' && u.trackLive && u.trackSeat === 'Sam', `Sam's reinforce, live at once, nothing to accept (${s.phase.kind}, track ${u.trackSeat} live ${u.trackLive})`, results);
+// Sam's hand shows when Sam opens it.
+await clickBtn(page, 'btn-cards');
+await page.waitForSelector('[data-testid="card-20"]', { state: 'visible', timeout: 3000 }).catch(() => undefined);
+check(await page.locator('[data-testid="card-20"]').isVisible(), 'Sam’s hand shows when Sam opens it', results);
 await page.screenshot({ path: `${ART}/handoff-after.png` });
-
-// Sam holds cards → John next holds 2 cards → cover again; a human with no cards → no cover.
-const noCards = scenario({ ural: [0, 5] }, { kind: 'attack' }, {
-  players: TWO,
-  fill: (_t, i) => [i % 2, 2],
-  mutate: (st: GameState) => {
-    st.players[0].cards = johnCards;
-    st.players[1].cards = [];
-  },
-});
-await loadScenario(page, noCards, { settings: { hideCardsBetweenTurns: true } });
-await seg(page, 'endTurn');
-await page.waitForTimeout(400);
-check((await page.locator('[data-testid="handoff"]').count()) === 1, 'the cup passes to a human holding no cards too (v3)', results);
-// switched off (a v5 settings file): no cover
-await loadScenario(page, noCards, { settings: { hideCardsBetweenTurns: false, v: 5 } });
-await seg(page, 'endTurn');
-await page.waitForTimeout(400);
-check((await page.locator('[data-testid="handoff"]').count()) === 0, 'the setting still turns the cover off', results);
 await browser.close();
 finish(results, errors);

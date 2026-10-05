@@ -1,7 +1,7 @@
 // INK2's three checks (docs/INK2.md §5 Phase D), on the real board + HUD:
 //   (a) No rounded rectangle anywhere (INK2 §3): across the title, new game (and its swatch popover), the
-//       game in Place (picked), Attack armed and Occupy, the menu, Settings, the Cards sheet, the hand-off
-//       cover and Victory, on desktop 1440×900, iPhone portrait and iPhone landscape: no visible element (or
+//       game in Place (picked), Attack armed and Occupy, the menu, Settings, the Cards sheet and Victory
+//       (v5.1: the hand-off cover is gone; New game's and Settings' More folds are scanned open), on desktop 1440×900, iPhone portrait and iPhone landscape: no visible element (or
 //       its ::before / ::after) with border-radius > 0 that also has a non-transparent background or a
 //       border. SVG is ink (the brush rings, underlines, the ensō), not a box, and is skipped; the gold
 //       rule's signature (.st-rule, .lk-rule, .ra-rule) is skipped as the one-gold sampler skips it.
@@ -82,7 +82,7 @@ const ensoVsWord = (page: Page) =>
 
 type Target = '1440x900' | 'iphone' | 'iphone-land';
 const TARGETS = (process.env.INK2_TARGETS ?? '1440x900,iphone,iphone-land').split(',') as Target[];
-/** Debugging by hand: INK2_STEPS=title,game,cards,handoff,victory,roll runs only those. */
+/** Debugging by hand: INK2_STEPS=title,game,cards,victory,roll runs only those. */
 const ONLY = process.env.INK2_STEPS?.split(',');
 const cards3 = (): Card[] => [
   { id: 0, territory: 'ural', symbol: 'infantry' },
@@ -154,6 +154,10 @@ for (const target of TARGETS) {
     await press('title-new');
     await page.waitForFunction(() => window.__risk.ui().screen === 'newGame', null, { timeout: 5000 });
     await scan('newgame');
+    // v5.1 D: what folded under More (map, setup, rules, the AI rows) is ink too
+    await press('ng-more');
+    await page.locator('[data-testid="ng-more-body"]').waitFor({ state: 'visible', timeout: 4000 });
+    await scan('newgame-more');
     await press('seat-color-0');
     await scan('swatches');
   });
@@ -169,7 +173,8 @@ for (const target of TARGETS) {
     const e0 = await ensoVsWord(page);
     await press('btn-place');
     await idle(page);
-    await press('seg-attack');
+    // v5.1 E1: Place → Attack advances by itself after the last army
+    await page.waitForFunction(() => window.__risk.ui().step === 'Attack', null, { timeout: 4000 });
     await idle(page);
     await page.waitForTimeout(400); // the slide is 180 ms
     const e1 = await ensoVsWord(page);
@@ -196,6 +201,10 @@ for (const target of TARGETS) {
     await scan('menu');
     await press('pause-settings');
     await scan('settings');
+    // v5.1 E3: four primaries, the rest under More
+    await press('settings-more');
+    await page.locator('[data-testid="settings-more-body"]').waitFor({ state: 'visible', timeout: 4000 });
+    await scan('settings-more');
   });
 
   await step('cards', async () => {
@@ -207,16 +216,7 @@ for (const target of TARGETS) {
     await scan('cards');
   });
 
-  await step('handoff', async () => {
-    const settings = await page.evaluate(() => ({ ...JSON.parse(localStorage.getItem('risk3d.settings.v1') ?? '{}'), hideCardsBetweenTurns: true }));
-    await loadScenario(page, scenario({ ural: [0, 5], ukraine: [0, 2] }, { kind: 'attack' }, { players: TWO_HUMANS as never, fill: (_t, i) => [i % 2, 2], mutate: (st) => void (st.players[1].cards = cards3().slice(0, 2)) }), { settings });
-    if ((await page.locator('[data-testid="handoff"]').count()) === 0) {
-      await press('seg-endTurn');
-      await page.locator('[data-testid="handoff"]').waitFor({ state: 'visible', timeout: 5000 });
-    }
-    await scan('handoff');
-    // (the cover only comes for a human who holds cards, with "Hide cards between turns" on)
-  });
+  // (v5.1 A: the hand-off cover is gone; the turn passes with the one line. Its step went with it.)
 
   await step('victory', async () => {
     const all: Partial<Record<TerritoryId, [number, number]>> = {};
@@ -224,7 +224,6 @@ for (const target of TARGETS) {
     all.alaska = [1, 1];
     all.kamchatka = [0, 30];
     await loadScenario(page, scenario(all, { kind: 'attack' }, { players: TWO_HUMANS as never, mutate: (st) => void (st.config.dominationPercent = 100) }));
-    if ((await page.locator('[data-testid="handoff"]').count()) > 0) await press('handoff-accept');
     await tapTerr('alaska');
     await page.waitForFunction(() => window.__risk.ui().buttons.includes('Blitz'), null, { timeout: 4000 });
     await press('btn-blitz');
@@ -245,7 +244,7 @@ for (const target of TARGETS) {
     continue;
   }
   check(
-    Object.keys(seen).length >= 11 && bad.length === 0,
+    Object.keys(seen).length >= 12 && bad.length === 0,
     `${tag} (a) no rounded rectangles across ${Object.keys(seen).join(', ')}${bad.length ? ` — ${bad.map(([k, v]) => `${k}: ${v.slice(0, 4).join('; ')}`).join(' | ')}` : ''}`,
     results,
   );

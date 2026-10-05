@@ -46,11 +46,12 @@ export const FLOWS: Record<string, FlowSpec> = {
   polish: { lane: 'logic', realtime: true, why: 'the battle header never runs ahead of the board, sampled per frame over a real blitz (> 30 frames; 214 measured)' },
   chain: { lane: 'logic', realtime: true, why: '"Indonesia captured" held 600–1500 ms (measured ~850 ms) and the deal lines over 2.5 s need real animations' },
   flow: { lane: 'logic', realtime: true, quick: true, why: 'the blitz still animating at 350 ms, click-through < 700 ms (measured 5–50 ms); then resume by reload' },
-  handoff: { lane: 'logic', realtime: true, why: 'zero frames of the next hand, sampled per mutation and frame across the real end-turn transition' },
+  // v5.1 A: the hand-off cover went; the flow now checks the same promise without it (John's sheet open at End turn).
+  handoff: { lane: 'logic', realtime: true, why: 'zero frames of the next hand and no cover element, sampled per mutation and frame across the real end-turn transition; the turn line names the next seat' },
 
   // --- logic, instant (parallel; roughly longest first, the pool's order until artifacts/e2e/timings.json exists)
   reasons: { lane: 'logic', why: 'every reason code: explain() and the line after a real click (the 2 s hold is a UI timer)' },
-  hotseat: { lane: 'logic', why: 'manual setup, hand-off cover, forced + mid-turn trades, all humans out → watch to victory' },
+  hotseat: { lane: 'logic', why: 'manual setup (under More), the turn passing between two humans with no cover, forced + mid-turn trades, all humans out → watch to victory' },
   'mobile-sheets': { lane: 'logic', why: 'every sheet opens and dismisses, long-press, pinch, haptics' },
   'mobile-turn': { lane: 'logic', why: 'a full turn by taps on phone + tablet: layout, safe areas, target sizes' },
   ink2: { lane: 'logic', why: 'no rounded rectangles on any screen (3 form factors), the ensō over the current word; one real roll (realtime(page)) for the mid-roll count rings' },
@@ -59,15 +60,19 @@ export const FLOWS: Record<string, FlowSpec> = {
   smoke: { lane: 'logic', quick: true, why: 'title → new game → first turn: screens, seats, the Turn Track' },
   table: {
     lane: 'logic',
-    why: 'v3 table cues: stacks drawn with their counts, the cup beside the current seat, one ledger line per event, a held continent inked in its holder, the turn banner ≤ 300 ms after the turn starts (instant speed: a sanity bound, the banner is set in the same frame)',
+    why: 'v3 table cues: stacks drawn with their counts, no cup (v5.1: the current ring alone), one ledger line per event, a held continent inked in its holder, the turn banner ≤ 300 ms after the turn starts (instant speed: a sanity bound, the banner is set in the same frame)',
   },
-  v4: { lane: 'logic', realtime: true, why: 'v4 audits: type scale and numeral floor, drift ≥ 1 px / 2 s, tier bands on a real fight, a pending truce never hides Place N' },
+  v4: { lane: 'logic', realtime: true, why: 'v4 audits: type scale and numeral floor, drift ≥ 1 px / 2 s, tier bands on a real fight, an old save\'s pending truce never hides Place N' },
   v5: { lane: 'logic', realtime: true, why: 'v5 audits: the holding dab during Place, front lines + evening hooks, a human fight rolls, End game now builds a replay with ≤ 3 moments' },
   squint: { lane: 'logic', why: 'v3 squint guard: at 30 % scale, the five tallest stacks and the continent outlines out-contrast the washes (numbers reported)' },
   pwa: { lane: 'logic', why: 'manifest, service worker, offline boot (its own production build and server)' },
   surfaces: {
     lane: 'logic',
-    why: 'v3 surfaces: the map picker and a game started and resumed on True World, AI personalities and grudges in the strip, a scripted AI → human truce offer (Accept / Decline, one gold per sampled frame), the grey neutral seat, "Update ready", True World stones clear of numerals and land',
+    why: 'v3 surfaces: the map picker (under More) and a game started and resumed on True World, AI personalities (once spoken) and grudges in the strip, standing (v5.1 C: marks, hover reason, Ask → answer, one gold per sampled frame), the grey neutral seat, "Update ready", True World stones clear of numerals and land',
+  },
+  v51: {
+    lane: 'logic',
+    why: 'v5.1 "decide, don\'t ask": New game folds, no cover / cup, Settings fold, Place → Attack by itself, occupy collapsed, standing marks + hover + Ask, an AI–AI understanding in the Ledger (autoplay, instant)',
   },
 };
 

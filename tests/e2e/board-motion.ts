@@ -1,4 +1,4 @@
-// Motion screenshots for the v3 physical board (_claude/v3/PLAN.md §1): a roll with the cup, a disc sliding
+// Motion screenshots for the v3 physical board (_claude/v3/PLAN.md §1): a roll (v5.1: no cup), a disc sliding
 // off at the verdict, a conquest's stack walking the arrow, a placement drop, the ledger open. The board runs
 // in slow motion (__debug.anim.speed) so each frame is the beat. A tool, not in test:e2e.
 // Usage: npx tsx tests/e2e/board-motion.ts [outDir] [1440x900|iphone-land]   (server on RISK_URL)
@@ -32,13 +32,8 @@ const press = async (id: string) => {
   else await page.mouse.click(b.x + b.width / 2, b.y + b.height / 2);
 };
 const shot = (n: string) => page.screenshot({ path: `${OUT}/motion-${TARGET}-${n}.png` });
-const handoff = async () => {
-  if ((await page.evaluate(() => window.__risk.ui().gold)) === 'handoff') {
-    await page.waitForTimeout(300);
-    await press('handoff-accept');
-  }
-  await page.waitForTimeout(1800);
-};
+// (v5.1 A: no hand-off cover to accept; this only lets the turn line dry)
+const handoff = () => page.waitForTimeout(1800);
 const only = process.env.STEPS?.split(',');
 const step = async (name: string, fn: () => Promise<void>) => {
   if (only && !only.includes(name)) return;
