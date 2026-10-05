@@ -48,7 +48,14 @@ async function boot(page: Page) {
   await page.waitForTimeout(1500);
 }
 
-const pos = (page: Page, t: string) => page.evaluate((x) => window.__risk.screenPos(x as never), t) as Promise<XY | null>;
+const pos = (page: Page, t: string) =>
+  page.evaluate((x) => {
+    try {
+      return window.__risk.screenPos(x as never);
+    } catch {
+      return null; // a classic close-up on another pack: skipped
+    }
+  }, t) as Promise<XY | null>;
 
 async function main() {
   const browser = await chromium.launch({ args: ['--use-angle=metal', '--enable-gpu', '--ignore-gpu-blocklist', '--mute-audio'] });
@@ -96,7 +103,12 @@ async function main() {
         const s = window.__risk.getState()!;
         const out: { t: string; hit: string | null; ring: number; onScreen: boolean }[] = [];
         for (const t of Object.keys(s.territories)) {
-          const p = window.__risk.screenPos(t as never);
+          let p: { x: number; y: number } | null = null;
+          try {
+            p = window.__risk.screenPos(t as never);
+          } catch {
+            p = null;
+          }
           if (!p) {
             out.push({ t, hit: null, ring: 0, onScreen: false });
             continue;

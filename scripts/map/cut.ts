@@ -77,9 +77,10 @@ export function cutBy(lines: LonLat[][], labels: Record<Resolved, LonLat>, opts:
       if (nearOther(end[0], end[1], li)) continue;
       const dx = end[0] - prev[0], dy = end[1] - prev[1], L = Math.hypot(dx, dy) || 1;
       const tx = end[0] + (dx / L) * far, ty = end[1] + (dy / L) * far;
-      // clip the ray to the grid box, then draw it
+      // clip the ray one cell past the lon/lat box (ci/cj clamp to the last row and column), so the wall reaches
+      // the grid's edge: clipped exactly to the box it could stop one cell short and two seeds would leak together
       let t1 = 1;
-      for (const [d, lo, hi, p] of [[tx - end[0], w, e, end[0]], [ty - end[1], s, n, end[1]]] as const) {
+      for (const [d, lo, hi, p] of [[tx - end[0], w - res, e + res, end[0]], [ty - end[1], s - res, n + res, end[1]]] as const) {
         if (d > 0) t1 = Math.min(t1, (hi - p) / d);
         else if (d < 0) t1 = Math.min(t1, (lo - p) / d);
       }

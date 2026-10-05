@@ -4688,7 +4688,8 @@ class Controller {
     return {
       seed: this.gameSeed(s),
       winner: seatRef(s, winner),
-      title: this.missionHeadline(s) ?? `${pName(s, winner)} holds the world`,
+      // v6 maps: "the world" only on the world boards; a regional or city board is "the board"
+      title: this.missionHeadline(s) ?? `${pName(s, winner)} holds ${mapDefOf(s.config).rules === mapDefOf({ mapId: 'classic' }).rules ? 'the world' : 'the board'}`,
       subline,
       awards: awards.map((a) => ({ id: a.id, title: a.title, text: a.text, seat: seatRef(s, a.player) })),
       seats: s.players.map((p) => seatRef(s, p.id)),
