@@ -2,11 +2,9 @@
 // Presentation lives elsewhere (src/map for geometry, src/shared/palette.ts for colors).
 //
 // Since the v3 map packs (docs/MAPS.md) the data itself lives in maps/classic/rules.json and
-// maps/classic/topology.json, read through the one pack loader (src/map/packs.ts); this module keeps the
-// same exports, in the same order, typed with the engine's ids. Every playable pack shares these rules
-// and topology today (true-world extends classic), so the engine plays any of them unchanged.
-// A pack with different territories needs the engine to read rules per game (docs/MAPS.md, "A new
-// board"); `mapRulesOf` below is the hook for that.
+// maps/classic/topology.json, read through the one pack loader (src/map/packs.ts). Since v6 the engine
+// reads every game's board through `mapDefOf(state.config)` (below); the classic constants here remain for
+// callers outside the engine that still mean classic (a lint test keeps src/engine itself off them).
 
 import type { ContinentId, TerritoryId, CardSymbol } from './types';
 import { DEFAULT_MAP_ID, mapIdOf, packData } from '../map/packs';
