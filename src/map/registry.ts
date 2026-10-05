@@ -6,26 +6,51 @@
 // Rules and topology (no geometry) live in src/map/packs.ts, which the engine reads.
 
 import type { BoardGeometry, SeaLaneGeom, Vec2 } from './types';
-import { DEFAULT_MAP_ID, isKnownMap, mapIdOf, packData, packIds } from './packs';
+import { DEFAULT_MAP_ID, mapIdOf, packData, packIdOfPath, packIds as allPackIds, readMapsFolder, type Globbed } from './packs';
 
-import classicBoard from '../../maps/classic/board.json';
-import trueWorldBoard from '../../maps/true-world/board.json';
+export { DEFAULT_MAP_ID, mapIdOf, isKnownMap } from './packs';
 
-export { DEFAULT_MAP_ID, mapIdOf, packIds, isKnownMap } from './packs';
+// Discovery (v6): every maps/<id>/board.json and thumb.png, bundled by Vite (import.meta.glob); plain Node
+// reads the folder (boards only; no thumbnail URLs outside a bundle).
+function globBoards(): Globbed {
+  try {
+    return import.meta.glob('../../maps/*/board.json', { eager: true, import: 'default' });
+  } catch {
+    return readMapsFolder('board.json');
+  }
+}
+function globThumbs(): Globbed {
+  try {
+    return import.meta.glob('../../maps/*/thumb.png', { eager: true, query: '?url', import: 'default' });
+  } catch {
+    return {};
+  }
+}
 
-/** The generated board.json of every registered pack, exactly as written by `npm run build:map`. */
-const RAW_BOARDS: Record<string, unknown> = {
-  classic: classicBoard,
-  'true-world': trueWorldBoard,
-};
+/** The generated board.json of every pack, exactly as written by `npm run build:map`. */
+const RAW_BOARDS: Record<string, unknown> = Object.fromEntries(Object.entries(globBoards()).map(([p, v]) => [packIdOfPath(p), v]));
 
-/** Thumbnails beside each pack.json (written by `npm run verify:map`); bundled as assets. */
-const THUMBS: Record<string, string> = {
-  classic: new URL('../../maps/classic/thumb.png', import.meta.url).href,
-  'true-world': new URL('../../maps/true-world/thumb.png', import.meta.url).href,
-};
+/** Thumbnails beside each pack.json (written by build:map / verify:map --thumb); bundled as assets. */
+const THUMBS: Record<string, string> = Object.fromEntries(Object.entries(globThumbs()).map(([p, v]) => [packIdOfPath(p), String(v)]));
 
-for (const id of packIds()) if (!RAW_BOARDS[id]) throw new Error(`map pack ${id} has no board.json registered in src/map/registry.ts`);
+/** A pack is playable once it has a board (between `npm run new:map` and the first build it has none). */
+const PLAYABLE = allPackIds().filter((id) => {
+  if (RAW_BOARDS[id]) return true;
+  if (id === DEFAULT_MAP_ID) throw new Error('maps/classic/board.json is missing');
+  console.warn(`[risk] maps/${id} has no board.json yet (npm run build:map -- --map ${id}); skipped`);
+  return false;
+});
+
+/** mapIdOf, narrowed to packs that have a board (anything else loads classic). */
+function boardIdOf(x?: { mapId?: string } | string | null): string {
+  const id = mapIdOf(x);
+  return PLAYABLE.includes(id) ? id : DEFAULT_MAP_ID;
+}
+
+/** Every pack with a board (hidden ones included), in picker order. */
+export function packIds(): string[] {
+  return [...PLAYABLE];
+}
 
 export interface MapInfo {
   id: string;
@@ -42,9 +67,9 @@ export interface MapInfo {
   rulesFrom: string;
 }
 
-/** Every playable map, in picker order (classic first). */
+/** Every playable map the picker offers, in picker order (classic first; `hidden` packs left out). */
 export function listMaps(): MapInfo[] {
-  return packIds().map((id) => {
+  return packIds().filter((id) => !packData(id).manifest.hidden).map((id) => {
     const p = packData(id);
     return {
       id,
@@ -61,7 +86,7 @@ export function listMaps(): MapInfo[] {
 
 /** The raw generated file for a pack (tests prove classic's is byte-identical to the pre-pack board). */
 export function rawBoard(id: string): BoardGeometry {
-  return RAW_BOARDS[mapIdOf(id)] as BoardGeometry;
+  return RAW_BOARDS[boardIdOf(id)] as BoardGeometry;
 }
 
 /** [on a's coast, on b's coast]: the lane's own `shore`, else its first and last points. */
@@ -78,7 +103,7 @@ const loaded = new Map<string, BoardGeometry>();
  * filled (additive field; nothing else differs). Unknown or absent ids load classic.
  */
 export function getBoard(id?: string | null): BoardGeometry {
-  const key = mapIdOf(id);
+  const key = boardIdOf(id);
   let b = loaded.get(key);
   if (!b) {
     const raw = rawBoard(key);
@@ -104,14 +129,14 @@ export function resolveMapId(opts: { search?: string; save?: string | null; allo
   if (opts.allowUrl && opts.search) {
     const want = new URLSearchParams(opts.search).get('map');
     if (want) {
-      if (isKnownMap(want)) return want;
+      if (PLAYABLE.includes(want)) return want;
       console.warn(`[risk] ?map=${want}: no such map pack; using ${DEFAULT_MAP_ID}`);
     }
   }
   if (opts.save) {
     try {
       const f = JSON.parse(opts.save) as { state?: { config?: { mapId?: string } } };
-      return mapIdOf(f?.state?.config);
+      return boardIdOf(f?.state?.config);
     } catch {
       /* unreadable save: the controller discards it too */
     }

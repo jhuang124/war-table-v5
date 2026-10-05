@@ -4,5 +4,6 @@
   "name": "Classic",
   "description": "The board you know: 42 territories and six continents, with Europe and the islands drawn large so every army fits.",
   "thumbnail": "thumb.png",
+  "order": 0,
   "presentation": { "anchorClearance": 1.3 }
 }

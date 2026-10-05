@@ -90,6 +90,16 @@ export interface MapManifest {
   extends?: string;
   /** Generated preview image beside pack.json (build:map writes it), or absent. */
   thumbnail?: string;
+  /**
+   * Optional (additive, v6): picker order, ascending; ties and absent (= 100) sort by id. Classic is 0,
+   * true-world 1.
+   */
+  order?: number;
+  /**
+   * Optional (additive, v6): true = playable by `?map=<id>` (dev / e2e) but not offered in the picker
+   * (test packs, and a new map until it passes the author checklist). Absent = shown.
+   */
+  hidden?: boolean;
   presentation: MapPresentation;
 }
 

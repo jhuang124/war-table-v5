@@ -12,7 +12,7 @@
 // bijection of the plane, so composing them can never create or destroy land contacts:
 // topology is preserved, only sizes change.
 
-import type { GeoRawProjection } from 'd3-geo';
+import { geoEqualEarthRaw, type GeoRawProjection } from 'd3-geo';
 
 export interface BaseProjection {
   /** Board width (units). */
@@ -241,4 +241,88 @@ export class BoardProjection {
     for (let i = this.lenses.length - 1; i >= 0; i--) p = this.lenses[i].invert(p[0], p[1]);
     return this.base.inverse(p[0], p[1]);
   }
+}
+
+// ---------------------------------------------------------------------------------------------
+// Recipe v2: projection presets fitted to a lon/lat frame (docs/MAP-AUTHORING.md). An author picks a
+// preset and a frame; the preset sizes the board so the frame spans `width` units across, centred on the
+// frame's middle meridian (the seam sits opposite it, so a regional board never wraps).
+
+/** [west, south, east, north] in degrees. East may exceed 180 for a frame across the antimeridian. */
+export type LonLatBox = [number, number, number, number];
+
+export type PresetName = 'mercatorLike' | 'equalEarth' | 'local';
+
+export interface ProjectionPreset {
+  /**
+   *   mercatorLike — Miller cylindrical: shapes read like the familiar wall map (classic's base);
+   *                  for a continent or a sea (Europe, the Mediterranean).
+   *   equalEarth   — equal-area (true-world's base): for a hemisphere or the whole world.
+   *   local        — plain equirectangular, true scale at the frame's middle latitude: for a city or
+   *                  a small country, where the earth's curve doesn't matter.
+   */
+  preset: PresetName;
+  /** Board width in units (default 80; classic is 100 for the whole world). */
+  width?: number;
+  /** Empty paper around the frame, in board units (default 1.5). */
+  margin?: number;
+  /** Vertical scale after projecting (default 1). */
+  yScale?: number;
+  /** Optional smooth lenses on top (see Lens), centres in lon/lat. */
+  lenses?: LensSpec[];
+}
+
+type Raw = { fwd(lam: number, phi: number): [number, number]; inv(u: number, v: number): [number, number] };
+
+function rawOf(preset: PresetName, phi0: number): Raw {
+  if (preset === 'mercatorLike')
+    return {
+      fwd: (lam, phi) => [lam, 1.25 * Math.log(Math.tan(Math.PI / 4 + 0.4 * phi))],
+      inv: (u, v) => [u, (Math.atan(Math.exp(v / 1.25)) - Math.PI / 4) / 0.4],
+    };
+  if (preset === 'equalEarth')
+    return {
+      fwd: (lam, phi) => geoEqualEarthRaw(lam, phi) as [number, number],
+      inv: (u, v) => geoEqualEarthRaw.invert!(u, v) as [number, number],
+    };
+  if (preset === 'local') {
+    const c = Math.cos(phi0);
+    return { fwd: (lam, phi) => [lam * c, phi], inv: (u, v) => [u / c, v] };
+  }
+  throw new Error(`unknown projection preset "${preset}" (mercatorLike, equalEarth, local)`);
+}
+
+/** A base projection that fits `frame` into a board `width` units wide (presets above). */
+export function frameBase(preset: PresetName, frame: LonLatBox, o: { width?: number; margin?: number; yScale?: number } = {}): BaseProjection {
+  const [w, s, e, n] = frame;
+  if (!(e > w && n > s)) throw new Error(`frame [${frame.join(', ')}] must be [west, south, east, north] with east > west and north > south`);
+  const D = Math.PI / 180;
+  const width = o.width ?? 80, margin = o.margin ?? 1.5, ys = o.yScale ?? 1;
+  const central = (w + e) / 2;
+  const raw = rawOf(preset, ((s + n) / 2) * D);
+  let u0 = Infinity, u1 = -Infinity, v0 = Infinity, v1 = -Infinity;
+  for (let i = 0; i <= 16; i++)
+    for (let j = 0; j <= 16; j++) {
+      const [u, v] = raw.fwd((w + ((e - w) * i) / 16 - central) * D, (s + ((n - s) * j) / 16) * D);
+      (u0 = Math.min(u0, u)), (u1 = Math.max(u1, u)), (v0 = Math.min(v0, v)), (v1 = Math.max(v1, v));
+    }
+  const k = (width - 2 * margin) / (u1 - u0);
+  return {
+    width,
+    lonLeft: central - 180,
+    rawHeight: 2 * margin + (v1 - v0) * k * ys,
+    forward(lon, lat) {
+      const [u, v] = raw.fwd((lon - central) * D, lat * D);
+      return [margin + (u - u0) * k, margin + (v - v0) * k * ys];
+    },
+    inverse(x, y) {
+      const [lam, phi] = raw.inv((x - margin) / k + u0, (y - margin) / (k * ys) + v0);
+      return [central + lam / D, phi / D];
+    },
+  };
+}
+
+/** A preset + frame as the BoardProjection the pipeline projects through. */
+export function presetProjection(p: ProjectionPreset, frame: LonLatBox): BoardProjection {
+  return new BoardProjection(frameBase(p.preset, frame, p), p.lenses ?? []);
 }
