@@ -122,7 +122,9 @@ export class CardsSheet {
       }
       this.dragged = false;
     }
-    if (!vm) return;
+    // v5.1 A (privacy without a cover): the hand is drawn only while the sheet is open. A closing sheet keeps the
+    // faces it had; the next seat's cards are rendered only when that seat opens the sheet.
+    if (!vm || !open) return;
     const seen = new Set<number>();
     vm.hand.forEach((c, i) => {
       let f = this.faces.get(c.id);

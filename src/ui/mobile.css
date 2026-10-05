@@ -116,7 +116,7 @@
 .form-phone .topstrip { top: var(--edge-t); left: var(--edge-l); right: var(--edge-r); gap: 8px; }
 .form-phone .ts-seats { gap: 0.55rem; }
 .form-phone .seat-chip { gap: 0.4rem; }
-.form-phone .sc-ring { width: 2.625rem; height: 2.625rem; }
+.form-phone .sc-ring { width: 2.75rem; height: 2.75rem; } /* v5.1: rings are tappable (Ask): 44 px floor */
 .form-phone .sc-terr { font-size: 1.125rem; }
 .form-phone .seat-chip:not(.current) .sc-text { display: none; }
 .form-phone .sc-name { font-size: 1.125rem; }
@@ -431,7 +431,7 @@
 
 /* v3 table cues on phones: the event line only (no ledger lines), no round label in the say row.
    v5.1: no cup slot; the current seat's filled ring is the largest mark. */
-.form-phone .seat-chip.current .sc-ring { width: 3rem; height: 3rem; }
+.form-phone .seat-chip.current .sc-ring { width: 2.75rem; height: 2.75rem; }
 .form-phone .settings-primary { grid-template-columns: 1fr; gap: 1rem; }
 .form-phone .sc-marks { height: 0.7rem; font-size: 0.875rem; }
 .form-phone .sc-cards svg { display: none; }
